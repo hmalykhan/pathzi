@@ -1,4 +1,5 @@
 from django.contrib.auth.models import User
+from django.shortcuts import redirect
 from django.contrib.auth import authenticate
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.utils.encoding import force_bytes, force_str
@@ -467,7 +468,7 @@ class GoogleLoginAPI(APIView):
 class GoogleAuthURLAPI(APIView):
     """
     GET /auth/google/url/
-    Returns the Google OAuth URL as JSON.
+    Automatically redirect user to Google login page.
     """
 
     def get(self, request):
@@ -484,11 +485,7 @@ class GoogleAuthURLAPI(APIView):
 
         auth_url = f"{google_auth_base}?{urllib.parse.urlencode(params)}"
 
-        # No serializer needed here unless you want one.
-        return Response({
-            "status": True,
-            "auth_url": auth_url
-        }, status=status.HTTP_200_OK)
+        return redirect(auth_url)
 
 
 # -------------------------------------------------------
