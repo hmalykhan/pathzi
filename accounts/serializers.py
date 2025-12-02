@@ -16,24 +16,28 @@
 #     password = serializers.CharField()
 
 
-
-
 from rest_framework import serializers
 from django.contrib.auth.models import User
+from .models import UserProfile
 
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    appuser = serializers.StringRelatedField(read_only = True)
+    class Meta:
+        model = UserProfile
+        fields = '__all__'
 
 class UserSerializer(serializers.ModelSerializer):
+    full_name = serializers.CharField(source='get_full_name', read_only = True)
     class Meta:
         model = User
-        fields = ["id", "username", "email"]  # don't expose password!
-
+        fields = ["id", "username", "email", "full_name"]  # don't expose password!
 
 class SignUpSerializer(serializers.Serializer):
     username = serializers.CharField()
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
     password2 = serializers.CharField(write_only=True, min_length=8)
-
 
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()

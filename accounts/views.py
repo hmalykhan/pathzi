@@ -18,9 +18,11 @@ from google.auth.transport import requests as google_requests
 from rest_framework.response import Response
 
 from .serializers import GoogleAuthSerializer
+import random
 
 from .serializers import (
     UserSerializer,
+    UserProfileSerializer,
     SignUpSerializer,
     LoginSerializer,
     ResetPasswordSerializer,
@@ -33,6 +35,8 @@ import urllib.parse
 import requests
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
+from .models import PasswordResetOTP, UserProfile
+from django.utils import timezone
 
 
 token_generator = PasswordResetTokenGenerator()
@@ -40,8 +44,8 @@ token_generator = PasswordResetTokenGenerator()
 
 class UserAPI(APIView):
     def get(self, request):
-        users = User.objects.all()
-        serializer = UserSerializer(users, many=True)
+        users = UserProfile.objects.all()
+        serializer = UserProfileSerializer(users, many=True)
         return Response(
             {
                 "status": True,
@@ -258,212 +262,71 @@ class ResetPasswordAPI(APIView):
         )
 
 class ForgotPasswordAPI(APIView):
-    """
-    POST /forgot-password/
-    Body: { "email": "user@example.com" }
-    """
-
     def post(self, request):
-        serializer = ForgotPasswordSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(
-                {"status": False, "errors": serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        email = request.data.get("email")
 
-        email = serializer.validated_data["email"]
+        if not email:
+            return Response({"status": False, "message": "Email required"}, status=400)
 
         try:
             user = User.objects.get(email=email)
         except User.DoesNotExist:
-            # Do not reveal whether the email exists (security best practice)
-            return Response(
-                {
-                    "status": True,
-                    "message": "email does not match.",
-                },
-                status=status.HTTP_200_OK,
-            )
+            return Response({"status": True, "message": "OTP sent if email exists"}, status=200)
 
-        uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
-        token = token_generator.make_token(user)
+        # Generate 6-digit OTP
+        otp = str(random.randint(100000, 999999))
 
-        reset_link = request.build_absolute_uri(
-            f"/password-reset-confirm/?uid={uidb64}&token={token}"
-        )
+        # Save or update OTP record
+        otp_record, created = PasswordResetOTP.objects.get_or_create(user=user)
+        otp_record.otp = otp
+        otp_record.created_at = timezone.now()
+        otp_record.save()
 
-        # Send email (you must configure EMAIL_BACKEND & DEFAULT_FROM_EMAIL)
+        # Send OTP via email
         send_mail(
-            subject="Password reset",
-            message=f"Click the link to reset your password: {reset_link}",
-            from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "no-reply@example.com"),
-            recipient_list=[user.email],
-            fail_silently=False,  # set False while debugging if you want errors
+            subject="Your Password Reset OTP",
+            message=f"Your OTP is: {otp}\nThis OTP is valid for 5 minutes.",
+            from_email="no-reply@example.com",
+            recipient_list=[email],
         )
 
-        return Response(
-            {
-                "status": True,
-                "message": "If this email is registered, a reset link has been sent.",
-            },
-            status=status.HTTP_200_OK,
-        )
+        return Response({"status": True, "message": "OTP sent successfully"}, status=200)
 
 
-class ForgotPasswordConfirmAPI(APIView):
-    """
-    POST /forgot-password-confirm/
-    Body: {
-      "uidb64": "<uid from email>",
-      "token": "<token from email>",
-      "new_password": "...",
-      "new_password2": "..."
-    }
-    """
-
+class ResetPasswordWithOTP(APIView):
     def post(self, request):
-        serializer = ForgotPasswordConfirmSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(
-                {"status": False, "errors": serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        email = request.data.get("email")
+        otp = request.data.get("otp")
+        new_password = request.data.get("new_password")
 
-        uidb64 = serializer.validated_data["uidb64"]
-        token = serializer.validated_data["token"]
-        new_password = serializer.validated_data["new_password"]
-        new_password2 = serializer.validated_data["new_password2"]
+        if not (email and otp and new_password):
+            return Response({"status": False, "message": "Missing fields"}, status=400)
 
-        if new_password != new_password2:
-            return Response(
-                {"status": False, "message": "Passwords do not match."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Decode user id
         try:
-            uid = force_str(urlsafe_base64_decode(uidb64))
-            user = User.objects.get(pk=uid)
-        except Exception:
-            return Response(
-                {"status": False, "message": "Invalid reset link."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            return Response({"status": False, "message": "Invalid email"}, status=400)
 
-        # Check token
-        if not token_generator.check_token(user, token):
-            return Response(
-                {"status": False, "message": "Invalid or expired token."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        try:
+            otp_record = PasswordResetOTP.objects.get(user=user)
+        except PasswordResetOTP.DoesNotExist:
+            return Response({"status": False, "message": "OTP not requested"}, status=400)
 
-        # Set new password
+        if not otp_record.is_valid():
+            return Response({"status": False, "message": "OTP expired"}, status=400)
+
+        if otp_record.otp != otp:
+            return Response({"status": False, "message": "Incorrect OTP"}, status=400)
+
+        # Reset password
         user.set_password(new_password)
         user.save()
 
-        # Optional: delete old tokens and issue a new one
-        Token.objects.filter(user=user).delete()
-        new_token = Token.objects.create(user=user)
+        # Delete OTP after successful reset
+        otp_record.delete()
 
-        return Response(
-            {
-                "status": True,
-                "message": "Password reset successfully.",
-                "data": {
-                    "token": new_token.key,
-                },
-            },
-            status=status.HTTP_200_OK,
-        )
+        return Response({"status": True, "message": "Password reset successful"})
     
-class GoogleLoginAPI(APIView):
-    """
-    POST /auth/google/
-    Body: { "id_token": "<google_id_token_here>" }
-
-    Returns: DRF auth token + basic user info.
-    """
-
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        serializer = GoogleAuthSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(
-                {"status": False, "errors": serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        id_token_str = serializer.validated_data["id_token"]
-
-        try:
-            # Verify the token with Google
-            idinfo = google_id_token.verify_oauth2_token(
-                id_token_str,
-                google_requests.Request(),
-                settings.GOOGLE_CLIENT_ID,
-            )
-        except Exception as e:
-            return Response(
-                {
-                    "status": False,
-                    "message": "Invalid Google token",
-                    "detail": str(e),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # At this point token is valid
-        # idinfo contains things like: sub, email, name, picture, etc.
-        email = idinfo.get("email")
-        email_verified = idinfo.get("email_verified", False)
-        name = idinfo.get("name", "")
-        google_user_id = idinfo.get("sub")  # Google's unique user ID
-
-        if not email or not email_verified:
-            return Response(
-                {
-                    "status": False,
-                    "message": "Google account email is not verified.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Get or create user in Django
-        username = email.split("@")[0]
-
-        user, created = User.objects.get_or_create(
-            email=email,
-            defaults={
-                "username": username,
-                "first_name": name,
-            },
-        )
-
-        # Optionally update name on each login
-        if not created and name and user.first_name != name:
-            user.first_name = name
-            user.save()
-
-        # Create or get DRF token
-        token, _ = Token.objects.get_or_create(user=user)
-
-        return Response(
-            {
-                "status": True,
-                "message": "Google login successful.",
-                "data": {
-                    "token": token.key,
-                    "user": {
-                        "id": user.id,
-                        "username": user.username,
-                        "email": user.email,
-                        "name": user.first_name,
-                    },
-                },
-            },
-            status=status.HTTP_200_OK,
-        )
 
 class GoogleAuthURLAPI(APIView):
     """
@@ -494,7 +357,7 @@ class GoogleAuthURLAPI(APIView):
 class GoogleCallbackAPI(APIView):
     """
     GET /auth/google/callback/?code=XXXX
-    Redirect handler → exchange code → verify → return JSON user + token
+    Handles Google OAuth callback → verifies token → creates user → returns token + user data
     """
 
     def get(self, request):
@@ -543,21 +406,35 @@ class GoogleCallbackAPI(APIView):
                 "detail": str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Extract user info
+        # Extract user info from Google
         email = idinfo.get("email")
-        name = idinfo.get("name", "")
+        first_name = idinfo.get("given_name", "")
+        last_name = idinfo.get("family_name", "")
         username = email.split("@")[0]
 
-        # Create user if not exist
+        # Create user if not exists
         user, created = User.objects.get_or_create(
             email=email,
-            defaults={"username": username, "first_name": name}
+            defaults={
+                "username": username,
+                "first_name": first_name,
+                "last_name": last_name,
+            }
         )
 
-        # Create/return DRF token
+        # Create a UserProfile for new users
+        if created:
+            UserProfile.objects.create(
+                appuser=user,
+                age=0,
+                career_switcher="",
+                interest=""
+            )
+
+        # Create or get auth token
         token, _ = Token.objects.get_or_create(user=user)
 
-        # Prepare data for serializer
+        # Prepare response structure
         response_data = {
             "status": True,
             "message": "Google login successful.",
@@ -566,11 +443,13 @@ class GoogleCallbackAPI(APIView):
                 "id": user.id,
                 "username": user.username,
                 "email": user.email,
-                "name": user.first_name,
+                "name": user.get_full_name(),
+                "first_name": user.first_name,
+                "last_name": user.last_name
             }
         }
 
-        # Validate & serialize output
+        # Serialize response
         serializer = GoogleLoginResponseSerializer(response_data)
 
         return Response(serializer.data, status=status.HTTP_200_OK)

@@ -16,7 +16,7 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
-from accounts.views import UserAPI, LoginAPI, SignUpAPI, ResetPasswordAPI, ForgotPasswordAPI, ForgotPasswordConfirmAPI, GoogleLoginAPI, GoogleAuthURLAPI, GoogleCallbackAPI
+from accounts.views import UserAPI, LoginAPI, SignUpAPI, ResetPasswordAPI, ForgotPasswordAPI, ResetPasswordWithOTP, GoogleAuthURLAPI, GoogleCallbackAPI
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -25,9 +25,8 @@ urlpatterns = [
     path('login/',LoginAPI.as_view()),
     path("reset-password/", ResetPasswordAPI.as_view(), name="reset-password"),
     path("forgot-password/", ForgotPasswordAPI.as_view(), name="forgot-password"),
-    path("forgot-password-confirm/", ForgotPasswordConfirmAPI.as_view(), name="forgot-password-confirm"),
+    path("reset-password-otp/", ResetPasswordWithOTP.as_view()),
     path("auth/google/url/", GoogleAuthURLAPI.as_view(), name="google-auth-url"),
-    path("apigoogle/callback/", GoogleCallbackAPI.as_view(), name="google-auth-callback"),
-    # path("auth/google/", GoogleLoginAPI.as_view(), name="google-login"),
+    path("apigoogle/callback/", GoogleCallbackAPI.as_view(), name="google-auth-callback")
 ]
  
