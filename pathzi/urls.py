@@ -16,10 +16,11 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
-from accounts.views import UserAPI, LoginAPI, SignUpAPI, ResetPasswordAPI, ForgotPasswordAPI, ForgotPasswordConfirmationOTP, GoogleAuthURLAPI, GoogleCallbackAPI,SetPasswordGoogleAuthAPI , CurrentUserProfileAPI, SetPasswordConfirmationGoogleAuthOTP
+from accounts.views import UserAPI, LoginAPI, SignUpAPI, ResetPasswordAPI, ForgotPasswordAPI, ForgotPasswordConfirmationOTP, GoogleAuthURLAPI, GoogleCallbackAPI,SetPasswordGoogleAuthAPI , CurrentUserProfileAPI, SetPasswordConfirmationGoogleAuthOTP, HomeAPI
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('', HomeAPI.as_view()),
     path('users/',UserAPI.as_view()),
     path('signup/',SignUpAPI.as_view()),
     path('login/',LoginAPI.as_view()),

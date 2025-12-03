@@ -42,6 +42,16 @@ from django.utils.crypto import get_random_string
 
 token_generator = PasswordResetTokenGenerator()
 
+class HomeAPI(APIView):
+    def get(self, request):
+        return Response(
+            {
+                "status": True,
+                "message": "Pathzi server is running Successfully :)",
+            },
+            status=status.HTTP_200_OK,
+        )
+
 
 class UserAPI(APIView):
     def get(self, request):
@@ -422,7 +432,7 @@ class SetPasswordConfirmationGoogleAuthOTP(APIView):
 
         return Response({"status": True, "message": "Password reset successful"})
     
-    class ForgotPasswordConfirmationOTP(APIView):
+class ForgotPasswordConfirmationOTP(APIView):
         def post(self, request):
             email = request.data.get("email")
             otp = request.data.get("otp")
