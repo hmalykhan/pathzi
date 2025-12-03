@@ -1,28 +1,15 @@
-# from rest_framework import serializers
-# from django.contrib.auth.models import User
-# class UserSerializer(serializers.ModelSerializer ):
-#     class Meta:
-#         model = User
-#         fields = ['username', 'email', 'password', 'password2']
-
-# class SignUpSerializer(serializers.Serializer):
-#     username = serializers.CharField()
-#     email = serializers.CharField()
-#     password = serializers.CharField(write_only = True, min_length = 8)
-#     password2 = serializers.CharField(write_only = True, min_length = 8)
-
-# class LoginSerializer(serializers.Serializer):
-#     email = serializers.CharField()
-#     password = serializers.CharField()
-
-
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import UserProfile
+from .models import UserProfile, Qualification
 
+class QualificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Qualification
+        fields = '__all__'
 
 class UserProfileSerializer(serializers.ModelSerializer):
     appuser = serializers.StringRelatedField(read_only = True)
+    qualification = serializers.StringRelatedField(read_only = True)
     class Meta:
         model = UserProfile
         fields = '__all__'
