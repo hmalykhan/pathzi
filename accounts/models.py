@@ -5,9 +5,9 @@ from datetime import timedelta
     
 class UserProfile(models.Model):
     appuser = models.ForeignKey(User, on_delete=models.CASCADE, default=None)
-    age = models.IntegerField()
-    career_switcher = models.CharField(max_length=200)
-    interest = models.CharField(max_length=300)
+    age = models.IntegerField(null=True, blank=True)
+    career_switcher = models.CharField(max_length=200, blank=True)
+    interest = models.CharField(max_length=300, blank=True)
 
 
 class PasswordResetOTP(models.Model):

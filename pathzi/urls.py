@@ -16,17 +16,20 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path
-from accounts.views import UserAPI, LoginAPI, SignUpAPI, ResetPasswordAPI, ForgotPasswordAPI, ResetPasswordWithOTP, GoogleAuthURLAPI, GoogleCallbackAPI
+from accounts.views import UserAPI, LoginAPI, SignUpAPI, ResetPasswordAPI, ForgotPasswordAPI, ForgotPasswordConfirmationOTP, GoogleAuthURLAPI, GoogleCallbackAPI,SetPasswordGoogleAuthAPI , CurrentUserProfileAPI, SetPasswordConfirmationGoogleAuthOTP
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('users/',UserAPI.as_view()),
     path('signup/',SignUpAPI.as_view()),
     path('login/',LoginAPI.as_view()),
-    path("reset-password/", ResetPasswordAPI.as_view(), name="reset-password"),
-    path("forgot-password/", ForgotPasswordAPI.as_view(), name="forgot-password"),
-    path("reset-password-otp/", ResetPasswordWithOTP.as_view()),
-    path("auth/google/url/", GoogleAuthURLAPI.as_view(), name="google-auth-url"),
-    path("apigoogle/callback/", GoogleCallbackAPI.as_view(), name="google-auth-callback")
+    path("reset_password/", ResetPasswordAPI.as_view(), name="reset_password"),
+    path("forgot_password/", ForgotPasswordAPI.as_view(), name="forgot_password"),
+    path("forgot_password_confirmation/", ForgotPasswordConfirmationOTP.as_view()),
+    path("google/auth/url/", GoogleAuthURLAPI.as_view(), name="google_auth_url"),
+    path("apigoogle/callback/", GoogleCallbackAPI.as_view(), name="google_auth_callback"),
+    path("user_profile/", CurrentUserProfileAPI.as_view(), name="user_profile"),
+    path("google_auth/set_password/", SetPasswordGoogleAuthAPI.as_view(), name="google_auth_set_password"),
+    path("google_auth/set_password_confirmation/", SetPasswordConfirmationGoogleAuthOTP.as_view()),
 ]
  

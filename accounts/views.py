@@ -37,6 +37,7 @@ from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
 from .models import PasswordResetOTP, UserProfile
 from django.utils import timezone
+from django.utils.crypto import get_random_string
 
 
 token_generator = PasswordResetTokenGenerator()
@@ -114,6 +115,13 @@ class SignUpAPI(APIView):
             password=password,
         )
 
+        UserProfile.objects.create(
+            appuser=user,
+            age=0,                # or any default
+            career_switcher="",
+            interest=""
+        )
+
         # Optional: create token on signup
         token, _ = Token.objects.get_or_create(user=user)
 
@@ -131,6 +139,64 @@ class SignUpAPI(APIView):
             status=status.HTTP_201_CREATED,
         )
 
+class CurrentUserProfileAPI(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # Get or create profile for the logged in user
+        profile, created = UserProfile.objects.get_or_create(appuser=request.user)
+        serializer = UserProfileSerializer(profile)
+        return Response(
+            {
+                "status": True,
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def put(self, request):
+        # Full update: user must send all fields
+        profile, created = UserProfile.objects.get_or_create(appuser=request.user)
+        serializer = UserProfileSerializer(profile, data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(
+                {
+                    "status": True,
+                    "message": "Profile updated successfully.",
+                    "data": serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+        return Response(
+            {
+                "status": False,
+                "errors": serializer.errors,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    def patch(self, request):
+        # Partial update: user can send only some fields
+        profile, created = UserProfile.objects.get_or_create(appuser=request.user)
+        serializer = UserProfileSerializer(profile, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(
+                {
+                    "status": True,
+                    "message": "Profile updated successfully.",
+                    "data": serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+        return Response(
+            {
+                "status": False,
+                "errors": serializer.errors,
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
 class LoginAPI(APIView):
     """
@@ -286,24 +352,53 @@ class ForgotPasswordAPI(APIView):
         send_mail(
             subject="Your Password Reset OTP",
             message=f"Your OTP is: {otp}\nThis OTP is valid for 5 minutes.",
-            from_email="no-reply@example.com",
+            from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[email],
+        )
+
+        return Response({"status": True, "message": "OTP sent successfully"}, status=200)
+    
+class SetPasswordGoogleAuthAPI(APIView):
+    def post(self, request):       
+        try:
+            user = User.objects.get(email=request.user.email)
+        except User.DoesNotExist:
+            return Response({"status": True, "message": "OTP sent if email exists"}, status=200)
+
+        # Generate 6-digit OTP
+        otp = str(random.randint(100000, 999999))
+
+        # Save or update OTP record
+        otp_record, created = PasswordResetOTP.objects.get_or_create(user=user)
+        otp_record.otp = otp
+        otp_record.created_at = timezone.now()
+        otp_record.save()
+
+        # Send OTP via email
+        send_mail(
+            subject="Your Password Reset OTP",
+            message=f"Your OTP is: {otp}\nThis OTP is valid for 5 minutes.",
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[request.user.email],
         )
 
         return Response({"status": True, "message": "OTP sent successfully"}, status=200)
 
 
-class ResetPasswordWithOTP(APIView):
+class SetPasswordConfirmationGoogleAuthOTP(APIView):
     def post(self, request):
-        email = request.data.get("email")
         otp = request.data.get("otp")
         new_password = request.data.get("new_password")
+        confirm_password = request.data.get("confirm_password")
 
-        if not (email and otp and new_password):
+        if not (otp and new_password and confirm_password):
             return Response({"status": False, "message": "Missing fields"}, status=400)
+        
+        if new_password != confirm_password:
+            return Response({"status": False, "message": "Passwords does not match."}, status=400)
 
         try:
-            user = User.objects.get(email=email)
+            user = User.objects.get(email=request.user.email)
         except User.DoesNotExist:
             return Response({"status": False, "message": "Invalid email"}, status=400)
 
@@ -326,6 +421,45 @@ class ResetPasswordWithOTP(APIView):
         otp_record.delete()
 
         return Response({"status": True, "message": "Password reset successful"})
+    
+    class ForgotPasswordConfirmationOTP(APIView):
+        def post(self, request):
+            email = request.data.get("email")
+            otp = request.data.get("otp")
+            new_password = request.data.get("new_password")
+            confirm_password = request.data.get("confirm_password")
+
+            if not (email and otp and new_password and confirm_password):
+                return Response({"status": False, "message": "Missing fields"}, status=400)
+            
+            if new_password != confirm_password:
+                return Response({"status": False, "message": "Passwords does not match."}, status=400)
+
+            try:
+                user = User.objects.get(email=email)
+            except User.DoesNotExist:
+                return Response({"status": False, "message": "Invalid email"}, status=400)
+
+            try:
+                otp_record = PasswordResetOTP.objects.get(user=user)
+            except PasswordResetOTP.DoesNotExist:
+                return Response({"status": False, "message": "OTP not requested"}, status=400)
+
+            if not otp_record.is_valid():
+                return Response({"status": False, "message": "OTP expired"}, status=400)
+
+            if otp_record.otp != otp:
+                return Response({"status": False, "message": "Incorrect OTP"}, status=400)
+
+            # Reset password
+            user.set_password(new_password)
+            user.save()
+
+            # Delete OTP after successful reset
+            otp_record.delete()
+
+            return Response({"status": True, "message": "Password reset successful"})
+    
     
 
 class GoogleAuthURLAPI(APIView):
@@ -357,7 +491,7 @@ class GoogleAuthURLAPI(APIView):
 class GoogleCallbackAPI(APIView):
     """
     GET /auth/google/callback/?code=XXXX
-    Handles Google OAuth callback → verifies token → creates user → returns token + user data
+    Handles Google OAuth callback → verifies token → creates user → sets random password → returns token + user data
     """
 
     def get(self, request):
@@ -422,8 +556,13 @@ class GoogleCallbackAPI(APIView):
             }
         )
 
-        # Create a UserProfile for new users
+        # If it's a new user, set a random password and create profile
         if created:
+            # 🔐 Generate a random password (not returned to client)
+            random_password = get_random_string(length=12)
+            user.set_password(random_password)
+            user.save()
+
             UserProfile.objects.create(
                 appuser=user,
                 age=0,
@@ -445,7 +584,7 @@ class GoogleCallbackAPI(APIView):
                 "email": user.email,
                 "name": user.get_full_name(),
                 "first_name": user.first_name,
-                "last_name": user.last_name
+                "last_name": user.last_name,
             }
         }
 
@@ -453,3 +592,4 @@ class GoogleCallbackAPI(APIView):
         serializer = GoogleLoginResponseSerializer(response_data)
 
         return Response(serializer.data, status=status.HTTP_200_OK)
+
