@@ -15,11 +15,25 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
-from django.urls import path
-from accounts.views import UserAPI, LoginAPI, SignUpAPI, ResetPasswordAPI, ForgotPasswordAPI, ForgotPasswordConfirmationOTP, GoogleAuthURLAPI, GoogleCallbackAPI,SetPasswordGoogleAuthAPI , CurrentUserProfileAPI, SetPasswordConfirmationGoogleAuthOTP, HomeAPI
+from django.urls import path, include
+from accounts.views import (
+                            UserAPI,
+                            LoginAPI,
+                            SignUpAPI,
+                            ResetPasswordAPI,
+                            ForgotPasswordAPI,
+                            ForgotPasswordConfirmationOTP,
+                            GoogleAuthURLAPI,
+                            GoogleCallbackAPI,
+                            SetPasswordGoogleAuthAPI,
+                            CurrentUserProfileAPI,
+                            SetPasswordConfirmationGoogleAuthOTP,
+                            HomeAPI
+                            )
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('auth/', include('rest_framework.urls', namespace = 'rest_framework')),
     path('', HomeAPI.as_view()),
     path('users/',UserAPI.as_view()),
     path('signup/',SignUpAPI.as_view()),

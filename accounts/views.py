@@ -369,7 +369,8 @@ class ForgotPasswordAPI(APIView):
         return Response({"status": True, "message": "OTP sent successfully"}, status=200)
     
 class SetPasswordGoogleAuthAPI(APIView):
-    def post(self, request):       
+    permission_classes = [IsAuthenticated]
+    def get(self, request):       
         try:
             user = User.objects.get(email=request.user.email)
         except User.DoesNotExist:
@@ -582,6 +583,20 @@ class GoogleCallbackAPI(APIView):
 
         # Create or get auth token
         token, _ = Token.objects.get_or_create(user=user)
+
+        print({
+            "status": True,
+            "message": "Google login successful.",
+            "token": token.key,
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "name": user.get_full_name(),
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+            }
+        })
 
         # Prepare response structure
         response_data = {
