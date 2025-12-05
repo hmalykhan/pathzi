@@ -1,46 +1,37 @@
 from django.contrib.auth.models import User
 from django.shortcuts import redirect
 from django.contrib.auth import authenticate
-from django.contrib.auth.tokens import PasswordResetTokenGenerator
-from django.utils.encoding import force_bytes, force_str
-from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from rest_framework.permissions import IsAuthenticated
 from django.core.mail import send_mail
 from django.conf import settings
+from django.utils import timezone
+from django.utils.crypto import get_random_string
 
+from rest_framework import status, generics, permissions, views
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status
 from rest_framework.authtoken.models import Token
-from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
-from rest_framework.response import Response
 
-from .serializers import GoogleAuthSerializer
 import random
+import urllib.parse
+import requests
 
+from .models import PasswordResetOTP, UserProfile
 from .serializers import (
     UserSerializer,
     UserProfileSerializer,
     SignUpSerializer,
     LoginSerializer,
     ResetPasswordSerializer,
-    ForgotPasswordSerializer,
-    ForgotPasswordConfirmSerializer,
-    UserDataSerializer,
-    GoogleLoginResponseSerializer
+    GoogleLoginResponseSerializer,
 )
-import urllib.parse
-import requests
-from google.oauth2 import id_token as google_id_token
-from google.auth.transport import requests as google_requests
-from .models import PasswordResetOTP, UserProfile
-from django.utils import timezone
-from django.utils.crypto import get_random_string
 
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import AuthenticationFailed
 
-token_generator = PasswordResetTokenGenerator()
 
 class HomeAPI(APIView):
     def get(self, request):
@@ -53,86 +44,60 @@ class HomeAPI(APIView):
         )
 
 
-class UserAPI(APIView):
-    def get(self, request):
-        users = UserProfile.objects.all()
-        serializer = UserProfileSerializer(users, many=True)
-        return Response(
-            {
-                "status": True,
-                "data": serializer.data,
-            },
-            status=status.HTTP_200_OK,
-        )
+class UserAPI(generics.ListAPIView):
+    """
+    GET /users/
+    """
+    queryset = UserProfile.objects.select_related("appuser").all()
+    serializer_class = UserProfileSerializer
+    permission_classes = [permissions.IsAuthenticated]
 
 
-class SignUpAPI(APIView):
-    def get(self, request):
-        return Response(
-            {"detail": "Send a POST request to create an account."},
-            status=status.HTTP_200_OK,
-        )
+class SignUpAPI(generics.CreateAPIView):
+    """
+    POST /auth/register/
+    Body handled by SignUpSerializer.
+    """
+    serializer_class = SignUpSerializer
+    permission_classes = [permissions.AllowAny]
 
-    def post(self, request):
-        serializer = SignUpSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(
-                {
-                    "status": False,
-                    "errors": serializer.errors,
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+    def perform_create(self, serializer):
+        """
+        Let the serializer handle basic validation (password match, etc.)
+        and then do any extra side effects here: profile + token.
+        """
+        user = serializer.save()  # SignUpSerializer should create the User
 
-        username = serializer.validated_data["username"]
-        email = serializer.validated_data["email"]
-        password = serializer.validated_data["password"]
-        password2 = serializer.validated_data["password2"]
-
-        # Check passwords match
-        if password != password2:
-            return Response(
-                {
-                    "status": False,
-                    "message": "Passwords are not the same.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Check username/email already taken
-        if User.objects.filter(username=username).exists():
-            return Response(
-                {
-                    "status": False,
-                    "message": "Username already taken.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if User.objects.filter(email=email).exists():
-            return Response(
-                {
-                    "status": False,
-                    "message": "Email already registered.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Create user
-        user = User.objects.create_user(
-            username=username,
-            email=email,
-            password=password,
-        )
-
-        UserProfile.objects.create(
+        # Create profile if not created by serializer
+        UserProfile.objects.get_or_create(
             appuser=user,
-            age=0,                # or any default
-            career_switcher="",
-            interest=""
+            defaults={
+                "age": 0,
+                "career_switcher": "",
+                "interest": "",
+            },
         )
 
         # Optional: create token on signup
+        Token.objects.get_or_create(user=user)
+
+    def create(self, request, *args, **kwargs):
+        """
+        Override to return token + user data in the response format you like.
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+
+        UserProfile.objects.get_or_create(
+            appuser=user,
+            defaults={
+                "age": 0,
+                "career_switcher": "",
+                "interest": "",
+            },
+        )
+
         token, _ = Token.objects.get_or_create(user=user)
 
         return Response(
@@ -149,42 +114,19 @@ class SignUpAPI(APIView):
             status=status.HTTP_201_CREATED,
         )
 
-class CurrentUserProfileAPI(APIView):
-    permission_classes = [IsAuthenticated]
 
-    def get(self, request):
-        # Get or create profile for the logged in user
-        profile, created = UserProfile.objects.get_or_create(appuser=request.user)
-        serializer = UserProfileSerializer(profile)
-        return Response(
-            {
-                "status": True,
-                "data": serializer.data,
-            },
-            status=status.HTTP_200_OK,
-        )
+class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
+    """
+    GET /me/profile/
+    PUT /me/profile/
+    PATCH /me/profile/
+    """
+    serializer_class = UserProfileSerializer
+    permission_classes = [permissions.IsAuthenticated]
 
-    def put(self, request):
-        # Full update: user must send all fields
-        profile, created = UserProfile.objects.get_or_create(appuser=request.user)
-        serializer = UserProfileSerializer(profile, data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(
-                {
-                    "status": True,
-                    "message": "Profile updated successfully.",
-                    "data": serializer.data,
-                },
-                status=status.HTTP_200_OK,
-            )
-        return Response(
-            {
-                "status": False,
-                "errors": serializer.errors,
-            },
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    def get_object(self):
+        profile, _ = UserProfile.objects.get_or_create(appuser=self.request.user)
+        return profile
 
     def patch(self, request):
         # Partial update: user can send only some fields
@@ -260,13 +202,16 @@ class LoginAPI(APIView):
             )
 
         # Get or create token
-        token, _ = Token.objects.get_or_create(user=user)
+        refresh = RefreshToken.for_user(user)
 
         return Response(
             {
                 "status": True,
                 "data": {
-                    "token": token.key,
+                    "token": {
+                                'refresh': str(refresh),
+                                'access': str(refresh.access_token),
+                             },
                 },
             },
             status=status.HTTP_200_OK,
@@ -369,7 +314,7 @@ class ForgotPasswordAPI(APIView):
         return Response({"status": True, "message": "OTP sent successfully"}, status=200)
     
 class SetPasswordGoogleAuthAPI(APIView):
-    permission_classes = [IsAuthenticated]
+    # permission_classes = [IsAuthenticated]
     def get(self, request):       
         try:
             user = User.objects.get(email=request.user.email)
@@ -582,12 +527,15 @@ class GoogleCallbackAPI(APIView):
             )
 
         # Create or get auth token
-        token, _ = Token.objects.get_or_create(user=user)
+        refresh = RefreshToken.for_user(user)
 
         print({
             "status": True,
             "message": "Google login successful.",
-            "token": token.key,
+            "token": {
+                        'refresh': str(refresh),
+                        'access': str(refresh.access_token),
+                     },
             "user": {
                 "id": user.id,
                 "username": user.username,
@@ -617,5 +565,4 @@ class GoogleCallbackAPI(APIView):
         serializer = GoogleLoginResponseSerializer(response_data)
 
         return Response(serializer.data, status=status.HTTP_200_OK)
-
-class QualificationAPI()
+    

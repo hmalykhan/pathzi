@@ -1,11 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import UserProfile, Qualification
-
-class QualificationSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Qualification
-        fields = '__all__'
+from .models import UserProfile
 
 class UserProfileSerializer(serializers.ModelSerializer):
     appuser = serializers.StringRelatedField(read_only = True)

@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
 from datetime import timedelta
+from qualification.models import Qualification
     
 class PasswordResetOTP(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
@@ -11,11 +12,6 @@ class PasswordResetOTP(models.Model):
     def is_valid(self):
         return self.created_at >= timezone.now() - timedelta(minutes=5)
     
-class Qualification(models.Model):
-    qulification_type = models.CharField(max_length=200, blank=True)
-    subjects = models.CharField(max_length=200, blank=True)
-    Grades = models.CharField(max_length=50, blank=True)
-    completion_year = models.DateField(blank=True, null=True)
 
 class UserProfile(models.Model):
     appuser = models.ForeignKey(User, on_delete=models.CASCADE, blank = True, null = True)

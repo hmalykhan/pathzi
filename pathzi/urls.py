@@ -16,35 +16,11 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
-from accounts.views import (
-                            UserAPI,
-                            LoginAPI,
-                            SignUpAPI,
-                            ResetPasswordAPI,
-                            ForgotPasswordAPI,
-                            ForgotPasswordConfirmationOTP,
-                            GoogleAuthURLAPI,
-                            GoogleCallbackAPI,
-                            SetPasswordGoogleAuthAPI,
-                            CurrentUserProfileAPI,
-                            SetPasswordConfirmationGoogleAuthOTP,
-                            HomeAPI
-                            )
+
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('auth/', include('rest_framework.urls', namespace = 'rest_framework')),
-    path('', HomeAPI.as_view()),
-    path('users/',UserAPI.as_view()),
-    path('signup/',SignUpAPI.as_view()),
-    path('login/',LoginAPI.as_view()),
-    path("reset_password/", ResetPasswordAPI.as_view(), name="reset_password"),
-    path("forgot_password/", ForgotPasswordAPI.as_view(), name="forgot_password"),
-    path("forgot_password_confirmation/", ForgotPasswordConfirmationOTP.as_view()),
-    path("google/auth/url/", GoogleAuthURLAPI.as_view(), name="google_auth_url"),
-    path("apigoogle/callback/", GoogleCallbackAPI.as_view(), name="google_auth_callback"),
-    path("user_profile/", CurrentUserProfileAPI.as_view(), name="user_profile"),
-    path("google_auth/set_password/", SetPasswordGoogleAuthAPI.as_view(), name="google_auth_set_password"),
-    path("google_auth/set_password_confirmation/", SetPasswordConfirmationGoogleAuthOTP.as_view()),
+    path('accounts/',include('accounts.urls')),
+    path('qualification/',include('qualification.urls')),
 ]
- 
