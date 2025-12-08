@@ -2,7 +2,6 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
 from datetime import timedelta
-from qualification.models import Qualification
     
 class PasswordResetOTP(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
@@ -14,7 +13,7 @@ class PasswordResetOTP(models.Model):
     
 
 class UserProfile(models.Model):
-    appuser = models.ForeignKey(User, on_delete=models.CASCADE, blank = True, null = True)
+    appuser = models.OneToOneField(User, on_delete=models.CASCADE, blank=True, null = True)
     age = models.IntegerField(null=True, blank=True)
     study_level = models.CharField(max_length=200, blank=True)
     study_mediam = models.CharField(max_length=200, blank=True)
@@ -22,4 +21,3 @@ class UserProfile(models.Model):
     career_switcher = models.CharField(max_length=200, blank=True)
     interest = models.CharField(max_length=300, blank=True)
     preference = models.CharField(max_length=200, blank=True)
-    qualification = models.ForeignKey(Qualification, on_delete=models.CASCADE, blank = True, null = True)

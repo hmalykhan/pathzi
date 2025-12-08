@@ -61,44 +61,34 @@ class SignUpAPI(generics.CreateAPIView):
     serializer_class = SignUpSerializer
     permission_classes = [permissions.AllowAny]
 
-    def perform_create(self, serializer):
-        """
-        Let the serializer handle basic validation (password match, etc.)
-        and then do any extra side effects here: profile + token.
-        """
-        user = serializer.save()  # SignUpSerializer should create the User
-
-        # Create profile if not created by serializer
-        UserProfile.objects.get_or_create(
-            appuser=user,
-            defaults={
-                "age": 0,
-                "career_switcher": "",
-                "interest": "",
-            },
-        )
-
-        # Optional: create token on signup
-        Token.objects.get_or_create(user=user)
-
     def create(self, request, *args, **kwargs):
         """
         Override to return token + user data in the response format you like.
         """
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = serializer.save()
+        data = serializer.validated_data
+
+        user = User.objects.create_user(
+            username=data["username"],
+            email=data["email"],
+            password=data["password"],
+        )
 
         UserProfile.objects.get_or_create(
             appuser=user,
             defaults={
-                "age": 0,
-                "career_switcher": "",
-                "interest": "",
+                "age" : 0,
+                "study_level" : "",
+                "study_mediam" : "",
+                "amount_to_earn" : 0,
+                "career_switcher" : "",
+                "interest" : "",
+                "preference" : ""
             },
         )
 
-        token, _ = Token.objects.get_or_create(user=user)
+        # token, _ = Token.objects.get_or_create(user=user)
 
         return Response(
             {
@@ -108,7 +98,6 @@ class SignUpAPI(generics.CreateAPIView):
                     "id": user.id,
                     "username": user.username,
                     "email": user.email,
-                    "token": token.key,
                 },
             },
             status=status.HTTP_201_CREATED,
