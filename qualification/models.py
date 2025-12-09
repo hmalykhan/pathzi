@@ -10,4 +10,3 @@ class Qualification(models.Model):
 
     def __str__(self):
         return f"""qualification_type:{self.qulification_type}, subjects:{self.subjects}, grades:{self.grades}, completion_year:{self.completion_year}"""
-    

@@ -1,10 +1,11 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from .models import UserProfile
+from qualification.api.serializer import QualificationSerializer
 
 class UserProfileSerializer(serializers.ModelSerializer):
     appuser = serializers.StringRelatedField(read_only = True)
-    qualification = serializers.StringRelatedField(read_only = True)
+    qualifications = QualificationSerializer(read_only = True, many=True)
     class Meta:
         model = UserProfile
         fields = '__all__'
