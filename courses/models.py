@@ -7,4 +7,4 @@ class Course(models.Model):
     course_duration = models.CharField(max_length=50, blank=True)
     location = models.CharField(max_length=200, blank=True)
     fee = models.IntegerField(null=True)
-    user_profile = models.ManyToManyField(UserProfile, related_name='courses', blank=True, null=True)
+    user_profile = models.ManyToManyField(UserProfile, related_name='courses', blank=True)

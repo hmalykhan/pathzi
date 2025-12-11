@@ -23,5 +23,6 @@ urlpatterns = [
     path('auth/', include('rest_framework.urls', namespace = 'rest_framework')),
     path('accounts/',include('accounts.urls')),
     path('qualifications/',include('qualification.urls')),
-    path('courses/', include('courses.urls'))
+    path('courses/', include('courses.urls')),
+    path('jobs/', include('jobs.urls')),
 ]

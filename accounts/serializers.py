@@ -3,11 +3,14 @@ from django.contrib.auth.models import User
 from .models import UserProfile
 from qualification.api.serializer import QualificationSerializer
 from courses.api.serializer import CoursesSerializer
+from jobs.api.serializer import JobsSerializer
 
 class UserProfileSerializer(serializers.ModelSerializer):
     appuser = serializers.StringRelatedField(read_only = True)
     qualifications = QualificationSerializer(read_only = True, many=True)
     courses = CoursesSerializer(read_only=True, many=True)
+    jobs = JobsSerializer(many=True, read_only=True)
+
     class Meta:
         model = UserProfile
         fields = '__all__'
