@@ -17,9 +17,5 @@ class JobsSerializer(serializers.ModelSerializer):
     def __init__(self,*args, **kwargs):
         super().__init__(*args, **kwargs)
         request = self.context.get('request', None)
-        # if request and request.user.is_staff:
-        #     self.fields.pop('user_profile')
-        # elif request and request.user.is_authenticated:
-        #     self.fields.pop('user_profile_id', None)
         if request and request.user.is_authenticated and not request.user.is_staff:
             self.fields.pop('user_profile_id', None)

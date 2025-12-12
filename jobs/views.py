@@ -7,29 +7,40 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from .api.permissions import JobPermission
+from django.shortcuts import get_object_or_404
 
 class JobsView(viewsets.ModelViewSet):
     permission_classes = [JobPermission]
     queryset = Job.objects.all()
     serializer_class = JobsSerializer
     
-    def create(self, request, pk=None,*args, **kwargs):
-        if request.user.is_staff:
-            return super().create(request, *args, **kwargs)
-        job = Job.objects.get(pk = pk)
-        if not job:
-            return Response({"message":"no job found."}, status=status.HTTP_404_NOT_FOUND)
-        serializer = self.get_serializer(data = job)
-        serializer.is_valid(raise_exception=True)
-        serializer.save(user_profile=[UserProfile.objects.get(appuser=self.request.user)])
+    @action(detail=True, methods=["POST","GET"])
+    def save(self, request, pk=None):
+        job = self.get_object()
+        serializer = self.get_serializer(job)
+        if request.method == "GET":
+            return Response(serializer.data)
+        user = get_object_or_404(UserProfile, appuser=self.request.user)
+        job.user_profile.add(user)
+        return Response(serializer.data)
 
     @action(detail=False, methods=["GET"])
     def my(self, request):
         jobs = Job.objects.filter(user_profile__appuser=request.user)
-        if not jobs:
-            return Response({"message":"no job found."}, status=status.HTTP_404_NOT_FOUND)
         serializer = self.get_serializer(jobs, many=True)
         return Response(serializer.data)
+    
+    @action(detail=True, methods=["POST","GET"])
+    def unsave(self, request, pk=None):
+        job = self.get_object()
+        if request.method == "GET":
+            serializer = self.get_serializer(job)
+            return Response(serializer.data)
+        user = get_object_or_404(UserProfile, appuser=self.request.user)
+        if job.user_profile.filter(pk = user.pk).exists():
+            job.user_profile.remove(user)
+            return Response({'message':'the user has been delete'})
+        return Response({'error':'no user found in this job.'},status=status.HTTP_404_NOT_FOUND)
     
     # def get_queryset(self):
     #     if self.request.user.is_staff:

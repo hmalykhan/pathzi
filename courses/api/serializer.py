@@ -18,9 +18,5 @@ class CoursesSerializer(serializers.ModelSerializer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         request = self.context.get('request')
-        # if request and request.user.is_staff:
-        #     self.fields.pop('user_profile', None)
-        # elif request and request.user.is_authenticated:
-        #     self.fields.pop('user_profile_id', None)
         if request and request.user.is_authenticated and not request.user.is_staff:
             self.fields.pop('user_profile_id', None)
