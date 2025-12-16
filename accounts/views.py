@@ -10,7 +10,6 @@ from django.utils.crypto import get_random_string
 from rest_framework import status, generics, permissions, views
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.authtoken.models import Token
 
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
@@ -69,9 +68,10 @@ class SignUpAPI(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
+        email = (data['email'] or "").strip().lower()
         user = User.objects.create_user(
             username=data["username"],
-            email=data["email"],
+            email=email,
             password=data["password"],
         )
 
@@ -168,6 +168,7 @@ class LoginAPI(APIView):
         password = serializer.validated_data["password"]
 
         # Find user by email
+        email = (serializer.validated_data["email"] or "").strip().lower()
         try:
             user_obj = User.objects.get(email=email)
         except User.DoesNotExist:
@@ -208,9 +209,9 @@ class LoginAPI(APIView):
     
 class ResetPasswordAPI(APIView):
     """
-    POST /reset-password/
-    Headers: Authorization: Token <token>
-    Body: { "old_password": "...", "new_password": "...", "new_password2": "..." }
+        POST /reset-password/
+        Headers: Authorization: Bearer <access>
+        Body: { "old_password": "...", "new_password": "...", "new_password2": "..." }
     """
 
     permission_classes = [IsAuthenticated]
@@ -301,8 +302,8 @@ class ForgotPasswordAPI(APIView):
         return Response({"status": True, "message": "OTP sent successfully"}, status=200)
     
 class SetPasswordGoogleAuthAPI(APIView):
-    # permission_classes = [IsAuthenticated]
-    def get(self, request):       
+    permission_classes = [IsAuthenticated]
+    def post(self, request):       
         try:
             user = User.objects.get(email=request.user.email)
         except User.DoesNotExist:
@@ -329,6 +330,7 @@ class SetPasswordGoogleAuthAPI(APIView):
 
 
 class SetPasswordConfirmationGoogleAuthOTP(APIView):
+    permission_classes = [IsAuthenticated]
     def post(self, request):
         otp = request.data.get("otp")
         new_password = request.data.get("new_password")
@@ -490,6 +492,7 @@ class GoogleCallbackAPI(APIView):
         username = email.split("@")[0]
 
         # Create user if not exists
+        email = (email or "").strip().lower()
         user, created = User.objects.get_or_create(
             email=email,
             defaults={
@@ -537,7 +540,10 @@ class GoogleCallbackAPI(APIView):
         response_data = {
             "status": True,
             "message": "Google login successful.",
-            "token": token.key,
+            "token": {
+                        'refresh': str(refresh),
+                        'access': str(refresh.access_token),
+                     },
             "user": {
                 "id": user.id,
                 "username": user.username,
@@ -549,7 +555,102 @@ class GoogleCallbackAPI(APIView):
         }
 
         # Serialize response
-        serializer = GoogleLoginResponseSerializer(response_data)
-
+        serializer = GoogleLoginResponseSerializer(data=response_data)
+        serializer.is_valid(raise_exception=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class GoogleMobileAuthAPI(APIView):
+    """
+    Flutter flow:
+    - Flutter gets Google idToken using Google Sign-In SDK
+    - Flutter sends it here
+    - Backend verifies it and returns SimpleJWT tokens
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        id_token_str = request.data.get("id_token")
+
+        if not id_token_str:
+            return Response(
+                {"status": False, "message": "Missing 'id_token'"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 1) Verify Google ID token
+        try:
+            idinfo = google_id_token.verify_oauth2_token(
+                id_token_str,
+                google_requests.Request(),
+                settings.GOOGLE_CLIENT_ID,  # make sure settings is imported
+            )
+        except Exception as e:
+            return Response(
+                {"status": False, "message": "Invalid Google token", "detail": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 2) Extract user info
+        email = idinfo.get("email")
+        if not email:
+            return Response(
+                {"status": False, "message": "Google token missing email"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        first_name = idinfo.get("given_name", "") or ""
+        last_name = idinfo.get("family_name", "") or ""
+        username = email.split("@")[0]
+
+        # Optional: only allow verified emails
+        if idinfo.get("email_verified") is False:
+            return Response(
+                {"status": False, "message": "Google email is not verified"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 3) Create or fetch local user
+        email = (idinfo.get("email") or "").strip().lower()
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={
+                "username": username,
+                "first_name": first_name,
+                "last_name": last_name,
+            },
+        )
+
+        # If new, set random password so the account is usable in Django auth
+        if created:
+            user.set_password(get_random_string(20))
+            user.save()
+
+        # 4) Ensure profile exists
+        UserProfile.objects.get_or_create(appuser=user)
+
+        # 5) Issue YOUR JWT tokens
+        refresh = RefreshToken.for_user(user)
+
+        return Response(
+            {
+                "status": True,
+                "message": "Google login successful",
+                "data": {
+                    "token": {
+                        "refresh": str(refresh),
+                        "access": str(refresh.access_token),
+                    },
+                    "user": {
+                        "id": user.id,
+                        "username": user.username,
+                        "email": user.email,
+                        "name": user.get_full_name(),
+                        "first_name": user.first_name,
+                        "last_name": user.last_name,
+                    },
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
     
