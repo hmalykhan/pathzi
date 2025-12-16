@@ -257,19 +257,17 @@ class ResetPasswordAPI(APIView):
         user.save()
 
         # Optional: invalidate old tokens and issue a new one
-        Token.objects.filter(user=user).delete()
-        new_token = Token.objects.create(user=user)
-
-        return Response(
-            {
-                "status": True,
-                "message": "Password changed successfully.",
-                "data": {
-                    "token": new_token.key,
-                },
-            },
-            status=status.HTTP_200_OK,
-        )
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            "status": True,
+            "message": "Password changed successfully.",
+            "data": {
+                "token": {
+                    "refresh": str(refresh),
+                    "access": str(refresh.access_token),
+                }
+    }
+    })
 
 class ForgotPasswordAPI(APIView):
     def post(self, request):
