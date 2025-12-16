@@ -149,3 +149,8 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = "apikey"  # literally this!
 EMAIL_HOST_PASSWORD = config("SENDGRID_API_KEY")  # your API key
 DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL")
+
+
+CSRF_TRUSTED_ORIGINS = [
+    "https://pathzi.onrender.com",
+]
