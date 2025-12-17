@@ -157,5 +157,5 @@ DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL")
 
 
 CSRF_TRUSTED_ORIGINS = [
-    "https://stingray-app-jqmc6.ondigitalocean.app/",
+    "https://stingray-app-jqmc6.ondigitalocean.app",
 ]
