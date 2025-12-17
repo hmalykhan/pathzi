@@ -303,7 +303,8 @@ class ForgotPasswordAPI(APIView):
     
 class SetPasswordGoogleAuthAPI(APIView):
     permission_classes = [IsAuthenticated]
-    def post(self, request):       
+
+    def post(self, request):    
         try:
             user = User.objects.get(email=request.user.email)
         except User.DoesNotExist:
