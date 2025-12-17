@@ -375,20 +375,26 @@ class SetPasswordConfirmationGoogleAuthOTP(APIView):
 
         return Response({"status": True, "message": "Password reset successful"})
     
-class otp_checker(APIView):
+
+class Otp_Checker(APIView):
+    permission_classes = [IsAuthenticated]
+
     def post(self, request):
-        permissions_classes = [IsAuthenticated]
-        otp = request.data.get("otp")
+        otp = (request.data.get("otp") or "").strip()
+        if not otp:
+            return Response({"status": False, "message": "OTP required"}, status=400)
+
         try:
-                otp_record = PasswordResetOTP.objects.get(user=request.user)
+            otp_record = PasswordResetOTP.objects.get(user=request.user)
         except PasswordResetOTP.DoesNotExist:
-                return Response({"status": False, "message": "OTP not requested"}, status=400)
+            return Response({"status": False, "message": "OTP not requested"}, status=400)
 
         if not otp_record.is_valid():
-                return Response({"status": False, "message": "OTP expired"}, status=400)
+            return Response({"status": False, "message": "OTP expired"}, status=400)
 
         if otp_record.otp != otp:
-                return Response({"status": False, "message": "Incorrect OTP"}, status=400)
+            return Response({"status": False, "message": "Incorrect OTP"}, status=400)
+
         return Response({"status": True, "message": "Correct OTP"}, status=200)
     
 class ForgotPasswordConfirmationOTP(APIView):
