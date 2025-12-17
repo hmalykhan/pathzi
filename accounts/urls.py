@@ -13,7 +13,8 @@ from accounts.views import (
                             CurrentUserProfileAPI,
                             SetPasswordConfirmationGoogleAuthOTP,
                             HomeAPI,
-                            GoogleMobileAuthAPI
+                            GoogleMobileAuthAPI,
+                            otp_checker
                             )
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
@@ -31,6 +32,7 @@ path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
 path("reset_password/", ResetPasswordAPI.as_view(), name="reset_password"),
 path("forgot_password/", ForgotPasswordAPI.as_view(), name="forgot_password"),
 path("forgot_password_confirmation/", ForgotPasswordConfirmationOTP.as_view()),
+path("otp_check",otp_checker.as_view() ),
 
 path("user_profile/", CurrentUserProfileAPI.as_view(), name="user_profile"),
 

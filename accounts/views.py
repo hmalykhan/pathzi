@@ -291,6 +291,8 @@ class ForgotPasswordAPI(APIView):
         otp_record.created_at = timezone.now()
         otp_record.save()
 
+        refresh = RefreshToken.for_user(user)
+
         # Send OTP via email
         send_mail(
             subject="Your Password Reset OTP",
@@ -299,7 +301,12 @@ class ForgotPasswordAPI(APIView):
             recipient_list=[email],
         )
 
-        return Response({"status": True, "message": "OTP sent successfully"}, status=200)
+        return Response({"status": True, "message": "OTP sent successfully", "token": {
+                                'refresh': str(refresh),
+                                'access': str(refresh.access_token),
+                             },}, status=200)
+    
+
     
 class SetPasswordGoogleAuthAPI(APIView):
     permission_classes = [IsAuthenticated]
@@ -367,6 +374,22 @@ class SetPasswordConfirmationGoogleAuthOTP(APIView):
         otp_record.delete()
 
         return Response({"status": True, "message": "Password reset successful"})
+    
+class otp_checker(APIView):
+    def post(self, request):
+        permissions_classes = [IsAuthenticated]
+        otp = request.data.get("otp")
+        try:
+                otp_record = PasswordResetOTP.objects.get(user=request.user)
+        except PasswordResetOTP.DoesNotExist:
+                return Response({"status": False, "message": "OTP not requested"}, status=400)
+
+        if not otp_record.is_valid():
+                return Response({"status": False, "message": "OTP expired"}, status=400)
+
+        if otp_record.otp != otp:
+                return Response({"status": False, "message": "Incorrect OTP"}, status=400)
+        return Response({"status": True, "message": "Correct OTP"}, status=200)
     
 class ForgotPasswordConfirmationOTP(APIView):
         def post(self, request):
