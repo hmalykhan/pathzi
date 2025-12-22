@@ -61,14 +61,35 @@ class SignUpAPI(generics.CreateAPIView):
     permission_classes = [permissions.AllowAny]
 
     def create(self, request, *args, **kwargs):
-        """
-        Override to return token + user data in the response format you like.
-        """
         serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+
+        # ✅ Custom error format (single message)
+        if not serializer.is_valid():
+            errors = serializer.errors
+
+            # prefer email error, then username, then any other first error
+            if "email" in errors and errors["email"]:
+                msg = errors["email"][0]
+            elif "username" in errors and errors["username"]:
+                msg = errors["username"][0]
+            elif "password2" in errors and errors["password2"]:
+                msg = errors["password2"][0]
+            else:
+                first_key = next(iter(errors), None)
+                if first_key is None:
+                    msg = "Invalid data."
+                else:
+                    val = errors[first_key]
+                    msg = val[0] if isinstance(val, list) and val else str(val)
+
+            return Response(
+                {"status": False, "message": str(msg)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         data = serializer.validated_data
 
-        email = (data['email'] or "").strip().lower()
+        email = (data.get("email") or "").strip().lower()
         user = User.objects.create_user(
             username=data["username"],
             email=email,
@@ -78,17 +99,15 @@ class SignUpAPI(generics.CreateAPIView):
         UserProfile.objects.get_or_create(
             appuser=user,
             defaults={
-                "age" : 0,
-                "study_level" : "",
-                "study_mediam" : "",
-                "amount_to_earn" : 0,
-                "career_switcher" : "",
-                "interest" : "",
-                "preference" : ""
+                "age": 0,
+                "study_level": "",
+                "study_mediam": "",
+                "amount_to_earn": 0,
+                "career_switcher": "",
+                "interest": "",
+                "preference": ""
             },
         )
-
-        # token, _ = Token.objects.get_or_create(user=user)
 
         return Response(
             {
@@ -102,7 +121,6 @@ class SignUpAPI(generics.CreateAPIView):
             },
             status=status.HTTP_201_CREATED,
         )
-
 
 class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
     """

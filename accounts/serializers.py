@@ -36,6 +36,7 @@ class SignUpSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
     password2 = serializers.CharField(write_only=True, min_length=8)
+
     def validate_username(self, value):
         if User.objects.filter(username=value).exists():
             raise serializers.ValidationError("Username already taken.")
@@ -47,6 +48,13 @@ class SignUpSerializer(serializers.Serializer):
             raise serializers.ValidationError("Email already registered.")
         return value
 
+    def validate(self, attrs):
+        if attrs["password"] != attrs["password2"]:
+            # can be string OR dict; string is easier for single-message handling
+            raise serializers.ValidationError({"password2": "Passwords do not match."})
+        return attrs
+    
+    
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
