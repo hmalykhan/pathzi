@@ -13,11 +13,12 @@ class PasswordResetOTP(models.Model):
     
 
 class UserProfile(models.Model):
+    status = models.BooleanField(default=False)
     appuser = models.OneToOneField(User, on_delete=models.CASCADE, blank=True, null = True)
     age = models.IntegerField(null=True, blank=True)
-    study_level = models.CharField(max_length=200, blank=True)
-    study_mediam = models.CharField(max_length=200, blank=True)
-    amount_to_earn = models.IntegerField(null=True, blank=True)
-    career_switcher = models.CharField(max_length=200, blank=True)
-    interest = models.CharField(max_length=300, blank=True)
-    preference = models.CharField(max_length=200, blank=True)
+    education_level = models.CharField(max_length=200, blank=True)
+    discipline = models.CharField(max_length=200, blank=True)
+    city = models.IntegerField(null=True, blank=True)
+    zip_code = models.CharField(max_length=200, blank=True)
+    address = models.CharField(max_length=300, blank=True)
+    category = models.CharField(max_length=200, blank=True)

@@ -161,3 +161,34 @@ DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL")
 CSRF_TRUSTED_ORIGINS = [
     "https://stingray-app-jqmc6.ondigitalocean.app",
 ]
+
+import os
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+
+    "formatters": {
+        "simple": {
+            "format": "[{levelname}] {asctime} {name}: {message}",
+            "style": "{",
+        },
+    },
+
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+        },
+        "file": {
+            "class": "logging.FileHandler",
+            "filename": os.path.join(BASE_DIR, "debug.log"),
+            "formatter": "simple",
+        },
+    },
+
+    "root": {
+        "handlers": ["console", "file"],
+        "level": "INFO",
+    },
+}
