@@ -111,4 +111,13 @@ class JobsView(viewsets.ModelViewSet):
             return Response({"message": "Job unsaved."}, status=status.HTTP_200_OK)
 
         return Response({"error": "Job was not saved."}, status=status.HTTP_404_NOT_FOUND)
+    
+    # def get_queryset(self):
+    #      if self.request.user.is_staff:
+    #          return Job.objects.all()
+    #      if self.request.user.is_authenticated:
+    #         #  return Job.objects.filter(user_profile__appuser=self.request.user)
+    #         user = UserProfile.objects.get(user=self.request.user)
+    #         return Job.objects.filter(user_profile__appuser=self.request.user)
+    #      return Job.objects.none()
 
