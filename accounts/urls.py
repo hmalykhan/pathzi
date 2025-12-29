@@ -32,7 +32,7 @@ path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
 path("reset_password/", ResetPasswordAPI.as_view(), name="reset_password"),
 path("forgot_password/", ForgotPasswordAPI.as_view(), name="forgot_password"),
 path("forgot_password_confirmation/", ForgotPasswordConfirmationOTP.as_view()),
-path("otp_check",Otp_Checker.as_view() ),
+path("otp_check/",Otp_Checker.as_view() ),
 
 path("user_profile/", CurrentUserProfileAPI.as_view(), name="user_profile"),
 

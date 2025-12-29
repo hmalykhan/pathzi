@@ -335,23 +335,25 @@ class ResetPasswordAPI(APIView):
 
 class ForgotPasswordAPI(APIView):
     """
-    POST /forgot-password/
+    POST /accounts/forgot_password/
     Body: { "email": "..." }
     Sends OTP to email (if exists).
     """
-    async def post(self, request):
+
+    def post(self, request):
         email = (request.data.get("email") or "").strip().lower()
 
         if not email:
+            logger.warning("ForgotPassword: missing email in request")
             return Response(
                 {"status": False, "message": "Email required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
-            user = await sync_to_async(User.objects.get, thread_sensitive=True)(email=email)
+            user = User.objects.get(email=email)
         except User.DoesNotExist:
-            # keep your original behavior (don’t reveal user existence)
+            # Don’t reveal whether user exists
             logger.info("ForgotPassword requested for non-existing email=%s", email)
             return Response(
                 {"status": True, "message": "OTP sent if email exists"},
@@ -360,52 +362,59 @@ class ForgotPasswordAPI(APIView):
 
         otp = str(random.randint(100000, 999999))
 
-        otp_record, _ = await sync_to_async(PasswordResetOTP.objects.get_or_create, thread_sensitive=True)(user=user)
-        otp_record.otp = otp
-        otp_record.created_at = timezone.now()
-        await sync_to_async(otp_record.save, thread_sensitive=True)()
-
-        # WARNING: returning token here allows login without OTP (your current behavior)
-        refresh = RefreshToken.for_user(user)
+        try:
+            otp_record, _ = PasswordResetOTP.objects.get_or_create(user=user)
+            otp_record.otp = otp
+            otp_record.created_at = timezone.now()
+            otp_record.save()
+        except Exception as e:
+            logger.exception(
+                "ForgotPassword: failed saving OTP record user_id=%s email=%s err=%s",
+                user.id, email, str(e)
+            )
+            return Response(
+                {"status": False, "message": "Could not generate OTP. Please try again."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
-            await sync_to_async(send_mail, thread_sensitive=True)(
+            send_mail(
                 subject="Your Password Reset OTP",
                 message=f"Your OTP is: {otp}\nThis OTP is valid for 5 minutes.",
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[email],
             )
         except Exception as e:
-            logger.exception("Failed sending OTP email to %s: %s", email, str(e))
+            logger.exception(
+                "ForgotPassword: failed sending OTP email user_id=%s email=%s err=%s",
+                user.id, email, str(e)
+            )
             return Response(
                 {"status": False, "message": "Failed to send OTP. Please try again."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         logger.info("ForgotPassword OTP sent: user_id=%s email=%s", user.id, email)
+
+        # ✅ Recommended: DO NOT return JWT tokens here (OTP not verified yet)
         return Response(
-            {
-                "status": True,
-                "message": "OTP sent successfully",
-                "data": {
-                    "token": {
-                        "refresh": str(refresh),
-                        "access": str(refresh.access_token),
-                    }
-                },
-            },
+            {"status": True, "message": "OTP sent successfully"},
             status=status.HTTP_200_OK,
         )
+
 
 
 class SetPasswordGoogleAuthAPI(APIView):
     permission_classes = [IsAuthenticated]
 
-    async def post(self, request):
+    def post(self, request):
         try:
-            user = await sync_to_async(User.objects.get, thread_sensitive=True)(email=request.user.email)
+            user = User.objects.get(email=request.user.email)
         except User.DoesNotExist:
-            logger.warning("SetPasswordGoogleAuthAPI: user not found for request.user email=%s", request.user.email)
+            logger.warning(
+                "SetPasswordGoogleAuthAPI: user not found for request.user email=%s",
+                request.user.email,
+            )
             return Response(
                 {"status": False, "message": "Invalid user."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -413,30 +422,44 @@ class SetPasswordGoogleAuthAPI(APIView):
 
         otp = str(random.randint(100000, 999999))
 
-        otp_record, _ = await sync_to_async(PasswordResetOTP.objects.get_or_create, thread_sensitive=True)(user=user)
-        otp_record.otp = otp
-        otp_record.created_at = timezone.now()
-        await sync_to_async(otp_record.save, thread_sensitive=True)()
+        try:
+            otp_record, _ = PasswordResetOTP.objects.get_or_create(user=user)
+            otp_record.otp = otp
+            otp_record.created_at = timezone.now()
+            otp_record.save()
+        except Exception as e:
+            logger.exception(
+                "SetPasswordGoogleAuthAPI: failed saving OTP user_id=%s err=%s",
+                user.id, str(e)
+            )
+            return Response(
+                {"status": False, "message": "Could not generate OTP. Please try again."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
-            await sync_to_async(send_mail, thread_sensitive=True)(
+            send_mail(
                 subject="Your Password Reset OTP",
                 message=f"Your OTP is: {otp}\nThis OTP is valid for 5 minutes.",
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[request.user.email],
             )
         except Exception as e:
-            logger.exception("Failed sending OTP (google auth) to %s: %s", request.user.email, str(e))
+            logger.exception(
+                "Failed sending OTP (google auth) to %s: %s",
+                request.user.email, str(e)
+            )
             return Response(
                 {"status": False, "message": "Failed to send OTP. Please try again."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        logger.info("SetPasswordGoogleAuth OTP sent: user_id=%s", user.id)
+        logger.info("SetPasswordGoogleAuth OTP sent: user_id=%s email=%s", user.id, request.user.email)
         return Response(
             {"status": True, "message": "OTP sent successfully"},
             status=status.HTTP_200_OK,
         )
+
 
 
 class SetPasswordConfirmationGoogleAuthOTP(APIView):
