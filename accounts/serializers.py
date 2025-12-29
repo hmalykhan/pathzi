@@ -12,14 +12,53 @@ class UserProfileSerializer(serializers.ModelSerializer):
     courses = serializers.SerializerMethodField()
     jobs = serializers.SerializerMethodField()
     apprenticeships = serializers.SerializerMethodField()
-    # qualifications = QualificationSerializer(read_only=True, many=True)
+    careers = serializers.SerializerMethodField()
+
+    # ✅ category as JSON list of strings
+    category = serializers.ListField(
+        child=serializers.CharField(max_length=200),
+        required=False,
+        allow_empty=True
+    )
 
     class Meta:
         model = UserProfile
         fields = "__all__"
 
+    def validate_category(self, value):
+        """
+        Accepts:
+          - ["Administration", "IT"]
+          - "Administration"   (optional single string)
+        Saves:
+          - list of non-empty strings
+          - stripped
+          - unique (case-insensitive)
+        """
+        if value is None:
+            return []
+
+        if isinstance(value, str):
+            value = [value]
+
+        cleaned = []
+        seen = set()
+        for item in value:
+            if not item:
+                continue
+            item = item.strip()
+            if not item:
+                continue
+
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+
+            cleaned.append(item)  # or item.lower() if you want stored lowercase
+        return cleaned
+
     def get_courses(self, obj):
-        # avoid circular imports
         Course = apps.get_model("courses", "Course")
         UserSavedCourse = apps.get_model("courses", "UserSavedCourse")
 
@@ -37,7 +76,6 @@ class UserProfileSerializer(serializers.ModelSerializer):
         return CourseFullSerializer(qs, many=True, context=self.context).data
 
     def get_jobs(self, obj):
-        # avoid circular imports
         Job = apps.get_model("jobs", "Job")  # proxy mapped to scraper table
         UserSavedJob = apps.get_model("jobs", "UserSavedJob")
 
@@ -53,8 +91,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
                 fields = "__all__"
 
         return JobFullSerializer(qs, many=True, context=self.context).data
+
     def get_apprenticeships(self, obj):
-        # avoid circular imports
         Apprenticeship = apps.get_model("apprenticeship", "Apprenticeship")
         UserSavedApprenticeship = apps.get_model("apprenticeship", "UserSavedApprenticeship")
 
@@ -64,13 +102,29 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
         qs = Apprenticeship.objects.filter(vacancy_ref__in=vacancy_refs)
 
-        # full apprenticeship fields (ALL columns from scraper table)
         class ApprenticeshipFullSerializer(serializers.ModelSerializer):
             class Meta:
                 model = Apprenticeship
                 fields = "__all__"
 
         return ApprenticeshipFullSerializer(qs, many=True, context=self.context).data
+
+    def get_careers(self, obj):
+        Career = apps.get_model("careers", "Career")  # proxy mapped to fetch_careerjob
+        UserSavedCareer = apps.get_model("careers", "UserSavedCareer")
+
+        career_ids = UserSavedCareer.objects.filter(
+            user_profile=obj
+        ).values_list("career_id", flat=True)
+
+        qs = Career.objects.filter(id__in=career_ids)
+
+        class CareerFullSerializer(serializers.ModelSerializer):
+            class Meta:
+                model = Career
+                fields = "__all__"
+
+        return CareerFullSerializer(qs, many=True, context=self.context).data
 
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(source='get_full_name', read_only = True)

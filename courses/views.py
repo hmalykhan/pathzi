@@ -92,6 +92,9 @@ from accounts.models import UserProfile
 from .models import Course, UserSavedCourse
 from .api.serializer import CoursesSerializer
 from .api.permissions import CoursePermission
+from django.db.models import Q
+from django.db.models.functions import Greatest, Lower
+from django.contrib.postgres.search import TrigramSimilarity
 
 
 class CoursesView(viewsets.ModelViewSet):
@@ -155,3 +158,67 @@ class CoursesView(viewsets.ModelViewSet):
             {"error": "no user found in this course."},
             status=status.HTTP_404_NOT_FOUND,
         )
+    
+    def get_queryset(self):
+        if not self.request.user.is_authenticated:
+            return Course.objects.none()
+
+        profile = UserProfile.objects.filter(appuser=self.request.user).first()
+        if not profile:
+            return Course.objects.none()
+
+        # ---------- category filter (case-insensitive) ----------
+        categories = profile.category or []
+        if isinstance(categories, str):
+            categories = [categories]
+        categories = [c.strip().lower() for c in categories if c and c.strip()]
+        if not categories:
+            return Course.objects.none()
+
+        base_qs = Course.objects.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
+
+        # ---------- location terms ----------
+        raw_terms = []
+        if profile.city:
+            raw_terms.append(profile.city.strip().lower())
+        if profile.zip_code:
+            raw_terms.append(profile.zip_code.strip().lower())
+        if profile.address:
+            raw_terms.append(profile.address.strip().lower())
+
+        raw_terms = list({t for t in raw_terms if t})
+        if not raw_terms:
+            return Course.objects.none()   # strict: must match location
+
+        # ---------- 1) strict partial match (preferred) ----------
+        qs = base_qs.annotate(loc_l=Lower("address")).exclude(loc_l__isnull=True).exclude(loc_l="")
+
+        contains_q = Q()
+        for t in raw_terms:
+            contains_q |= Q(loc_l__icontains=t)
+
+        strict_qs = qs.filter(contains_q)
+        if strict_qs.exists():
+            return strict_qs
+
+        # ---------- 2) fuzzy match fallback (misspellings) ----------
+        # tokenise (optional) for fuzzy; keep >=3 chars
+        terms = []
+        for text in raw_terms:
+            for tok in text.replace(",", " ").split():
+                tok = tok.strip()
+                if len(tok) >= 3:
+                    terms.append(tok)
+        terms = list(dict.fromkeys(terms))
+        if not terms:
+            return Course.objects.none()
+
+        similarities = [TrigramSimilarity("loc_l", t) for t in terms]
+
+        if len(similarities) == 1:
+            qs = qs.annotate(sim=similarities[0])
+        else:
+            qs = qs.annotate(sim=Greatest(*similarities))
+
+        # raise threshold a bit so it doesn't match too broadly
+        return qs.filter(sim__gte=0.3).order_by("-sim")

@@ -7,6 +7,9 @@ from accounts.models import UserProfile
 from careers.models import Career, UserSavedCareer
 from careers.api.serializers import CareersSerializer
 from careers.api.permissions import CareerPermission
+from django.db.models import Q
+from django.db.models.functions import Greatest, Lower
+from django.contrib.postgres.search import TrigramSimilarity
 
 
 class CareersView(viewsets.ModelViewSet):
@@ -51,3 +54,21 @@ class CareersView(viewsets.ModelViewSet):
             return Response({"message": "Career unsaved."}, status=status.HTTP_200_OK)
 
         return Response({"error": "Career was not saved."}, status=status.HTTP_404_NOT_FOUND)
+    
+    def get_queryset(self):
+        if not self.request.user.is_authenticated:
+            return Career.objects.none()
+
+        profile = UserProfile.objects.filter(appuser=self.request.user).first()
+        if not profile:
+            return Career.objects.none()
+
+        # ---------- category filter (case-insensitive) ----------
+        categories = profile.category or []
+        if isinstance(categories, str):
+            categories = [categories]
+        categories = [c.strip().lower() for c in categories if c and c.strip()]
+        if not categories:
+            return Career.objects.none()
+
+        return Career.objects.annotate(cat_l=Lower("sub_type")).filter(cat_l__in=categories)
