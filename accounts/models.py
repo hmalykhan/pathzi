@@ -16,7 +16,7 @@ class PasswordResetOTP(models.Model):
 class UserProfile(models.Model):
     status = models.BooleanField(default=False)
     appuser = models.OneToOneField(User, on_delete=models.CASCADE, blank=True, null = True)
-    age = models.IntegerField(null=True, blank=True)
+    age = models.CharField(max_length=200,null=True, blank=True)
     education_level = models.CharField(max_length=200, blank=True)
     discipline = models.CharField(max_length=200, blank=True)
     city = models.CharField(max_length=200, blank=True, null=True)

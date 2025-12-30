@@ -2,6 +2,7 @@ import logging
 import random
 import urllib.parse
 import requests
+import threading
 
 from datetime import timedelta
 
@@ -38,6 +39,29 @@ from .serializers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def send_email_async(subject, message, from_email, recipient_list):
+    """
+    Send email in a background thread to avoid blocking the request.
+    This provides the same performance benefit as async views without DRF compatibility issues.
+    """
+    def _send():
+        try:
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=from_email,
+                recipient_list=recipient_list,
+                fail_silently=False,
+            )
+            logger.info(f"Email sent successfully to {recipient_list}")
+        except Exception as e:
+            logger.exception(f"Failed to send email to {recipient_list}: {str(e)}")
+    
+    thread = threading.Thread(target=_send, daemon=True)
+    thread.start()
+    logger.info(f"Email sending started in background thread for {recipient_list}")
 
 
 class HomeAPI(APIView):
@@ -98,15 +122,31 @@ class SignUpAPI(generics.CreateAPIView):
 
         data = serializer.validated_data
         email = (data.get("email") or "").strip().lower()
+        username = data["username"]
+
+        # Check uniqueness with optimized queries (will use indexes)
+        if User.objects.filter(username=username).exists():
+            logger.warning("Signup failed: username already taken username=%s", username)
+            return Response(
+                {"status": False, "message": "Username already taken."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if User.objects.filter(email__iexact=email).exists():
+            logger.warning("Signup failed: email already registered email=%s", email)
+            return Response(
+                {"status": False, "message": "Email already registered."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             user = User.objects.create_user(
-                username=data["username"],
+                username=username,
                 email=email,
                 password=data["password"],
             )
-            # your current UserProfile model fields
-            UserProfile.objects.get_or_create(appuser=user, defaults={"age": 0})
+            # Use create instead of get_or_create since we know user is new
+            UserProfile.objects.create(appuser=user, age=0)
         except Exception as e:
             logger.exception("Signup failed (server error): %s", str(e))
             return Response(
@@ -223,9 +263,9 @@ class LoginAPI(APIView):
         email = (serializer.validated_data.get("email") or "").strip().lower()
         password = serializer.validated_data["password"]
 
-        try:
-            user_obj = User.objects.get(email=email)
-        except User.DoesNotExist:
+        # Use filter().first() for better performance with index
+        user_obj = User.objects.filter(email__iexact=email).first()
+        if not user_obj:
             logger.warning("Login failed: user not found for email=%s", email)
             return Response(
                 {"status": False, "message": "Invalid credentials."},
@@ -350,10 +390,10 @@ class ForgotPasswordAPI(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
-            # Don’t reveal whether user exists
+        # Use filter().first() for better performance with index
+        user = User.objects.filter(email__iexact=email).first()
+        if not user:
+            # Don't reveal whether user exists
             logger.info("ForgotPassword requested for non-existing email=%s", email)
             return Response(
                 {"status": True, "message": "OTP sent if email exists"},
@@ -377,22 +417,13 @@ class ForgotPasswordAPI(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        try:
-            send_mail(
-                subject="Your Password Reset OTP",
-                message=f"Your OTP is: {otp}\nThis OTP is valid for 5 minutes.",
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[email],
-            )
-        except Exception as e:
-            logger.exception(
-                "ForgotPassword: failed sending OTP email user_id=%s email=%s err=%s",
-                user.id, email, str(e)
-            )
-            return Response(
-                {"status": False, "message": "Failed to send OTP. Please try again."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # Send email in background thread - doesn't block the response
+        send_email_async(
+            subject="Your Password Reset OTP",
+            message=f"Your OTP is: {otp}\nThis OTP is valid for 5 minutes.",
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[email],
+        )
 
         logger.info("ForgotPassword OTP sent: user_id=%s email=%s", user.id, email)
 
@@ -437,22 +468,13 @@ class SetPasswordGoogleAuthAPI(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        try:
-            send_mail(
-                subject="Your Password Reset OTP",
-                message=f"Your OTP is: {otp}\nThis OTP is valid for 5 minutes.",
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[request.user.email],
-            )
-        except Exception as e:
-            logger.exception(
-                "Failed sending OTP (google auth) to %s: %s",
-                request.user.email, str(e)
-            )
-            return Response(
-                {"status": False, "message": "Failed to send OTP. Please try again."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # Send email in background thread - doesn't block the response
+        send_email_async(
+            subject="Your Password Reset OTP",
+            message=f"Your OTP is: {otp}\nThis OTP is valid for 5 minutes.",
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[request.user.email],
+        )
 
         logger.info("SetPasswordGoogleAuth OTP sent: user_id=%s email=%s", user.id, request.user.email)
         return Response(

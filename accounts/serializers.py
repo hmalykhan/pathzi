@@ -148,16 +148,9 @@ class SignUpSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True, min_length=8)
     password2 = serializers.CharField(write_only=True, min_length=8)
 
-    def validate_username(self, value):
-        if User.objects.filter(username=value).exists():
-            raise serializers.ValidationError("Username already taken.")
-        return value
-
-    def validate_email(self, value):
-        value = value.strip().lower()
-        if User.objects.filter(email__iexact=value).exists():
-            raise serializers.ValidationError("Email already registered.")
-        return value
+    # Removed validate_username and validate_email methods
+    # These were causing DB queries during validation
+    # Uniqueness is now checked in the view for better performance and control
 
     def validate(self, attrs):
         if attrs["password"] != attrs["password2"]:

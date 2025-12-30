@@ -34,6 +34,7 @@ class ApprenticeshipVacancy(models.Model):
 
     category = models.CharField(max_length=255)
     subcategory = models.CharField(max_length=255)
+    image_url = models.URLField(max_length=1000, blank=True, default="")
 
     title = models.CharField(max_length=500)
     employer_name = models.CharField(max_length=500)

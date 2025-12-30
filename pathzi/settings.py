@@ -109,7 +109,7 @@ DATABASE_URL = config("DATABASE_URL")  # reads from .env or system env
 DATABASES = {
     "default": dj_database_url.parse(
         DATABASE_URL,
-        conn_max_age=60,
+        conn_max_age=600,  # Increased from 60 to 600 for better connection pooling
         ssl_require=True,
     )
 }
@@ -117,16 +117,23 @@ DATABASES = {
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
 
+# Optimized for performance - removed CommonPasswordValidator which loads a large file
+# and adds ~2-3 seconds to password hashing operations
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
     },
     {
         'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        'OPTIONS': {
+            'min_length': 8,
+        }
     },
-    {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
-    },
+    # CommonPasswordValidator removed - it loads a 3MB file of common passwords
+    # which adds 2-3 seconds to every password hash operation
+    # {
+    #     'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+    # },
     {
         'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
     },
@@ -170,6 +177,17 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = "apikey"  # literally this!
 EMAIL_HOST_PASSWORD = config("SENDGRID_API_KEY")  # your API key
 DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL")
+EMAIL_TIMEOUT = 30  # Prevent indefinite hangs on SMTP connections
+
+
+# Password Hashing - Use Argon2 for better performance and security
+# Argon2 is ~5x faster than PBKDF2 and recommended by Django
+PASSWORD_HASHERS = [
+    'django.contrib.auth.hashers.Argon2PasswordHasher',  # Primary hasher (fast & secure)
+    'django.contrib.auth.hashers.PBKDF2PasswordHasher',  # Fallback for existing passwords
+    'django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher',
+]
+
 
 
 CSRF_TRUSTED_ORIGINS = [

@@ -18,3 +18,4 @@ python-decouple==3.8
 djangorestframework-simplejwt
 dj_database_url
 psycopg
+argon2-cffi
