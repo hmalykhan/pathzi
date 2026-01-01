@@ -55,6 +55,8 @@ class JobsView(viewsets.ModelViewSet):
         return Response({"error": "Job was not saved."}, status=status.HTTP_404_NOT_FOUND)
 
     def get_queryset(self):
+        # if self.request.user.is_staff:
+        #     return Job.objects.all()
         if not self.request.user.is_authenticated:
             return Job.objects.none()
 
@@ -67,10 +69,12 @@ class JobsView(viewsets.ModelViewSet):
         if isinstance(categories, str):
             categories = [categories]
         categories = [c.strip().lower() for c in categories if c and c.strip()]
+        # print("these are the categoryies = ----> ",categories)
         if not categories:
             return Job.objects.none()
 
         base_qs = Job.objects.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
+        # print(base_qs)
 
         # ---------- location terms ----------
         raw_terms = []
