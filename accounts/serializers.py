@@ -21,6 +21,14 @@ class UserProfileSerializer(serializers.ModelSerializer):
         allow_empty=True
     )
 
+    # ✅ report as JSON list of strings
+    report = serializers.ListField(
+        child=serializers.CharField(),  # no max_length to allow long strings
+        required=False,
+        allow_empty=True
+    )
+
+
     class Meta:
         model = UserProfile
         fields = "__all__"
@@ -56,6 +64,30 @@ class UserProfileSerializer(serializers.ModelSerializer):
             seen.add(key)
 
             cleaned.append(item)  # or item.lower() if you want stored lowercase
+        return cleaned
+    
+    def validate_report(self, value):
+        if value is None:
+            return []
+
+        if isinstance(value, str):
+            value = [value]
+
+        cleaned = []
+        seen = set()
+        for item in value:
+            if not item:
+                continue
+            item = item.strip()
+            if not item:
+                continue
+
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(item)
+
         return cleaned
 
     def get_courses(self, obj):

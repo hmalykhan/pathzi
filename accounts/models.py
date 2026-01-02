@@ -2,8 +2,8 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
 from datetime import timedelta
-from django.core.exceptions import ValidationError
-    
+
+
 class PasswordResetOTP(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     otp = models.CharField(max_length=6)
@@ -11,24 +11,35 @@ class PasswordResetOTP(models.Model):
 
     def is_valid(self):
         return self.created_at >= timezone.now() - timedelta(minutes=5)
-    
+
 
 class UserProfile(models.Model):
     status = models.BooleanField(default=False)
-    appuser = models.OneToOneField(User, on_delete=models.CASCADE, blank=True, null = True)
-    age = models.CharField(max_length=200,null=True, blank=True)
+    appuser = models.OneToOneField(User, on_delete=models.CASCADE, blank=True, null=True)
+
+    age = models.CharField(max_length=200, null=True, blank=True)
     education_level = models.CharField(max_length=200, blank=True)
     discipline = models.CharField(max_length=200, blank=True)
     city = models.CharField(max_length=200, blank=True, null=True)
     zip_code = models.CharField(max_length=200, blank=True)
     address = models.CharField(max_length=300, blank=True)
+
     category = models.JSONField(default=list, blank=True)  # list of strings
+
+    # ✅ new fields
+    report_status = models.BooleanField(default=False)
+    report = models.JSONField(default=list, blank=True)  # list of (long) strings
 
     def clean(self):
         super().clean()
-        if self.category is None:
-            return
-        if not isinstance(self.category, list):
-            raise ValidationError({"category": "Category must be a list."})
-        if not all(isinstance(x, str) for x in self.category):
-            raise ValidationError({"category": "Each category must be a string."})
+
+        def validate_string_list(value, field_name):
+            if value is None:
+                return
+            if not isinstance(value, list):
+                raise ValidationError({field_name: f"{field_name} must be a list."})
+            if not all(isinstance(x, str) for x in value):
+                raise ValidationError({field_name: f"Each item in {field_name} must be a string."})
+
+        validate_string_list(self.category, "category")
+        validate_string_list(self.report, "report")
