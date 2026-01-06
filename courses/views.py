@@ -7,9 +7,11 @@ from accounts.models import UserProfile
 from .models import Course, UserSavedCourse
 from .api.serializer import CoursesSerializer
 from .api.permissions import CoursePermission
-from django.db.models import Q
-from django.db.models.functions import Greatest, Lower
 from django.contrib.postgres.search import TrigramSimilarity
+import re
+from django.db.models import Q, Value, TextField
+from django.db.models.functions import Lower, Replace, Trim, Coalesce, Cast
+from django.db.models import Case, When, Value, IntegerField, TextField
 
 
 class CoursesView(viewsets.ModelViewSet):
@@ -75,11 +77,18 @@ class CoursesView(viewsets.ModelViewSet):
         )
     
     def get_queryset(self):
-        if not self.request.user.is_authenticated:
+        print("\n========== get_queryset() START ==========")
+
+        user = getattr(self.request, "user", None)
+        print("User:", user, "| authenticated:", bool(user and user.is_authenticated))
+        if not user or not user.is_authenticated:
+            print("-> Not authenticated. Returning none().")
             return Course.objects.none()
 
-        profile = UserProfile.objects.filter(appuser=self.request.user).first()
+        profile = UserProfile.objects.filter(appuser=user).first()
+        print("Profile found:", bool(profile))
         if not profile:
+            print("-> No profile. Returning none().")
             return Course.objects.none()
 
         # ---------- category filter (case-insensitive) ----------
@@ -87,56 +96,79 @@ class CoursesView(viewsets.ModelViewSet):
         if isinstance(categories, str):
             categories = [categories]
         categories = [c.strip().lower() for c in categories if c and c.strip()]
+        print("Categories (normalized):", categories)
+
         if not categories:
+            print("-> No categories. Returning none().")
             return Course.objects.none()
 
         base_qs = Course.objects.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
+        print("base_qs count:", base_qs.count())
 
-        # ---------- location terms ----------
-        raw_terms = []
-        if profile.city:
-            raw_terms.append(profile.city.strip().lower())
-        if profile.zip_code:
-            raw_terms.append(profile.zip_code.strip().lower())
-        if profile.address:
-            raw_terms.append(profile.address.strip().lower())
+        # ---------- build words from country/city/zip ----------
+        country = (getattr(profile, "country", None) or "").strip().lower()
+        city = (getattr(profile, "city", None) or "").strip().lower()
+        postal = (getattr(profile, "zip_code", None) or "").strip().lower()
 
-        raw_terms = list({t for t in raw_terms if t})
-        if not raw_terms:
-            return Course.objects.none()   # strict: must match location
+        profile_text = " ".join([x for x in [country, city, postal] if x])
+        print("Profile text (raw):", repr(profile_text))
 
-        # ---------- 1) strict partial match (preferred) ----------
-        qs = base_qs.annotate(loc_l=Lower("address")).exclude(loc_l__isnull=True).exclude(loc_l="")
+        words = [w for w in re.split(r"[^a-z0-9]+", profile_text) if w]
+        words = list(dict.fromkeys(words))  # dedupe keep order
+        print("Words:", words, "| count:", len(words))
 
-        contains_q = Q()
-        for t in raw_terms:
-            contains_q |= Q(loc_l__icontains=t)
-
-        strict_qs = qs.filter(contains_q)
-        if strict_qs.exists():
-            return strict_qs
-
-        # ---------- 2) fuzzy match fallback (misspellings) ----------
-        # tokenise (optional) for fuzzy; keep >=3 chars
-        terms = []
-        for text in raw_terms:
-            for tok in text.replace(",", " ").split():
-                tok = tok.strip()
-                if len(tok) >= 3:
-                    terms.append(tok)
-        terms = list(dict.fromkeys(terms))
-        if not terms:
+        if not words:
+            print("-> No words, returning none().")
             return Course.objects.none()
 
-        similarities = [TrigramSimilarity("loc_l", t) for t in terms]
+        # If only 1 word exists, requiring 2 would always return empty
+        # Choose threshold = min(2, len(words)) so it still works.
+        THRESHOLD = 2 if len(words) >= 2 else 1
+        print("Match threshold:", THRESHOLD)
 
-        if len(similarities) == 1:
-            qs = qs.annotate(sim=similarities[0])
-        else:
-            qs = qs.annotate(sim=Greatest(*similarities))
+        # ---------- normalize course address to loc_n ----------
+        empty_text = Value("", output_field=TextField())
+        addr = Coalesce(Cast("address", output_field=TextField()), empty_text, output_field=TextField())
+        addr = Lower(Trim(addr))
 
-        # raise threshold a bit so it doesn't match too broadly
-        return qs.filter(sim__gte=0.3).order_by("-sim")
+        # remove spaces + common separators
+        for ch in [" ", "\n", "\t", "\r", ",", ".", "-", "/", "#"]:
+            addr = Replace(
+                addr,
+                Value(ch, output_field=TextField()),
+                empty_text,
+                output_field=TextField(),
+            )
+        addr = Cast(addr, output_field=TextField())
+
+        qs = base_qs.annotate(loc_n=addr).exclude(loc_n="")
+        print("qs count after normalize:", qs.count())
+        print("Sample address:", list(qs.values_list("address", flat=True)[:5]))
+        print("Sample loc_n:", list(qs.values_list("loc_n", flat=True)[:5]))
+
+        # ---------- compute match_count = number of words found in loc_n ----------
+        match_expr = Value(0, output_field=IntegerField())
+        for w in words:
+            # NOTE: loc_n has removed separators, words are alnum, so contains works
+            match_expr += Case(
+                When(loc_n__contains=w, then=Value(1)),
+                default=Value(0),
+                output_field=IntegerField(),
+            )
+
+        qs = qs.annotate(match_count=match_expr)
+
+        # logs per word
+        for w in words:
+            c = qs.filter(loc_n__contains=w).count()
+            print(f"Word '{w}' -> matches:", c)
+
+        result = qs.filter(match_count__gte=THRESHOLD).order_by("-match_count")
+        print("Final result count:", result.count())
+        print("Final sample (address, match_count):", list(result.values("address", "match_count")[:10]))
+
+        print("========== get_queryset() END ==========\n")
+        return result
 
 
 

@@ -1,4 +1,4 @@
-# careers/models.py
+# careers/models.py (Recommendation project)
 import uuid
 from django.db import models
 from accounts.models import UserProfile
@@ -8,9 +8,9 @@ SCRAPED_SCRAPELOG_TABLE = "fetch_jobscrapelog"
 
 
 class CareerScrapeLog(models.Model):
-    # IMPORTANT:
-    # If your DB table has BIGINT id, keep BigAutoField.
-    # If it has INT id, change to AutoField.
+    """
+    Read-only mapping to the scraper table.
+    """
     id = models.BigAutoField(primary_key=True)
 
     run_id = models.UUIDField(default=uuid.uuid4, db_index=True)
@@ -28,31 +28,26 @@ class CareerScrapeLog(models.Model):
     class Meta:
         managed = False
         db_table = SCRAPED_SCRAPELOG_TABLE
-        # These don't create indexes because managed=False, but good for “matching”
-        indexes = [
-            models.Index(fields=["created_at"]),
-            models.Index(fields=["run_id", "created_at"]),
-            models.Index(fields=["status", "created_at"]),
-            models.Index(fields=["route", "sub_type", "created_at"]),
-        ]
 
     def __str__(self):
         return f"{self.created_at} {self.status} {self.job_slug}"
 
 
 class CareerJob(models.Model):
+    """
+    Read-only mapping to the scraper table.
+    """
     class CareerType(models.TextChoices):
         SECTOR = "sector", "Sector"
         CATEGORY = "category", "Category"
 
-    # Same note as above about id type.
     id = models.BigAutoField(primary_key=True)
 
     career_type = models.CharField(max_length=20, choices=CareerType.choices)
     sub_type = models.CharField(max_length=255)
 
     job_slug = models.SlugField(max_length=255)
-    job_url = models.URLField()  # matches project 1 default (max_length=200)
+    job_url = models.URLField()  # default max_length=200
 
     image_url = models.URLField(max_length=1000, blank=True, default="")
 
@@ -79,14 +74,14 @@ class CareerJob(models.Model):
     class Meta:
         managed = False
         db_table = SCRAPED_CAREERJOB_TABLE
-        unique_together = (("career_type", "sub_type", "job_slug"),)
+        # Uniqueness is enforced in Postgres by the unique index:
+        # (career_type, sub_type, job_slug)
 
     def __str__(self) -> str:
         return f"{self.career_type}:{self.sub_type} - {self.jobname}"
 
 
-
-# ✅ Backward compatibility: from careers.models import Career
+# Backward compatibility: from careers.models import Career
 class Career(CareerJob):
     class Meta:
         proxy = True
@@ -94,8 +89,8 @@ class Career(CareerJob):
 
 class UserSavedCareer(models.Model):
     """
-    ✅ API-owned join table for save/unsave/my.
-    We store the scraper row PK (Career.id).
+    API-owned join table for save/unsave/my.
+    Stores scraper row PK (Career.id) as career_id.
     """
     user_profile = models.ForeignKey(
         UserProfile, on_delete=models.CASCADE, related_name="career_links"
