@@ -13,21 +13,29 @@ class UserProfileNestedSerializer(serializers.ModelSerializer):
 
 
 class CareerListSerializer(serializers.ModelSerializer):
+    category = serializers.CharField(source="sub_type", read_only=True)
+    subcategory = serializers.CharField(source="jobname", read_only=True)
     class Meta:
         model = Career
         fields = (
             "id",
             "career_type",
-            "sub_type",
+            # "sub_type",
+            "category",
+            # "jobname",
+            "subcategory",
             "job_slug",
             "job_url",
-            "image_url",
-            "jobname",
+            "job_description",
             "salary",
             "hours",
             "timings",
-            "last_scrape_status",
-            "last_checked_at",
+            "how_to_become",
+            "college",
+            "college_entry_req",
+            "apprenticeship_entry_req",
+            "apprenticeship",
+            "scraped_at",
         )
         read_only_fields = fields
 

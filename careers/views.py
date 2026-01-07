@@ -160,6 +160,9 @@ class CareersView(viewsets.ModelViewSet):
 
         careers = Career.objects.filter(id__in=saved_ids)
         return Response(self.get_serializer(careers, many=True).data, status=status.HTTP_200_OK)
+    # @action(detail=False, method=['get'])
+    # def tailored_jobs(self, request, pk=None):
+    #     # self.get_object(pk = pk)
     
     def get_serializer_class(self):
         if self.action in ("list", "my"):
