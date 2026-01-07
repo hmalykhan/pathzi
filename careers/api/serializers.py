@@ -24,6 +24,7 @@ class CareerListSerializer(serializers.ModelSerializer):
             "category",
             # "jobname",
             "subcategory",
+            "image_url"
             "job_slug",
             "job_url",
             "job_description",
@@ -41,6 +42,8 @@ class CareerListSerializer(serializers.ModelSerializer):
 
 
 class CareerDetailSerializer(serializers.ModelSerializer):
+    category = serializers.CharField(source="sub_type", read_only=True)
+    subcategory = serializers.CharField(source="jobname", read_only=True)
     user_profile = serializers.SerializerMethodField(read_only=True)
 
     user_profile_id = serializers.PrimaryKeyRelatedField(
@@ -52,7 +55,29 @@ class CareerDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Career
-        fields = "__all__"
+        fields = (
+            "id",
+            "user_profile_id",
+            "user_profile",
+            "career_type",
+            # "sub_type",
+            "category",
+            # "jobname",
+            "image_url",
+            "subcategory",
+            "job_slug",
+            "job_url",
+            "job_description",
+            "salary",
+            "hours",
+            "timings",
+            "how_to_become",
+            "college",
+            "college_entry_req",
+            "apprenticeship_entry_req",
+            "apprenticeship",
+            "scraped_at",
+        )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

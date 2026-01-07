@@ -79,11 +79,18 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from django.shortcuts import get_object_or_404
 
 from accounts.models import UserProfile
 from careers.models import Career, UserSavedCareer
 from careers.api.permissions import CareerPermission
 from careers.api.serializers import CareerListSerializer, CareerDetailSerializer
+from courses.api.serializer import CoursesSerializer
+from courses.models import Course, UserSavedCourse
+from jobs.models import Job
+from jobs.api.serializers import JobsSerializer
+from apprenticeship.models import Apprenticeship
+from apprenticeship.api.serializers import ApprenticeshipSerializer
 
 
 from django.db.models.functions import Lower
@@ -123,22 +130,22 @@ class CareersView(viewsets.ModelViewSet):
             .filter(cat_l__in=categories)
         )
 
-    @action(detail=True, methods=["get", "post"])
+    @action(detail=True, methods=["GET", "POST"])
     def save(self, request, pk=None):
         career = self.get_object()
 
-        if request.method.lower() == "get":
+        if request.method.lower() == "GET":
             return Response(self.get_serializer(career).data)
 
         user = self._profile(request)
         UserSavedCareer.objects.get_or_create(user_profile=user, career_id=career.id)
         return Response(self.get_serializer(career).data, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=["get", "post"])
+    @action(detail=True, methods=["get", "POST"])
     def unsave(self, request, pk=None):
         career = self.get_object()
 
-        if request.method.lower() == "get":
+        if request.method.lower() == "GET":
             return Response(self.get_serializer(career).data)
 
         user = self._profile(request)
@@ -151,7 +158,7 @@ class CareersView(viewsets.ModelViewSet):
 
         return Response({"error": "Career was not saved."}, status=status.HTTP_404_NOT_FOUND)
 
-    @action(detail=False, methods=["get"])
+    @action(detail=False, methods=["GET"])
     def my(self, request):
         user = self._profile(request)
         saved_ids = UserSavedCareer.objects.filter(
@@ -160,10 +167,109 @@ class CareersView(viewsets.ModelViewSet):
 
         careers = Career.objects.filter(id__in=saved_ids)
         return Response(self.get_serializer(careers, many=True).data, status=status.HTTP_200_OK)
-    # @action(detail=False, method=['get'])
-    # def tailored_jobs(self, request, pk=None):
-    #     # self.get_object(pk = pk)
     
+    @action(detail=True, methods=["GET"])
+    def courses(self, request, pk=None):
+        career = self.get_object()
+
+        jobname = (career.jobname or "").strip()
+        if not jobname:
+            return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
+
+        tailored_courses = Course.objects.filter(subcategory__iexact=jobname)
+        if not tailored_courses.exists():
+            return Response({"detail": "No tailored courses found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = CoursesSerializer(tailored_courses, many=True, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    @action(detail=True, methods=["GET"])
+    def jobs(self, request, pk=None):
+        career = self.get_object()
+
+        jobname = (career.jobname or "").strip()
+        if not jobname:
+            return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
+
+        tailored_courses = Job.objects.filter(subcategory__iexact=jobname)
+        if not tailored_courses.exists():
+            return Response({"detail": "No tailored jobs found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = JobsSerializer(tailored_courses, many=True, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    @action(detail=True, methods=["GET"])
+    def apprenticeships(self, request, pk=None):
+        career = self.get_object()
+
+        jobname = (career.jobname or "").strip()
+        if not jobname:
+            return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
+
+        tailored_courses = Apprenticeship.objects.filter(subcategory__iexact=jobname)
+        if not tailored_courses.exists():
+            return Response({"detail": "No tailored apprenticeshps found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ApprenticeshipSerializer(tailored_courses, many=True, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    # @action(detail=True, methods=["POST", "GET"])
+    # def save(self, request, pk=None):
+    #     course = get_object_or_404(Course, pk = pk)
+
+    #     # Same as before: GET returns course data
+    #     if request.method == "GET":
+    #         serializer = CoursesSerializer(course, context={"request": request})
+    #         return Response(serializer.data)
+
+    #     # POST: create the link in join table
+    #     user, _ = UserProfile.objects.get_or_create(appuser=request.user, defaults={"age": 0})
+
+    #     UserSavedCourse.objects.get_or_create(
+    #         user_profile=user,
+    #         course_id=course.course_id,  # IMPORTANT: link by scraper UUID
+    #     )
+
+    #     serializer = CoursesSerializer(course, context={"request": request})
+    #     return Response(serializer.data, status=status.HTTP_200_OK)
+
+    # @action(detail=False, methods=["GET"])
+    # def mine(self, request):
+    #     # Same as before: return courses saved by current user
+    #     user, _ = UserProfile.objects.get_or_create(appuser=request.user, defaults={"age": 0})
+
+    #     saved_course_ids = UserSavedCourse.objects.filter(
+    #         user_profile=user
+    #     ).values_list("course_id", flat=True)
+
+    #     courses = Course.objects.filter(course_id__in=saved_course_ids)
+    #     serializer = CoursesSerializer(courses, many=True, context={"request": request})
+    #     return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    # @action(detail=True, methods=["POST", "GET"])
+    # def unsave(self, request, pk=None):
+    #     course = get_object_or_404(Course, pk = pk)
+
+    #     # Same as before: GET returns course data
+    #     if request.method == "GET":
+    #         serializer = CoursesSerializer(course, context={"request": request})
+    #         return Response(serializer.data)
+
+    #     user, _ = UserProfile.objects.get_or_create(appuser=request.user, defaults={"age": 0})
+
+    #     deleted_count, _ = UserSavedCourse.objects.filter(
+    #         user_profile=user,
+    #         course_id=course.course_id,
+    #     ).delete()
+
+    #     if deleted_count > 0:
+    #         return Response({"message": "Course unsaved."}, status=status.HTTP_200_OK)
+
+    #     return Response(
+    #         {"error": "Course was not saved."},
+    #         status=status.HTTP_404_NOT_FOUND,
+    #     )
+
     def get_serializer_class(self):
         if self.action in ("list", "my"):
             return CareerListSerializer
