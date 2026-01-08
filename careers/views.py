@@ -91,14 +91,28 @@ from jobs.models import Job
 from jobs.api.serializers import JobsSerializer
 from apprenticeship.models import Apprenticeship
 from apprenticeship.api.serializers import ApprenticeshipSerializer
-
-
 from django.db.models.functions import Lower
+
+
+
+FREE_CAREER_LIMIT = 5  # you can move this to settings if you want
+
+
 
 
 class CareersView(viewsets.ModelViewSet):
     serializer_class = CareerDetailSerializer
     permission_classes = [CareerPermission]
+
+    def _is_subscribed(self, request) -> bool:
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_staff:
+            return True
+
+        billing = getattr(user, "billing", None)  # from BillingProfile related_name="billing"
+        return bool(billing and billing.is_active)
 
     def _profile(self, request):
         profile, _ = UserProfile.objects.get_or_create(
@@ -123,12 +137,23 @@ class CareersView(viewsets.ModelViewSet):
         categories = [c.strip().lower() for c in categories if c and c.strip()]
         if not categories:
             return Career.objects.none()
-
-        return (
+        
+        qs = (
             Career.objects
             .annotate(cat_l=Lower("sub_type"))
             .filter(cat_l__in=categories)
         )
+
+        if not self._is_subscribed(self.request):
+            qs = qs[:self.FREE_CAREER_LIMIT]
+
+        return qs
+
+        # return (
+        #     Career.objects
+        #     .annotate(cat_l=Lower("sub_type"))
+        #     .filter(cat_l__in=categories)
+        # )
 
     @action(detail=True, methods=["GET", "POST"])
     def save(self, request, pk=None):
@@ -165,7 +190,7 @@ class CareersView(viewsets.ModelViewSet):
             user_profile=user
         ).values_list("career_id", flat=True)
 
-        careers = Career.objects.filter(id__in=saved_ids)
+        careers = self.get_queryset().filter(id__in=saved_ids)
         return Response(self.get_serializer(careers, many=True).data, status=status.HTTP_200_OK)
     
     @action(detail=True, methods=["GET"])
@@ -213,6 +238,11 @@ class CareersView(viewsets.ModelViewSet):
         serializer = ApprenticeshipSerializer(tailored_courses, many=True, context={"request": request})
         return Response(serializer.data, status=status.HTTP_200_OK)
     
+    def get_serializer_class(self):
+        if self.action in ("list", "my"):
+            return CareerListSerializer
+        return CareerDetailSerializer
+
     # @action(detail=True, methods=["POST", "GET"])
     # def save(self, request, pk=None):
     #     course = get_object_or_404(Course, pk = pk)
@@ -269,8 +299,3 @@ class CareersView(viewsets.ModelViewSet):
     #         {"error": "Course was not saved."},
     #         status=status.HTTP_404_NOT_FOUND,
     #     )
-
-    def get_serializer_class(self):
-        if self.action in ("list", "my"):
-            return CareerListSerializer
-        return CareerDetailSerializer

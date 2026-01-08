@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'jobs',
     'apprenticeship',
     'careers',
+    "billing",
 ]
 
 MIDDLEWARE = [
@@ -180,6 +181,24 @@ EMAIL_HOST_USER = "apikey"  # literally this!
 EMAIL_HOST_PASSWORD = config("SENDGRID_API_KEY")  # your API key
 DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL")
 EMAIL_TIMEOUT = 30  # Prevent indefinite hangs on SMTP connections
+
+
+
+
+
+
+# This is the stripe data check it out.
+import os
+
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+STRIPE_PRICE_ID_MONTHLY = os.getenv("STRIPE_PRICE_ID_MONTHLY")
+
+# IMPORTANT for Ephemeral Keys (mobile SDK needs a fixed Stripe API version)
+STRIPE_API_VERSION = os.getenv("STRIPE_API_VERSION", "2025-12-15")
+
+# Where Stripe Portal returns after user is done
+BILLING_RETURN_URL = os.getenv("BILLING_RETURN_URL", "http://localhost:3000/account")
 
 
 # Password Hashing - Use Argon2 for better performance and security
