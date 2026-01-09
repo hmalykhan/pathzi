@@ -1,6 +1,7 @@
 # billing/webhooks.py
 import json
 import stripe
+from datetime import datetime, timezone as dt_timezone
 
 from django.conf import settings
 from django.http import HttpResponse
@@ -15,24 +16,19 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 def _ts_to_dt(ts):
     if not ts:
         return None
-    return timezone.datetime.fromtimestamp(int(ts), tz=timezone.utc)
+    return datetime.fromtimestamp(int(ts), tz=dt_timezone.utc)
 
 
 def _json_safe(obj):
-    """
-    Make Stripe objects JSON-safe for storing in JSONField.
-    """
     try:
         return json.loads(json.dumps(obj, default=str))
     except Exception:
         return {"raw": str(obj)}
 
 
-def _update_billing_profile_by_sub_or_customer(*, sub_id=None, customer_id=None, **fields):
+def _update_billing(*, sub_id=None, customer_id=None, status=None, period_end=None):
     """
-    Update BillingProfile safely.
-    - Finds BillingProfile by subscription_id first; if not found and customer_id exists, falls back to customer_id.
-    - Does NOT overwrite current_period_end with None.
+    Update BillingProfile without ever overwriting current_period_end with None.
     """
     qs = BillingProfile.objects.none()
 
@@ -45,27 +41,36 @@ def _update_billing_profile_by_sub_or_customer(*, sub_id=None, customer_id=None,
     if not qs.exists():
         return  # nothing to update
 
-    # Don't overwrite existing period end with None
-    if "current_period_end" in fields and fields["current_period_end"] is None:
-        fields.pop("current_period_end", None)
+    update_fields = {"updated_at": timezone.now()}
 
-    fields["updated_at"] = timezone.now()
-    qs.update(**fields)
+    if sub_id:
+        update_fields["stripe_subscription_id"] = sub_id
+
+    if status is not None:
+        update_fields["subscription_status"] = status
+
+    # ✅ only write if we actually have a value
+    if period_end is not None:
+        update_fields["current_period_end"] = period_end
+
+    qs.update(**update_fields)
 
 
 @csrf_exempt
 def stripe_webhook(request):
     payload = request.body
     sig_header = request.META.get("HTTP_STRIPE_SIGNATURE", "")
-    secret = settings.STRIPE_WEBHOOK_SECRET
 
-    # 1) Verify signature
     try:
-        event = stripe.Webhook.construct_event(payload, sig_header, secret)
+        event = stripe.Webhook.construct_event(
+            payload,
+            sig_header,
+            settings.STRIPE_WEBHOOK_SECRET,
+        )
     except (ValueError, stripe.error.SignatureVerificationError):
         return HttpResponse(status=400)
 
-    # 2) De-dupe (race-safe)
+    # De-dupe (race-safe)
     _, created = StripeEvent.objects.get_or_create(
         event_id=event["id"],
         defaults={
@@ -77,65 +82,49 @@ def stripe_webhook(request):
         return HttpResponse(status=200)
 
     event_type = event["type"]
-    obj = event["data"]["object"]  # Stripe object payload
+    obj = event["data"]["object"]
 
-    # ------------------------------
-    # Subscription state sync
-    # ------------------------------
-    if event_type in ("customer.subscription.created", "customer.subscription.updated"):
+    # ---- Subscription state sync ----
+    if event_type.startswith("customer.subscription."):
         sub_id = obj.get("id")
-        status = obj.get("status") or "none"
         customer_id = obj.get("customer")
+        status = obj.get("status") or "none"
+
         period_end = _ts_to_dt(obj.get("current_period_end"))
 
-        _update_billing_profile_by_sub_or_customer(
+        # ✅ If Stripe didn't include it in event, fetch subscription once
+        if period_end is None and sub_id:
+            try:
+                sub = stripe.Subscription.retrieve(sub_id)
+                period_end = _ts_to_dt(sub.get("current_period_end"))
+            except Exception:
+                pass
+
+        _update_billing(
             sub_id=sub_id,
             customer_id=customer_id,
-            stripe_subscription_id=sub_id,
-            subscription_status=status,
-            current_period_end=period_end,
+            status=status,
+            period_end=period_end,
         )
 
-    elif event_type == "customer.subscription.deleted":
-        sub_id = obj.get("id")
-        customer_id = obj.get("customer")
-
-        _update_billing_profile_by_sub_or_customer(
-            sub_id=sub_id,
-            customer_id=customer_id,
-            subscription_status="canceled",
-        )
-
-    # ------------------------------
-    # Payment outcomes (renewals + first payment)
-    # ------------------------------
+    # ---- Payment outcomes ----
     elif event_type == "invoice.paid":
         sub_id = obj.get("subscription")
-        customer_id = obj.get("customer")
-
-        # Fetch authoritative subscription to get correct period end + status
         if sub_id:
-            sub = stripe.Subscription.retrieve(sub_id)
-            status = sub.get("status") or "active"
-            period_end = _ts_to_dt(sub.get("current_period_end"))
-
-            _update_billing_profile_by_sub_or_customer(
-                sub_id=sub_id,
-                customer_id=customer_id,
-                subscription_status=status,
-                current_period_end=period_end,
-            )
+            try:
+                sub = stripe.Subscription.retrieve(sub_id)
+                _update_billing(
+                    sub_id=sub_id,
+                    customer_id=sub.get("customer"),
+                    status=sub.get("status", "active"),
+                    period_end=_ts_to_dt(sub.get("current_period_end")),
+                )
+            except Exception:
+                pass
 
     elif event_type in ("invoice.payment_failed", "invoice.payment_action_required"):
-        # Renewal needs action or failed -> treat as not active
         sub_id = obj.get("subscription")
-        customer_id = obj.get("customer")
-
         if sub_id:
-            _update_billing_profile_by_sub_or_customer(
-                sub_id=sub_id,
-                customer_id=customer_id,
-                subscription_status="past_due",
-            )
+            _update_billing(sub_id=sub_id, status="past_due")
 
     return HttpResponse(status=200)
