@@ -26,7 +26,9 @@
 
 # jobs/serializers.py
 # jobs/serializers.py
+from django.db.models import QuerySet
 from rest_framework import serializers
+
 from jobs.models import Job, UserSavedJob
 from accounts.models import UserProfile
 
@@ -68,10 +70,54 @@ class JobsSerializer(serializers.ModelSerializer):
             if name not in ("user_profile", "user_profile_id"):
                 field.read_only = True
 
+        # ✅ PERF: avoid N+1 when serializer is used with many=True
+        self._profiles_by_job_id = None
+        instance = getattr(self, "instance", None)
+        if instance is None:
+            return
+
+        if isinstance(instance, (list, tuple, QuerySet)):
+            job_ids = [obj.job_id for obj in instance if getattr(obj, "job_id", None)]
+            job_ids = list(dict.fromkeys(job_ids))
+            if not job_ids:
+                self._profiles_by_job_id = {}
+                return
+
+            links = UserSavedJob.objects.filter(job_id__in=job_ids).values(
+                "job_id", "user_profile_id"
+            )
+
+            prof_ids_by_job = {}
+            all_profile_ids = set()
+            for row in links:
+                jid = row["job_id"]
+                pid = row["user_profile_id"]
+                prof_ids_by_job.setdefault(jid, set()).add(pid)
+                all_profile_ids.add(pid)
+
+            profiles = UserProfile.objects.filter(id__in=all_profile_ids)
+            profiles_by_id = {p.id: p for p in profiles}
+
+            self._profiles_by_job_id = {
+                jid: [profiles_by_id[pid] for pid in pids if pid in profiles_by_id]
+                for jid, pids in prof_ids_by_job.items()
+            }
+
     def get_user_profile(self, obj):
+        # ✅ Use cache for list
+        if self._profiles_by_job_id is not None:
+            profiles = self._profiles_by_job_id.get(obj.job_id, [])
+            return UserProfileNestedSerializer(
+                profiles, many=True, context=self.context
+            ).data
+
+        # ✅ Fallback for single-object serialization
         ids = UserSavedJob.objects.filter(job_id=obj.job_id).values_list(
             "user_profile_id", flat=True
         )
+        if not ids:
+            return []
+
         profiles = UserProfile.objects.filter(id__in=ids)
         return UserProfileNestedSerializer(profiles, many=True, context=self.context).data
 

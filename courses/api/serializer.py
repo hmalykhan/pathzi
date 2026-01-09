@@ -152,16 +152,16 @@ class UserProfileNestedSerializer(serializers.ModelSerializer):
 
 class CoursesListSerializer(serializers.ListSerializer):
     """
-    Avoid N+1 queries for user_profile by preloading all links and profiles
-    for the whole list in a single pass.
+    ✅ Avoid N+1 queries for user_profile by preloading all links and profiles for the list.
+    Stores a map of: course_id -> [serialized user profiles...]
     """
     def to_representation(self, data):
-        items = list(data)  # evaluate queryset once
-
+        items = list(data)
         if not items:
             return []
 
         course_ids = [obj.course_id for obj in items if getattr(obj, "course_id", None)]
+        course_ids = list(dict.fromkeys(course_ids))
         if not course_ids:
             self.child._profiles_by_course_id = {}
             return super().to_representation(items)
@@ -172,10 +172,11 @@ class CoursesListSerializer(serializers.ListSerializer):
             .values_list("course_id", "user_profile_id")
         )
 
-        course_to_profile_ids = defaultdict(list)
+        # course_id -> set(profile_id)
+        course_to_profile_ids = defaultdict(set)
         profile_ids = set()
         for c_id, p_id in links:
-            course_to_profile_ids[c_id].append(p_id)
+            course_to_profile_ids[c_id].add(p_id)
             profile_ids.add(p_id)
 
         if profile_ids:
@@ -191,9 +192,7 @@ class CoursesListSerializer(serializers.ListSerializer):
         for c_id, pids in course_to_profile_ids.items():
             profiles_by_course[c_id] = [profiles_by_id[pid] for pid in pids if pid in profiles_by_id]
 
-        # Store bulk map on child serializer for get_user_profile()
         self.child._profiles_by_course_id = profiles_by_course
-
         return super().to_representation(items)
 
 
@@ -210,7 +209,7 @@ class CoursesSerializer(serializers.ModelSerializer):
     class Meta:
         model = Course
         fields = "__all__"
-        list_serializer_class = CoursesListSerializer  # ✅ enable bulk optimization
+        list_serializer_class = CoursesListSerializer  # ✅ bulk optimization
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -219,12 +218,13 @@ class CoursesSerializer(serializers.ModelSerializer):
         if request and request.user.is_authenticated and not request.user.is_staff:
             self.fields.pop("user_profile_id", None)
 
+        # scraped fields are read-only
         for name, field in self.fields.items():
             if name not in ("user_profile", "user_profile_id"):
                 field.read_only = True
 
     def get_user_profile(self, obj):
-        # ✅ Fast path for list endpoints (preloaded by CoursesListSerializer)
+        # ✅ Fast path for list endpoints
         profiles_map = getattr(self, "_profiles_by_course_id", None)
         if profiles_map is not None:
             return profiles_map.get(obj.course_id, [])
@@ -279,8 +279,6 @@ class CoursesSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         profiles = validated_data.pop("user_profile_id", None)
-
         if profiles is not None:
             self._sync_user_links(instance, profiles)
-
         return instance
