@@ -1,8 +1,8 @@
 # billing/webhooks.py
 import json
-import stripe
 from datetime import datetime, timezone as dt_timezone
 
+import stripe
 from django.conf import settings
 from django.http import HttpResponse
 from django.utils import timezone
@@ -26,6 +26,13 @@ def _json_safe(obj):
         return {"raw": str(obj)}
 
 
+def _retrieve_subscription(sub_id: str):
+    try:
+        return stripe.Subscription.retrieve(sub_id)
+    except Exception:
+        return None
+
+
 def _update_billing(*, sub_id=None, customer_id=None, status=None, period_end=None):
     """
     Update BillingProfile without ever overwriting current_period_end with None.
@@ -39,7 +46,7 @@ def _update_billing(*, sub_id=None, customer_id=None, status=None, period_end=No
         qs = BillingProfile.objects.filter(stripe_customer_id=customer_id)
 
     if not qs.exists():
-        return  # nothing to update
+        return
 
     update_fields = {"updated_at": timezone.now()}
 
@@ -49,7 +56,6 @@ def _update_billing(*, sub_id=None, customer_id=None, status=None, period_end=No
     if status is not None:
         update_fields["subscription_status"] = status
 
-    # ✅ only write if we actually have a value
     if period_end is not None:
         update_fields["current_period_end"] = period_end
 
@@ -63,20 +69,17 @@ def stripe_webhook(request):
 
     try:
         event = stripe.Webhook.construct_event(
-            payload,
-            sig_header,
-            settings.STRIPE_WEBHOOK_SECRET,
+            payload=payload,
+            sig_header=sig_header,
+            secret=settings.STRIPE_WEBHOOK_SECRET,
         )
     except (ValueError, stripe.error.SignatureVerificationError):
         return HttpResponse(status=400)
 
-    # De-dupe (race-safe)
+    # De-dupe
     _, created = StripeEvent.objects.get_or_create(
         event_id=event["id"],
-        defaults={
-            "event_type": event["type"],
-            "payload": _json_safe(event),
-        },
+        defaults={"event_type": event["type"], "payload": _json_safe(event)},
     )
     if not created:
         return HttpResponse(status=200)
@@ -84,47 +87,41 @@ def stripe_webhook(request):
     event_type = event["type"]
     obj = event["data"]["object"]
 
-    # ---- Subscription state sync ----
+    # ---- subscription.* ----
     if event_type.startswith("customer.subscription."):
         sub_id = obj.get("id")
         customer_id = obj.get("customer")
         status = obj.get("status") or "none"
-
         period_end = _ts_to_dt(obj.get("current_period_end"))
 
-        # ✅ If Stripe didn't include it in event, fetch subscription once
+        # If missing, retrieve subscription once
         if period_end is None and sub_id:
-            try:
-                sub = stripe.Subscription.retrieve(sub_id)
+            sub = _retrieve_subscription(sub_id)
+            if sub:
                 period_end = _ts_to_dt(sub.get("current_period_end"))
-            except Exception:
-                pass
+                customer_id = customer_id or sub.get("customer")
+                status = sub.get("status") or status
 
-        _update_billing(
-            sub_id=sub_id,
-            customer_id=customer_id,
-            status=status,
-            period_end=period_end,
-        )
+        _update_billing(sub_id=sub_id, customer_id=customer_id, status=status, period_end=period_end)
+        return HttpResponse(status=200)
 
-    # ---- Payment outcomes ----
-    elif event_type == "invoice.paid":
+    # ---- invoice paid/failed/action_required ----
+    if event_type in ("invoice.paid", "invoice.payment_failed", "invoice.payment_action_required"):
         sub_id = obj.get("subscription")
-        if sub_id:
-            try:
-                sub = stripe.Subscription.retrieve(sub_id)
-                _update_billing(
-                    sub_id=sub_id,
-                    customer_id=sub.get("customer"),
-                    status=sub.get("status", "active"),
-                    period_end=_ts_to_dt(sub.get("current_period_end")),
-                )
-            except Exception:
-                pass
+        if not sub_id:
+            return HttpResponse(status=200)
 
-    elif event_type in ("invoice.payment_failed", "invoice.payment_action_required"):
-        sub_id = obj.get("subscription")
-        if sub_id:
-            _update_billing(sub_id=sub_id, status="past_due")
+        sub = _retrieve_subscription(sub_id)
+        if not sub:
+            return HttpResponse(status=200)
+
+        status = sub.get("status") or "none"
+        period_end = _ts_to_dt(sub.get("current_period_end"))
+        customer_id = sub.get("customer")
+
+        # If payment failed/action required, Stripe status may still be active sometimes.
+        # Your gating uses DB is_active; we keep Stripe truth as primary.
+        _update_billing(sub_id=sub_id, customer_id=customer_id, status=status, period_end=period_end)
+        return HttpResponse(status=200)
 
     return HttpResponse(status=200)

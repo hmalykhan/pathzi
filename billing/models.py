@@ -1,3 +1,4 @@
+# billing/models.py
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -14,7 +15,11 @@ class BillingProfile(models.Model):
         ("unpaid", "Unpaid"),
     ]
 
-    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="billing")
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="billing",
+    )
     stripe_customer_id = models.CharField(max_length=64, blank=True, null=True, db_index=True)
     stripe_subscription_id = models.CharField(max_length=64, blank=True, null=True, db_index=True)
 
@@ -28,9 +33,13 @@ class BillingProfile(models.Model):
     def is_active(self) -> bool:
         if self.subscription_status not in ("active", "trialing"):
             return False
+        # If we have period end, enforce it.
         if self.current_period_end and self.current_period_end < timezone.now():
             return False
+        # If period end is missing, we still consider active/trialing as active,
+        # and rely on status endpoint / webhooks to self-heal it.
         return True
+
 
 
 class StripeEvent(models.Model):
