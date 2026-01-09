@@ -28,6 +28,31 @@ def _json_safe(obj):
         return {"raw": str(obj)}
 
 
+def _update_billing_profile_by_sub_or_customer(*, sub_id=None, customer_id=None, **fields):
+    """
+    Update BillingProfile safely.
+    - Finds BillingProfile by subscription_id first; if not found and customer_id exists, falls back to customer_id.
+    - Does NOT overwrite current_period_end with None.
+    """
+    qs = BillingProfile.objects.none()
+
+    if sub_id:
+        qs = BillingProfile.objects.filter(stripe_subscription_id=sub_id)
+
+    if (not qs.exists()) and customer_id:
+        qs = BillingProfile.objects.filter(stripe_customer_id=customer_id)
+
+    if not qs.exists():
+        return  # nothing to update
+
+    # Don't overwrite existing period end with None
+    if "current_period_end" in fields and fields["current_period_end"] is None:
+        fields.pop("current_period_end", None)
+
+    fields["updated_at"] = timezone.now()
+    qs.update(**fields)
+
+
 @csrf_exempt
 def stripe_webhook(request):
     payload = request.body
@@ -52,58 +77,65 @@ def stripe_webhook(request):
         return HttpResponse(status=200)
 
     event_type = event["type"]
-    obj = event["data"]["object"]
+    obj = event["data"]["object"]  # Stripe object payload
 
-    # 3) Handle events
+    # ------------------------------
+    # Subscription state sync
+    # ------------------------------
     if event_type in ("customer.subscription.created", "customer.subscription.updated"):
         sub_id = obj.get("id")
         status = obj.get("status") or "none"
         customer_id = obj.get("customer")
         period_end = _ts_to_dt(obj.get("current_period_end"))
 
-        qs = BillingProfile.objects.filter(stripe_subscription_id=sub_id)
-        if not qs.exists() and customer_id:
-            qs = BillingProfile.objects.filter(stripe_customer_id=customer_id)
-
-        qs.update(
+        _update_billing_profile_by_sub_or_customer(
+            sub_id=sub_id,
+            customer_id=customer_id,
             stripe_subscription_id=sub_id,
             subscription_status=status,
             current_period_end=period_end,
-            updated_at=timezone.now(),
         )
 
     elif event_type == "customer.subscription.deleted":
         sub_id = obj.get("id")
-        BillingProfile.objects.filter(stripe_subscription_id=sub_id).update(
+        customer_id = obj.get("customer")
+
+        _update_billing_profile_by_sub_or_customer(
+            sub_id=sub_id,
+            customer_id=customer_id,
             subscription_status="canceled",
-            updated_at=timezone.now(),
         )
 
+    # ------------------------------
+    # Payment outcomes (renewals + first payment)
+    # ------------------------------
     elif event_type == "invoice.paid":
         sub_id = obj.get("subscription")
+        customer_id = obj.get("customer")
+
+        # Fetch authoritative subscription to get correct period end + status
         if sub_id:
             sub = stripe.Subscription.retrieve(sub_id)
-            BillingProfile.objects.filter(stripe_subscription_id=sub_id).update(
-                subscription_status=sub.get("status", "active"),
-                current_period_end=_ts_to_dt(sub.get("current_period_end")),
-                updated_at=timezone.now(),
+            status = sub.get("status") or "active"
+            period_end = _ts_to_dt(sub.get("current_period_end"))
+
+            _update_billing_profile_by_sub_or_customer(
+                sub_id=sub_id,
+                customer_id=customer_id,
+                subscription_status=status,
+                current_period_end=period_end,
             )
 
-    elif event_type == "invoice.payment_failed":
+    elif event_type in ("invoice.payment_failed", "invoice.payment_action_required"):
+        # Renewal needs action or failed -> treat as not active
         sub_id = obj.get("subscription")
-        if sub_id:
-            BillingProfile.objects.filter(stripe_subscription_id=sub_id).update(
-                subscription_status="past_due",
-                updated_at=timezone.now(),
-            )
+        customer_id = obj.get("customer")
 
-    elif event_type == "invoice.payment_action_required":
-        # Renewal requires customer action (3DS/SCA). Treat as not-active until resolved.
-        sub_id = obj.get("subscription")
         if sub_id:
-            BillingProfile.objects.filter(stripe_subscription_id=sub_id).update(
+            _update_billing_profile_by_sub_or_customer(
+                sub_id=sub_id,
+                customer_id=customer_id,
                 subscription_status="past_due",
-                updated_at=timezone.now(),
             )
 
     return HttpResponse(status=200)
