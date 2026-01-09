@@ -12,26 +12,58 @@ from .models import BillingProfile
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
+def _ts_to_dt(ts):
+    if not ts:
+        return None
+    return timezone.datetime.fromtimestamp(int(ts), tz=timezone.utc)
+
+
+def _get_pi_client_secret_from_subscription(sub_id: str):
+    """
+    Always fetch latest invoice -> finalize if draft -> expand payment_intent -> return client_secret.
+    Returns (client_secret, amount_due) where client_secret can be None.
+    """
+    # Get subscription (latest_invoice may be id or object)
+    sub = stripe.Subscription.retrieve(sub_id, expand=["latest_invoice"])
+    latest_invoice = sub.get("latest_invoice")
+
+    # If subscription.latest_invoice is missing, fallback to list invoices
+    if not latest_invoice:
+        inv_list = stripe.Invoice.list(subscription=sub_id, limit=1)
+        latest_invoice = inv_list.data[0] if inv_list.data else None
+
+    if not latest_invoice:
+        return None, None
+
+    inv_id = latest_invoice if isinstance(latest_invoice, str) else latest_invoice.get("id")
+    inv = stripe.Invoice.retrieve(inv_id, expand=["payment_intent"])
+
+    # If invoice is draft, finalize to generate PI in many cases
+    if inv.get("status") == "draft":
+        inv = stripe.Invoice.finalize_invoice(inv_id, expand=["payment_intent"])
+
+    amount_due = inv.get("amount_due")
+    pi = inv.get("payment_intent")
+
+    if not pi:
+        return None, amount_due
+
+    # PI can be id string or expanded object
+    if isinstance(pi, str):
+        pi = stripe.PaymentIntent.retrieve(pi)
+
+    return pi.get("client_secret"), amount_due
+
+
 class SubscribeView(APIView):
-    """
-    Creates (or reuses) a Stripe Customer and Subscription, and returns:
-    - customer_id
-    - ephemeral_key_secret
-    - payment_intent_client_secret (from subscription's first invoice)
-    - subscription_id
-    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         user = request.user
         profile, _ = BillingProfile.objects.get_or_create(user=user)
 
-        # If already active, stop here
         if profile.is_active:
-            return Response(
-                {"detail": "You already have an active subscription."},
-                status=400,
-            )
+            return Response({"detail": "You already have an active subscription."}, status=400)
 
         # 1) Create/reuse Stripe Customer
         if not profile.stripe_customer_id:
@@ -42,55 +74,57 @@ class SubscribeView(APIView):
             profile.stripe_customer_id = customer["id"]
             profile.save(update_fields=["stripe_customer_id", "updated_at"])
 
-        # 2) Create Ephemeral Key (required for PaymentSheet customer context)
+        # 2) Ephemeral key
         eph_key = stripe.EphemeralKey.create(
             customer=profile.stripe_customer_id,
             stripe_version=settings.STRIPE_API_VERSION,
         )
 
-        # If we already have a subscription in incomplete/past_due, return the latest PI again
+        # 3) If an existing subscription is incomplete, reuse it and return PI secret
         if profile.stripe_subscription_id and profile.subscription_status in ("incomplete", "past_due", "unpaid"):
-            sub = stripe.Subscription.retrieve(
-                profile.stripe_subscription_id,
-                expand=["latest_invoice.payment_intent"],
-            )
-            pi = (sub.get("latest_invoice") or {}).get("payment_intent")
-            if not pi or not pi.get("client_secret"):
-                return Response({"detail": "No payable invoice found."}, status=400)
+            client_secret, amount_due = _get_pi_client_secret_from_subscription(profile.stripe_subscription_id)
+
+            if amount_due == 0:
+                return Response(
+                    {"detail": "Invoice amount is 0. Check if price is free or discounted to 0."},
+                    status=400,
+                )
+
+            if not client_secret:
+                return Response(
+                    {"detail": "No payable invoice/PaymentIntent found. Check Stripe invoice status for this subscription."},
+                    status=400,
+                )
 
             return Response({
                 "customer_id": profile.stripe_customer_id,
                 "ephemeral_key_secret": eph_key["secret"],
-                "payment_intent_client_secret": pi["client_secret"],
-                "subscription_id": sub["id"],
+                "payment_intent_client_secret": client_secret,
+                "subscription_id": profile.stripe_subscription_id,
             })
 
-        # 3) Create Subscription (first invoice has a PaymentIntent)
+        # 4) Create a new subscription
         idempotency_key = (
             request.headers.get("Idempotency-Key")
             or request.headers.get("X-Idempotency-Key")
             or f"subscribe:{user.id}:{uuid.uuid4()}"
         )
 
-        subscription = stripe.Subscription.create(
+        sub = stripe.Subscription.create(
             customer=profile.stripe_customer_id,
             items=[{"price": settings.STRIPE_PRICE_ID_MONTHLY}],
+            collection_method="charge_automatically",  # important
             payment_behavior="default_incomplete",
             payment_settings={"save_default_payment_method": "on_subscription"},
-            expand=["latest_invoice.payment_intent"],
             metadata={"user_id": str(user.id)},
             idempotency_key=idempotency_key,
         )
 
-        # Update DB with subscription basics immediately
-        profile.stripe_subscription_id = subscription["id"]
-        profile.subscription_status = subscription.get("status", "incomplete")
-
-        # current_period_end might be absent until active; keep if present
-        cpe = subscription.get("current_period_end")
-        if cpe:
-            profile.current_period_end = timezone.datetime.fromtimestamp(cpe, tz=timezone.utc)
-
+        # Save subscription to DB
+        profile.stripe_subscription_id = sub["id"]
+        profile.subscription_status = sub.get("status", "incomplete")
+        cpe = sub.get("current_period_end")
+        profile.current_period_end = _ts_to_dt(cpe) if cpe else None
         profile.save(update_fields=[
             "stripe_subscription_id",
             "subscription_status",
@@ -98,15 +132,26 @@ class SubscribeView(APIView):
             "updated_at",
         ])
 
-        pi = (subscription.get("latest_invoice") or {}).get("payment_intent")
-        if not pi or not pi.get("client_secret"):
-            return Response({"detail": "Stripe did not return a PaymentIntent client secret."}, status=500)
+        # Now fetch invoice -> PI secret (reliable)
+        client_secret, amount_due = _get_pi_client_secret_from_subscription(sub["id"])
+
+        if amount_due == 0:
+            return Response(
+                {"detail": "Invoice amount is 0. Check if price is free or discounted to 0."},
+                status=400,
+            )
+
+        if not client_secret:
+            return Response(
+                {"detail": "Stripe did not return a PaymentIntent client secret. Check subscription's latest invoice in Stripe."},
+                status=400,
+            )
 
         return Response({
             "customer_id": profile.stripe_customer_id,
             "ephemeral_key_secret": eph_key["secret"],
-            "payment_intent_client_secret": pi["client_secret"],
-            "subscription_id": subscription["id"],
+            "payment_intent_client_secret": client_secret,
+            "subscription_id": sub["id"],
         })
 
 
@@ -126,9 +171,6 @@ class SubscriptionStatusView(APIView):
 
 
 class CustomerPortalView(APIView):
-    """
-    Returns a Stripe Customer Portal URL (open in WebView in Flutter).
-    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
