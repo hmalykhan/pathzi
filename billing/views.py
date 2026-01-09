@@ -232,3 +232,34 @@ class CustomerPortalView(APIView):
         )
 
         return Response({"url": session["url"]})
+
+
+class CancelSubscriptionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        billing = getattr(request.user, "billing", None)
+        if not billing or not billing.stripe_subscription_id:
+            return Response({"detail": "No subscription found."}, status=400)
+
+        # recommended: cancel at period end
+        cancel_at_period_end = bool(request.data.get("cancel_at_period_end", True))
+
+        sub = stripe.Subscription.modify(
+            billing.stripe_subscription_id,
+            cancel_at_period_end=cancel_at_period_end,
+            expand=["items"],
+        )
+
+        # update local db (status can remain active until period end)
+        billing.subscription_status = sub.get("status") or billing.subscription_status
+        pe = subscription_period_end_dt(sub)
+        if pe is not None:
+            billing.current_period_end = pe
+        billing.save(update_fields=["subscription_status", "current_period_end", "updated_at"])
+
+        return Response({
+            "status": sub.get("status"),
+            "cancel_at_period_end": sub.get("cancel_at_period_end"),
+            "current_period_end": billing.current_period_end,
+        })
