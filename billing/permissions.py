@@ -10,9 +10,11 @@ class HasActiveSubscription(BasePermission):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-
-        if user.is_staff:
-            return True
+        
+        # For real production you might want staff to always bypass subscription.
+        # For now, comment this out so you can test the 5-career limit:
+        # if user.is_staff:
+            # return True
 
         billing = getattr(user, "billing", None)
         return bool(billing and billing.is_active)
