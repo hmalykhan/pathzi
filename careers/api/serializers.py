@@ -24,7 +24,7 @@ class CareerListSerializer(serializers.ModelSerializer):
             "category",
             # "jobname",
             "subcategory",
-            "image_url"
+            "image_url",
             "job_slug",
             "job_url",
             "job_description",
