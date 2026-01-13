@@ -1,6 +1,4 @@
-# careers/permissions.py
 from rest_framework import permissions
-
 
 class CareerPermission(permissions.BasePermission):
     def has_permission(self, request, view):
@@ -8,7 +6,13 @@ class CareerPermission(permissions.BasePermission):
             return True
 
         action = getattr(view, "action", None)
-        if action in {"save", "list", "my", "retrieve", "unsave"}:
+
+        allowed = {
+            "save", "list", "my", "retrieve", "unsave",
+            "courses", "jobs", "apprenticeships",   # ✅ add these
+        }
+
+        if action in allowed:
             return bool(request.user and request.user.is_authenticated)
 
         return bool(request.user and request.user.is_staff)
