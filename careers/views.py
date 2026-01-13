@@ -1767,3 +1767,16 @@ class CareersView(viewsets.ModelViewSet):
         if self.action in ("list", "my"):
             return CareerListSerializer
         return CareerDetailSerializer
+
+
+
+
+# Option A (recommended)
+
+# Return latest items from user categories (still personalized):
+
+# courses: Course.category IN profile.category
+
+# jobs: Job.category IN profile.category
+
+# apprenticeships: same
