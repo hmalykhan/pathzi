@@ -1056,12 +1056,24 @@ class CareersView(viewsets.ModelViewSet):
         if not categories:
             return Response([], status=status.HTTP_200_OK)
 
-        # Base: tailored + category
-        base_qs = Job.objects.filter(subcategory__iexact=jobname)
-        base_qs = base_qs.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
+        # =========================
+        # Option A: choose pool
+        # =========================
+        sub_pool = Job.objects.filter(subcategory__iexact=jobname)
+        has_subcategory = sub_pool.values("id")[:1].exists()
+
+        if has_subcategory:
+            # Strict pool (same as before)
+            base_qs = sub_pool.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
+        else:
+            # Option A fallback: category-only pool
+            base_qs = Job.objects.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
 
         if not base_qs.values("id")[:1].exists():
             return Response([], status=status.HTTP_200_OK)
+
+        # ---------- keep the rest of your function EXACTLY the same ----------
+        # (everything below is unchanged, except one small broaden guard)
 
         # limit/offset without changing response shape
         try:
@@ -1122,7 +1134,6 @@ class CareersView(viewsets.ModelViewSet):
             )
             exact_list = list(exact_qs[:desired])
 
-        # If exact is already strong enough -> return only exact
         if len(exact_list) >= ENRICH_MIN:
             combined = exact_list
             mode = "exact_only"
@@ -1153,8 +1164,8 @@ class CareersView(viewsets.ModelViewSet):
                 combined += list(fuzzy_base[:need])
                 ids = {o.id for o in combined}
 
-            # ---------- BROADEN (same subcategory, ignore category) ----------
-            if len(combined) < desired and words:
+            # ---------- BROADEN (only if subcategory actually exists) ----------
+            if has_subcategory and len(combined) < desired and words:
                 broad_qs = Job.objects.filter(subcategory__iexact=jobname)
                 broad_qs = _qs_with_text(broad_qs)
                 broad_qs = _add_loc_n(broad_qs)
@@ -1178,7 +1189,7 @@ class CareersView(viewsets.ModelViewSet):
                 combined += list(fuzzy_broad[:need])
                 ids = {o.id for o in combined}
 
-            # ---------- LAST fallback fill (if DB has more but they don’t match location tokens) ----------
+            # ---------- LAST fallback fill ----------
             if len(combined) < desired:
                 need = desired - len(combined)
                 combined += list(qs1.exclude(id__in=ids).order_by("-id")[:need])
@@ -1189,7 +1200,6 @@ class CareersView(viewsets.ModelViewSet):
             else:
                 mode = "exact_plus_fuzzy" if exact_list else "fuzzy_only"
 
-        # Slice AFTER combine
         combined = combined[offset: offset + limit] if limit > 0 else combined
 
         data = JobsSerializer(combined, many=True, context={"request": request}).data
@@ -1197,7 +1207,169 @@ class CareersView(viewsets.ModelViewSet):
         resp["X-Search-Mode"] = mode
         return resp
 
+    @action(detail=True, methods=["GET"])
+    def courses(self, request, pk=None):
+        ENRICH_MIN = 10
+        WORD_CAP = 12
 
+        career = self.get_object()
+        jobname = (career.jobname or "").strip()
+        if not jobname:
+            return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
+
+        profile = self._profile_cached
+        if not profile:
+            return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
+
+        categories = self._norm_categories(profile)
+        if not categories:
+            return Response([], status=status.HTTP_200_OK)
+
+        # =========================
+        # Option A: choose pool
+        # =========================
+        sub_pool = Course.objects.filter(subcategory__iexact=jobname)
+        has_subcategory = sub_pool.values("id")[:1].exists()
+
+        if has_subcategory:
+            base_qs = sub_pool.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
+        else:
+            base_qs = Course.objects.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
+
+        if not base_qs.values("id")[:1].exists():
+            return Response([], status=status.HTTP_200_OK)
+
+        # ---------- rest of your function remains exactly the same ----------
+        # (your fuzzy + broaden + fill logic stays unchanged)
+
+        try:
+            limit = int(request.query_params.get("limit") or 0)
+            offset = int(request.query_params.get("offset") or 0)
+        except (TypeError, ValueError):
+            limit, offset = 0, 0
+
+        limit = min(limit, 100) if limit > 0 else 0
+        offset = max(offset, 0)
+        desired = (offset + limit) if limit > 0 else 50
+        desired = max(desired, ENRICH_MIN)
+
+        city = (getattr(profile, "city", None) or "").strip().lower()
+        postal = (getattr(profile, "zip_code", None) or "").strip().lower()
+        addr = (getattr(profile, "address", None) or "").strip().lower()
+        country = (getattr(profile, "country", None) or "").strip().lower()
+
+        raw_terms = [t for t in [city, postal, addr] if t]
+        raw_terms = list(dict.fromkeys(raw_terms))
+
+        profile_text = " ".join([x for x in [country, city, postal, addr] if x])
+        words = [w for w in re.split(r"[^a-z0-9]+", profile_text) if w]
+        words = list(dict.fromkeys(words))[:WORD_CAP]
+
+        empty_text = Value("", output_field=TextField())
+        addr_text = Coalesce(Cast("address", output_field=TextField()), empty_text, output_field=TextField())
+
+        def normalize_expr(expr):
+            loc_n = Lower(Trim(expr))
+            for ch in [" ", "\n", "\t", "\r", ",", ".", "-", "/", "#"]:
+                loc_n = Replace(loc_n, Value(ch, output_field=TextField()), empty_text, output_field=TextField())
+            return Cast(loc_n, output_field=TextField())
+
+        qs1 = base_qs.annotate(addr_text=addr_text).exclude(addr_text="")
+
+        exact_list = []
+        if raw_terms:
+            exact_score = Value(0, output_field=IntegerField())
+            for t in raw_terms:
+                exact_score += Case(
+                    When(addr_text__icontains=t, then=Value(1)),
+                    default=Value(0),
+                    output_field=IntegerField(),
+                )
+
+            exact_required = 2 if len(raw_terms) >= 2 else 1
+            exact_qs = (
+                qs1.annotate(exact_score=exact_score)
+                .filter(exact_score__gte=exact_required)
+                .order_by("-exact_score", "id")
+            )
+            exact_list = list(exact_qs[:desired])
+
+        if len(exact_list) >= ENRICH_MIN:
+            combined = exact_list
+            mode = "exact_only"
+        else:
+            combined = list(exact_list)
+            ids = {o.id for o in combined}
+
+            if words:
+                loc_n = normalize_expr(addr_text)
+
+                match_expr = Value(0, output_field=IntegerField())
+                for w in words:
+                    match_expr += Case(
+                        When(loc_n__contains=w, then=Value(1)),
+                        default=Value(0),
+                        output_field=IntegerField(),
+                    )
+
+                fuzzy_strict = (
+                    qs1.annotate(loc_n=loc_n, match_count=match_expr)
+                    .filter(match_count__gte=1)
+                    .exclude(id__in=ids)
+                    .order_by("-match_count", "id")
+                )
+
+                need = max(0, desired - len(combined))
+                combined += list(fuzzy_strict[:need])
+                ids = {o.id for o in combined}
+
+            # BROADEN only if subcategory exists (otherwise broaden is meaningless)
+            if has_subcategory and len(combined) < desired and words:
+                broad_base = Course.objects.filter(subcategory__iexact=jobname)
+                broad_qs = broad_base.annotate(addr_text=addr_text).exclude(addr_text="")
+
+                loc_n = normalize_expr(addr_text)
+                match_expr = Value(0, output_field=IntegerField())
+                for w in words:
+                    match_expr += Case(
+                        When(loc_n__contains=w, then=Value(1)),
+                        default=Value(0),
+                        output_field=IntegerField(),
+                    )
+
+                fuzzy_broad = (
+                    broad_qs.annotate(loc_n=loc_n, match_count=match_expr)
+                    .filter(match_count__gte=1)
+                    .exclude(id__in=ids)
+                    .order_by("-match_count", "id")
+                )
+
+                need = max(0, desired - len(combined))
+                combined += list(fuzzy_broad[:need])
+                ids = {o.id for o in combined}
+
+            if len(combined) < desired:
+                need = desired - len(combined)
+                combined += list(qs1.exclude(id__in=ids).order_by("-id")[:need])
+                ids = {o.id for o in combined}
+
+            if len(combined) < desired and has_subcategory:
+                need = desired - len(combined)
+                broad_fill = Course.objects.filter(subcategory__iexact=jobname).exclude(id__in=ids).order_by("-id")[:need]
+                combined += list(broad_fill)
+
+            if not combined:
+                combined = list(base_qs.order_by("-id")[:desired])
+                mode = "fallback"
+            else:
+                mode = "exact_plus_fuzzy" if exact_list else "fuzzy_only"
+
+        combined = combined[offset: offset + limit] if limit > 0 else combined
+
+        data = CoursesSerializer(combined, many=True, context={"request": request}).data
+        resp = Response(data, status=200)
+        resp["X-Search-Mode"] = mode
+        return resp
     
     @action(detail=True, methods=["GET"])
     def apprenticeships(self, request, pk=None):
@@ -1216,11 +1388,21 @@ class CareersView(viewsets.ModelViewSet):
         if not categories:
             return Response([], status=status.HTTP_200_OK)
 
-        base_qs = Apprenticeship.objects.filter(subcategory__iexact=jobname)
-        base_qs = base_qs.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
+        # =========================
+        # Option A: choose pool
+        # =========================
+        sub_pool = Apprenticeship.objects.filter(subcategory__iexact=jobname)
+        has_subcategory = sub_pool.values("id")[:1].exists()
+
+        if has_subcategory:
+            base_qs = sub_pool.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
+        else:
+            base_qs = Apprenticeship.objects.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
 
         if not base_qs.values("id")[:1].exists():
             return Response([], status=status.HTTP_200_OK)
+
+        # ---------- rest of your function unchanged except broaden guard ----------
 
         try:
             limit = int(request.query_params.get("limit") or 0)
@@ -1258,7 +1440,6 @@ class CareersView(viewsets.ModelViewSet):
             loc_n = Cast(loc_n, output_field=TextField())
             return qs.annotate(loc_n=loc_n).exclude(loc_n="")
 
-        # ---------- EXACT ----------
         exact_list = []
         qs1 = _qs_with_text(base_qs)
 
@@ -1286,7 +1467,6 @@ class CareersView(viewsets.ModelViewSet):
             combined = list(exact_list)
             ids = {o.id for o in combined}
 
-            # ---------- FUZZY (base) ----------
             if words:
                 qs2 = _add_loc_n(qs1)
 
@@ -1309,8 +1489,8 @@ class CareersView(viewsets.ModelViewSet):
                 combined += list(fuzzy_base[:need])
                 ids = {o.id for o in combined}
 
-            # ---------- BROADEN ----------
-            if len(combined) < desired and words:
+            # ---------- BROADEN only if subcategory exists ----------
+            if has_subcategory and len(combined) < desired and words:
                 broad_qs = Apprenticeship.objects.filter(subcategory__iexact=jobname)
                 broad_qs = _qs_with_text(broad_qs)
                 broad_qs = _add_loc_n(broad_qs)
@@ -1334,7 +1514,6 @@ class CareersView(viewsets.ModelViewSet):
                 combined += list(fuzzy_broad[:need])
                 ids = {o.id for o in combined}
 
-            # ---------- LAST fallback fill ----------
             if len(combined) < desired:
                 need = desired - len(combined)
                 combined += list(qs1.exclude(id__in=ids).order_by("-id")[:need])
@@ -1354,258 +1533,13 @@ class CareersView(viewsets.ModelViewSet):
 
 
     
-    @action(detail=True, methods=["GET"])
-    def courses(self, request, pk=None):
-        ENRICH_MIN = 10
-        WORD_CAP = 12  # keep SQL light
 
-        career = self.get_object()
-        jobname = (career.jobname or "").strip()
-        if not jobname:
-            return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
+    # THIS IS CODE WITHOUT THE FALLBACK.
 
-        profile = self._profile_cached
-        if not profile:
-            return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
-
-        categories = self._norm_categories(profile)
-        if not categories:
-            return Response([], status=status.HTTP_200_OK)
-
-        # 0) Strict pool: subcategory + category
-        base_qs = Course.objects.filter(subcategory__iexact=jobname)
-        base_qs = base_qs.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
-
-        if not base_qs.values("id")[:1].exists():
-            # still try broaden (subcategory only) before returning empty
-            broaden_check = Course.objects.filter(subcategory__iexact=jobname)
-            if not broaden_check.values("id")[:1].exists():
-                return Response([], status=status.HTTP_200_OK)
-            base_qs = broaden_check  # fallback to broaden pool if strict pool empty
-
-        # limit/offset without changing response shape
-        try:
-            limit = int(request.query_params.get("limit") or 0)
-            offset = int(request.query_params.get("offset") or 0)
-        except (TypeError, ValueError):
-            limit, offset = 0, 0
-
-        limit = min(limit, 100) if limit > 0 else 0
-        offset = max(offset, 0)
-        desired = (offset + limit) if limit > 0 else 50
-        desired = max(desired, ENRICH_MIN)
-
-        # 1) Profile location signals
-        city = (getattr(profile, "city", None) or "").strip().lower()
-        postal = (getattr(profile, "zip_code", None) or "").strip().lower()
-        addr = (getattr(profile, "address", None) or "").strip().lower()
-        country = (getattr(profile, "country", None) or "").strip().lower()
-
-        raw_terms = [t for t in [city, postal, addr] if t]
-        raw_terms = list(dict.fromkeys(raw_terms))
-
-        profile_text = " ".join([x for x in [country, city, postal, addr] if x])
-        words = [w for w in re.split(r"[^a-z0-9]+", profile_text) if w]
-        words = list(dict.fromkeys(words))[:WORD_CAP]
-
-        empty_text = Value("", output_field=TextField())
-
-        # Safe text view of Course.address (works for JSON/text/null)
-        addr_text = Coalesce(Cast("address", output_field=TextField()), empty_text, output_field=TextField())
-
-        def normalize_expr(expr):
-            loc_n = Lower(Trim(expr))
-            for ch in [" ", "\n", "\t", "\r", ",", ".", "-", "/", "#"]:
-                loc_n = Replace(loc_n, Value(ch, output_field=TextField()), empty_text, output_field=TextField())
-            return Cast(loc_n, output_field=TextField())
-
-        # Strict queryset with addr_text
-        qs1 = base_qs.annotate(addr_text=addr_text).exclude(addr_text="")
-
-        # ---------- EXACT (score-based) ----------
-        exact_list = []
-        if raw_terms:
-            exact_score = Value(0, output_field=IntegerField())
-            for t in raw_terms:
-                exact_score += Case(
-                    When(addr_text__icontains=t, then=Value(1)),
-                    default=Value(0),
-                    output_field=IntegerField(),
-                )
-
-            exact_required = 2 if len(raw_terms) >= 2 else 1
-
-            exact_qs = (
-                qs1.annotate(exact_score=exact_score)
-                .filter(exact_score__gte=exact_required)
-                .order_by("-exact_score", "id")
-            )
-            exact_list = list(exact_qs[:desired])
-
-        # If exact strong enough -> return exact only
-        if len(exact_list) >= ENRICH_MIN:
-            combined = exact_list
-            mode = "exact_only"
-        else:
-            combined = list(exact_list)
-            ids = {o.id for o in combined}
-
-            # ---------- FUZZY within strict pool ----------
-            if words:
-                loc_n = normalize_expr(addr_text)
-                match_expr = Value(0, output_field=IntegerField())
-                for w in words:
-                    match_expr += Case(
-                        When(loc_n__contains=w, then=Value(1)),
-                        default=Value(0),
-                        output_field=IntegerField(),
-                    )
-
-                fuzzy_strict = (
-                    qs1.annotate(loc_n=loc_n, match_count=match_expr)
-                    .filter(match_count__gte=1)
-                    .exclude(id__in=ids)
-                    .order_by("-match_count", "id")
-                )
-
-                need = max(0, desired - len(combined))
-                combined += list(fuzzy_strict[:need])
-                ids = {o.id for o in combined}
-
-            # ---------- BROADEN: subcategory only (relax category), fuzzy again ----------
-            if len(combined) < desired and words:
-                broad_base = Course.objects.filter(subcategory__iexact=jobname)
-                broad_qs = broad_base.annotate(addr_text=addr_text).exclude(addr_text="")
-
-                loc_n = normalize_expr(addr_text)
-                match_expr = Value(0, output_field=IntegerField())
-                for w in words:
-                    match_expr += Case(
-                        When(loc_n__contains=w, then=Value(1)),
-                        default=Value(0),
-                        output_field=IntegerField(),
-                    )
-
-                fuzzy_broad = (
-                    broad_qs.annotate(loc_n=loc_n, match_count=match_expr)
-                    .filter(match_count__gte=1)
-                    .exclude(id__in=ids)
-                    .order_by("-match_count", "id")
-                )
-
-                need = max(0, desired - len(combined))
-                combined += list(fuzzy_broad[:need])
-                ids = {o.id for o in combined}
-
-            # ---------- LAST fill: pull remaining tailored items (strict pool), then broaden pool ----------
-            if len(combined) < desired:
-                need = desired - len(combined)
-                combined += list(qs1.exclude(id__in=ids).order_by("-id")[:need])
-                ids = {o.id for o in combined}
-
-            if len(combined) < desired:
-                need = desired - len(combined)
-                broad_fill = Course.objects.filter(subcategory__iexact=jobname).exclude(id__in=ids).order_by("-id")[:need]
-                combined += list(broad_fill)
-
-            if not combined:
-                # if subcategory has literally 0 rows, only then this happens
-                combined = list(Course.objects.filter(subcategory__iexact=jobname).order_by("-id")[:desired])
-                mode = "fallback"
-            else:
-                mode = "exact_plus_fuzzy" if exact_list else "fuzzy_only"
-
-        # Final slice AFTER combining (keeps exact-first ordering)
-        combined = combined[offset: offset + limit] if limit > 0 else combined
-
-        data = CoursesSerializer(combined, many=True, context={"request": request}).data
-        resp = Response(data, status=200)
-        resp["X-Search-Mode"] = mode
-        return resp
-
-
-
-
-
-
-    # -----------------------
-    # COURSES: strict -> loose -> fallback (still returns list)
-    # -----------------------
-    # @action(detail=True, methods=["GET"])
-    # def courses(self, request, pk=None):
-    #     career = self.get_object()
-    #     jobname = (career.jobname or "").strip()
-    #     if not jobname:
-    #         return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
-
-    #     profile = self._profile_cached
-    #     if not profile:
-    #         return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
-
-    #     categories = self._norm_categories(profile)
-    #     if not categories:
-    #         return Response([], status=status.HTTP_200_OK)
-
-    #     base_qs = Course.objects.filter(subcategory__iexact=jobname)
-    #     base_qs = base_qs.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
-
-    #     # country/city/zip words
-    #     country = (getattr(profile, "country", None) or "").strip().lower()
-    #     city = (getattr(profile, "city", None) or "").strip().lower()
-    #     postal = (getattr(profile, "zip_code", None) or "").strip().lower()
-    #     profile_text = " ".join([x for x in [country, city, postal] if x])
-    #     words = [w for w in re.split(r"[^a-z0-9]+", profile_text) if w]
-    #     words = list(dict.fromkeys(words))
-
-    #     if not self._nonempty(base_qs):
-    #         return Response([], status=status.HTTP_200_OK)
-
-    #     # If no location data: return tailored+category
-    #     if not words:
-    #         qs = self._slice(base_qs.order_by("id"))
-    #         data = CoursesSerializer(qs, many=True, context={"request": request}).data
-    #         resp = Response(data, status=status.HTTP_200_OK)
-    #         resp["X-Search-Mode"] = "fallback"
-    #         return resp
-
-    #     addr_expr = self._normalized_text_expr("address")
-    #     qs = base_qs.annotate(loc_n=addr_expr)
-
-    #     match_expr = Value(0, output_field=IntegerField())
-    #     for w in words:
-    #         match_expr += Case(
-    #             When(loc_n__contains=w, then=Value(1)),
-    #             default=Value(0),
-    #             output_field=IntegerField(),
-    #         )
-    #     qs = qs.annotate(match_count=match_expr)
-
-    #     strict_threshold = 2 if len(words) >= 2 else 1
-
-    #     strict_qs = qs.exclude(loc_n="").filter(match_count__gte=strict_threshold).order_by("-match_count", "id")
-    #     loose_qs = qs.exclude(loc_n="").filter(match_count__gte=1).order_by("-match_count", "id")
-    #     fallback_qs = qs.order_by("-match_count", "id")
-
-    #     if self._nonempty(strict_qs):
-    #         out = self._slice(strict_qs)
-    #         mode = "strict"
-    #     elif self._nonempty(loose_qs):
-    #         out = self._slice(loose_qs)
-    #         mode = "loose"
-    #     else:
-    #         out = self._slice(fallback_qs)
-    #         mode = "fallback"
-
-    #     data = CoursesSerializer(out, many=True, context={"request": request}).data
-    #     resp = Response(data, status=status.HTTP_200_OK)
-    #     resp["X-Search-Mode"] = mode
-    #     return resp
-
-    # # -----------------------
-    # # JOBS: strict -> loose tokens -> fallback (no trigram lookups; safe on SQLite)
-    # # -----------------------
     # @action(detail=True, methods=["GET"])
     # def jobs(self, request, pk=None):
+    #     ENRICH_MIN = 10
+
     #     career = self.get_object()
     #     jobname = (career.jobname or "").strip()
     #     if not jobname:
@@ -1619,73 +1553,153 @@ class CareersView(viewsets.ModelViewSet):
     #     if not categories:
     #         return Response([], status=status.HTTP_200_OK)
 
+    #     # Base: tailored + category
     #     base_qs = Job.objects.filter(subcategory__iexact=jobname)
     #     base_qs = base_qs.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
 
-    #     if not self._nonempty(base_qs):
+    #     if not base_qs.values("id")[:1].exists():
     #         return Response([], status=status.HTTP_200_OK)
 
-    #     raw_terms = []
-    #     if getattr(profile, "city", None):
-    #         raw_terms.append(profile.city.strip())
-    #     if getattr(profile, "zip_code", None):
-    #         raw_terms.append(profile.zip_code.strip())
-    #     if getattr(profile, "address", None):
-    #         raw_terms.append(profile.address.strip())
-    #     raw_terms = list({t for t in raw_terms if t})
+    #     # limit/offset without changing response shape
+    #     try:
+    #         limit = int(request.query_params.get("limit") or 0)
+    #         offset = int(request.query_params.get("offset") or 0)
+    #     except (TypeError, ValueError):
+    #         limit, offset = 0, 0
 
-    #     # No location data => return tailored jobs
-    #     if not raw_terms:
-    #         out = self._slice(base_qs.order_by("-id"))
-    #         data = JobsSerializer(out, many=True, context={"request": request}).data
-    #         resp = Response(data, status=status.HTTP_200_OK)
-    #         resp["X-Search-Mode"] = "fallback"
-    #         return resp
+    #     limit = min(limit, 100) if limit > 0 else 0
+    #     offset = max(offset, 0)
+    #     desired = (offset + limit) if limit > 0 else 50
+    #     desired = max(desired, ENRICH_MIN)
 
-    #     # strict
-    #     strict_q = Q()
-    #     for t in raw_terms:
-    #         strict_q |= Q(location__icontains=t)
-    #     strict_qs = base_qs.exclude(location__isnull=True).exclude(location="").filter(strict_q).order_by("-id")
+    #     # Profile location signals
+    #     city = (getattr(profile, "city", None) or "").strip().lower()
+    #     postal = (getattr(profile, "zip_code", None) or "").strip().lower()
+    #     addr = (getattr(profile, "address", None) or "").strip().lower()
+    #     country = (getattr(profile, "country", None) or "").strip().lower()
 
-    #     if self._nonempty(strict_qs):
-    #         out = self._slice(strict_qs)
-    #         mode = "strict"
+    #     raw_terms = [t for t in [city, postal, addr] if t]
+    #     raw_terms = list(dict.fromkeys(raw_terms))
+
+    #     profile_text = " ".join([x for x in [country, city, postal, addr] if x])
+    #     words = [w for w in re.split(r"[^a-z0-9]+", profile_text) if w]
+    #     words = list(dict.fromkeys(words))[:12]  # cap for SQL size
+
+    #     empty_text = Value("", output_field=TextField())
+
+    #     def _qs_with_text(qs):
+    #         loc_text = Coalesce(Cast("location", output_field=TextField()), empty_text, output_field=TextField())
+    #         return qs.annotate(loc_text=loc_text).exclude(loc_text="")
+
+    #     def _add_loc_n(qs):
+    #         loc_n = Lower(Trim(qs.query.annotations["loc_text"]))
+    #         for ch in [" ", "\n", "\t", "\r", ",", ".", "-", "/", "#"]:
+    #             loc_n = Replace(loc_n, Value(ch, output_field=TextField()), empty_text, output_field=TextField())
+    #         loc_n = Cast(loc_n, output_field=TextField())
+    #         return qs.annotate(loc_n=loc_n).exclude(loc_n="")
+
+    #     # ---------- EXACT ----------
+    #     exact_list = []
+    #     qs1 = _qs_with_text(base_qs)
+
+    #     if raw_terms:
+    #         exact_score = Value(0, output_field=IntegerField())
+    #         for t in raw_terms:
+    #             exact_score += Case(
+    #                 When(loc_text__icontains=t, then=Value(1)),
+    #                 default=Value(0),
+    #                 output_field=IntegerField(),
+    #             )
+
+    #         exact_required = 2 if len(raw_terms) >= 2 else 1
+    #         exact_qs = (
+    #             qs1.annotate(exact_score=exact_score)
+    #             .filter(exact_score__gte=exact_required)
+    #             .order_by("-exact_score", "id")
+    #         )
+    #         exact_list = list(exact_qs[:desired])
+
+    #     # If exact is already strong enough -> return only exact
+    #     if len(exact_list) >= ENRICH_MIN:
+    #         combined = exact_list
+    #         mode = "exact_only"
     #     else:
-    #         # loose token match
-    #         tokens = []
-    #         for text in raw_terms:
-    #             for tok in text.replace(",", " ").split():
-    #                 tok = tok.strip()
-    #                 if len(tok) >= 3:
-    #                     tokens.append(tok)
-    #         tokens = list(dict.fromkeys(tokens))
+    #         combined = list(exact_list)
+    #         ids = {o.id for o in combined}
 
-    #         if tokens:
-    #             loose_q = Q()
-    #             for t in tokens:
-    #                 loose_q |= Q(location__icontains=t)
-    #             loose_qs = base_qs.exclude(location__isnull=True).exclude(location="").filter(loose_q).order_by("-id")
-    #         else:
-    #             loose_qs = Job.objects.none()
+    #         # ---------- FUZZY (base) ----------
+    #         if words:
+    #             qs2 = _add_loc_n(qs1)
 
-    #         if self._nonempty(loose_qs):
-    #             out = self._slice(loose_qs)
-    #             mode = "loose"
-    #         else:
-    #             out = self._slice(base_qs.order_by("-id"))
+    #             match_expr = Value(0, output_field=IntegerField())
+    #             for w in words:
+    #                 match_expr += Case(
+    #                     When(loc_n__contains=w, then=Value(1)),
+    #                     default=Value(0),
+    #                     output_field=IntegerField(),
+    #                 )
+
+    #             fuzzy_base = (
+    #                 qs2.annotate(match_count=match_expr)
+    #                 .filter(match_count__gte=1)
+    #                 .exclude(id__in=ids)
+    #                 .order_by("-match_count", "id")
+    #             )
+
+    #             need = max(0, desired - len(combined))
+    #             combined += list(fuzzy_base[:need])
+    #             ids = {o.id for o in combined}
+
+    #         # ---------- BROADEN (same subcategory, ignore category) ----------
+    #         if len(combined) < desired and words:
+    #             broad_qs = Job.objects.filter(subcategory__iexact=jobname)
+    #             broad_qs = _qs_with_text(broad_qs)
+    #             broad_qs = _add_loc_n(broad_qs)
+
+    #             match_expr = Value(0, output_field=IntegerField())
+    #             for w in words:
+    #                 match_expr += Case(
+    #                     When(loc_n__contains=w, then=Value(1)),
+    #                     default=Value(0),
+    #                     output_field=IntegerField(),
+    #                 )
+
+    #             fuzzy_broad = (
+    #                 broad_qs.annotate(match_count=match_expr)
+    #                 .filter(match_count__gte=1)
+    #                 .exclude(id__in=ids)
+    #                 .order_by("-match_count", "id")
+    #             )
+
+    #             need = max(0, desired - len(combined))
+    #             combined += list(fuzzy_broad[:need])
+    #             ids = {o.id for o in combined}
+
+    #         # ---------- LAST fallback fill (if DB has more but they don’t match location tokens) ----------
+    #         if len(combined) < desired:
+    #             need = desired - len(combined)
+    #             combined += list(qs1.exclude(id__in=ids).order_by("-id")[:need])
+
+    #         if not combined:
+    #             combined = list(base_qs.order_by("-id")[:desired])
     #             mode = "fallback"
+    #         else:
+    #             mode = "exact_plus_fuzzy" if exact_list else "fuzzy_only"
 
-    #     data = JobsSerializer(out, many=True, context={"request": request}).data
-    #     resp = Response(data, status=status.HTTP_200_OK)
+    #     # Slice AFTER combine
+    #     combined = combined[offset: offset + limit] if limit > 0 else combined
+
+    #     data = JobsSerializer(combined, many=True, context={"request": request}).data
+    #     resp = Response(data, status=200)
     #     resp["X-Search-Mode"] = mode
     #     return resp
 
-    # # -----------------------
-    # # APPRENTICESHIPS: strict merged3 -> match_count -> fallback
-    # # -----------------------
+
+    
     # @action(detail=True, methods=["GET"])
     # def apprenticeships(self, request, pk=None):
+    #     ENRICH_MIN = 10
+
     #     career = self.get_object()
     #     jobname = (career.jobname or "").strip()
     #     if not jobname:
@@ -1699,66 +1713,312 @@ class CareersView(viewsets.ModelViewSet):
     #     if not categories:
     #         return Response([], status=status.HTTP_200_OK)
 
-    #     # 0) Tailored base (career + category)
     #     base_qs = Apprenticeship.objects.filter(subcategory__iexact=jobname)
     #     base_qs = base_qs.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
 
-    #     if not self._nonempty(base_qs):
+    #     if not base_qs.values("id")[:1].exists():
     #         return Response([], status=status.HTTP_200_OK)
 
-    #     # 1) Build words from country/city/zip/address (same as courses)
-    #     country = (getattr(profile, "country", None) or "").strip().lower()
+    #     try:
+    #         limit = int(request.query_params.get("limit") or 0)
+    #         offset = int(request.query_params.get("offset") or 0)
+    #     except (TypeError, ValueError):
+    #         limit, offset = 0, 0
+
+    #     limit = min(limit, 100) if limit > 0 else 0
+    #     offset = max(offset, 0)
+    #     desired = (offset + limit) if limit > 0 else 50
+    #     desired = max(desired, ENRICH_MIN)
+
     #     city = (getattr(profile, "city", None) or "").strip().lower()
     #     postal = (getattr(profile, "zip_code", None) or "").strip().lower()
     #     addr = (getattr(profile, "address", None) or "").strip().lower()
+    #     country = (getattr(profile, "country", None) or "").strip().lower()
+
+    #     raw_terms = [t for t in [city, postal, addr] if t]
+    #     raw_terms = list(dict.fromkeys(raw_terms))
 
     #     profile_text = " ".join([x for x in [country, city, postal, addr] if x])
     #     words = [w for w in re.split(r"[^a-z0-9]+", profile_text) if w]
-    #     words = list(dict.fromkeys(words))
+    #     words = list(dict.fromkeys(words))[:12]
 
-    #     if not words:
-    #         out = self._slice(base_qs.order_by("-id"))
-    #         data = ApprenticeshipSerializer(out, many=True, context={"request": request}).data
-    #         resp = Response(data, status=status.HTTP_200_OK)
-    #         resp["X-Search-Mode"] = "fallback"
-    #         return resp
+    #     empty_text = Value("", output_field=TextField())
 
-    #     # 2) Normalize location_summary -> loc_n
-    #     loc_expr = self._normalized_text_expr("location_summary")
-    #     qs = base_qs.annotate(loc_n=loc_expr).exclude(loc_n="")
+    #     def _qs_with_text(qs):
+    #         loc_text = Coalesce(Cast("location_summary", output_field=TextField()), empty_text, output_field=TextField())
+    #         return qs.annotate(loc_text=loc_text).exclude(loc_text="")
 
-    #     # 3) match_count
-    #     match_expr = Value(0, output_field=IntegerField())
-    #     for w in words:
-    #         match_expr += Case(
-    #             When(loc_n__contains=w, then=Value(1)),
-    #             default=Value(0),
-    #             output_field=IntegerField(),
+    #     def _add_loc_n(qs):
+    #         loc_n = Lower(Trim(qs.query.annotations["loc_text"]))
+    #         for ch in [" ", "\n", "\t", "\r", ",", ".", "-", "/", "#"]:
+    #             loc_n = Replace(loc_n, Value(ch, output_field=TextField()), empty_text, output_field=TextField())
+    #         loc_n = Cast(loc_n, output_field=TextField())
+    #         return qs.annotate(loc_n=loc_n).exclude(loc_n="")
+
+    #     # ---------- EXACT ----------
+    #     exact_list = []
+    #     qs1 = _qs_with_text(base_qs)
+
+    #     if raw_terms:
+    #         exact_score = Value(0, output_field=IntegerField())
+    #         for t in raw_terms:
+    #             exact_score += Case(
+    #                 When(loc_text__icontains=t, then=Value(1)),
+    #                 default=Value(0),
+    #                 output_field=IntegerField(),
+    #             )
+
+    #         exact_required = 2 if len(raw_terms) >= 2 else 1
+    #         exact_qs = (
+    #             qs1.annotate(exact_score=exact_score)
+    #             .filter(exact_score__gte=exact_required)
+    #             .order_by("-exact_score", "id")
     #         )
+    #         exact_list = list(exact_qs[:desired])
 
-    #     qs = qs.annotate(match_count=match_expr)
-
-    #     strict_threshold = 2 if len(words) >= 2 else 1
-
-    #     strict_qs = qs.filter(match_count__gte=strict_threshold).order_by("-match_count", "id")
-    #     loose_qs = qs.filter(match_count__gte=1).order_by("-match_count", "id")
-    #     fallback_qs = qs.order_by("-match_count", "id")
-
-    #     if self._nonempty(strict_qs):
-    #         out = self._slice(strict_qs)
-    #         mode = "strict"
-    #     elif self._nonempty(loose_qs):
-    #         out = self._slice(loose_qs)
-    #         mode = "loose"
+    #     if len(exact_list) >= ENRICH_MIN:
+    #         combined = exact_list
+    #         mode = "exact_only"
     #     else:
-    #         out = self._slice(fallback_qs)
-    #         mode = "fallback"
+    #         combined = list(exact_list)
+    #         ids = {o.id for o in combined}
 
-    #     data = ApprenticeshipSerializer(out, many=True, context={"request": request}).data
-    #     resp = Response(data, status=status.HTTP_200_OK)
+    #         # ---------- FUZZY (base) ----------
+    #         if words:
+    #             qs2 = _add_loc_n(qs1)
+
+    #             match_expr = Value(0, output_field=IntegerField())
+    #             for w in words:
+    #                 match_expr += Case(
+    #                     When(loc_n__contains=w, then=Value(1)),
+    #                     default=Value(0),
+    #                     output_field=IntegerField(),
+    #                 )
+
+    #             fuzzy_base = (
+    #                 qs2.annotate(match_count=match_expr)
+    #                 .filter(match_count__gte=1)
+    #                 .exclude(id__in=ids)
+    #                 .order_by("-match_count", "id")
+    #             )
+
+    #             need = max(0, desired - len(combined))
+    #             combined += list(fuzzy_base[:need])
+    #             ids = {o.id for o in combined}
+
+    #         # ---------- BROADEN ----------
+    #         if len(combined) < desired and words:
+    #             broad_qs = Apprenticeship.objects.filter(subcategory__iexact=jobname)
+    #             broad_qs = _qs_with_text(broad_qs)
+    #             broad_qs = _add_loc_n(broad_qs)
+
+    #             match_expr = Value(0, output_field=IntegerField())
+    #             for w in words:
+    #                 match_expr += Case(
+    #                     When(loc_n__contains=w, then=Value(1)),
+    #                     default=Value(0),
+    #                     output_field=IntegerField(),
+    #                 )
+
+    #             fuzzy_broad = (
+    #                 broad_qs.annotate(match_count=match_expr)
+    #                 .filter(match_count__gte=1)
+    #                 .exclude(id__in=ids)
+    #                 .order_by("-match_count", "id")
+    #             )
+
+    #             need = max(0, desired - len(combined))
+    #             combined += list(fuzzy_broad[:need])
+    #             ids = {o.id for o in combined}
+
+    #         # ---------- LAST fallback fill ----------
+    #         if len(combined) < desired:
+    #             need = desired - len(combined)
+    #             combined += list(qs1.exclude(id__in=ids).order_by("-id")[:need])
+
+    #         if not combined:
+    #             combined = list(base_qs.order_by("-id")[:desired])
+    #             mode = "fallback"
+    #         else:
+    #             mode = "exact_plus_fuzzy" if exact_list else "fuzzy_only"
+
+    #     combined = combined[offset: offset + limit] if limit > 0 else combined
+
+    #     data = ApprenticeshipSerializer(combined, many=True, context={"request": request}).data
+    #     resp = Response(data, status=200)
     #     resp["X-Search-Mode"] = mode
     #     return resp
 
+
+    
+    # @action(detail=True, methods=["GET"])
+    # def courses(self, request, pk=None):
+    #     ENRICH_MIN = 10
+    #     WORD_CAP = 12  # keep SQL light
+
+    #     career = self.get_object()
+    #     jobname = (career.jobname or "").strip()
+    #     if not jobname:
+    #         return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     profile = self._profile_cached
+    #     if not profile:
+    #         return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     categories = self._norm_categories(profile)
+    #     if not categories:
+    #         return Response([], status=status.HTTP_200_OK)
+
+    #     # 0) Strict pool: subcategory + category
+    #     base_qs = Course.objects.filter(subcategory__iexact=jobname)
+    #     base_qs = base_qs.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
+
+    #     if not base_qs.values("id")[:1].exists():
+    #         # still try broaden (subcategory only) before returning empty
+    #         broaden_check = Course.objects.filter(subcategory__iexact=jobname)
+    #         if not broaden_check.values("id")[:1].exists():
+    #             return Response([], status=status.HTTP_200_OK)
+    #         base_qs = broaden_check  # fallback to broaden pool if strict pool empty
+
+    #     # limit/offset without changing response shape
+    #     try:
+    #         limit = int(request.query_params.get("limit") or 0)
+    #         offset = int(request.query_params.get("offset") or 0)
+    #     except (TypeError, ValueError):
+    #         limit, offset = 0, 0
+
+    #     limit = min(limit, 100) if limit > 0 else 0
+    #     offset = max(offset, 0)
+    #     desired = (offset + limit) if limit > 0 else 50
+    #     desired = max(desired, ENRICH_MIN)
+
+    #     # 1) Profile location signals
+    #     city = (getattr(profile, "city", None) or "").strip().lower()
+    #     postal = (getattr(profile, "zip_code", None) or "").strip().lower()
+    #     addr = (getattr(profile, "address", None) or "").strip().lower()
+    #     country = (getattr(profile, "country", None) or "").strip().lower()
+
+    #     raw_terms = [t for t in [city, postal, addr] if t]
+    #     raw_terms = list(dict.fromkeys(raw_terms))
+
+    #     profile_text = " ".join([x for x in [country, city, postal, addr] if x])
+    #     words = [w for w in re.split(r"[^a-z0-9]+", profile_text) if w]
+    #     words = list(dict.fromkeys(words))[:WORD_CAP]
+
+    #     empty_text = Value("", output_field=TextField())
+
+    #     # Safe text view of Course.address (works for JSON/text/null)
+    #     addr_text = Coalesce(Cast("address", output_field=TextField()), empty_text, output_field=TextField())
+
+    #     def normalize_expr(expr):
+    #         loc_n = Lower(Trim(expr))
+    #         for ch in [" ", "\n", "\t", "\r", ",", ".", "-", "/", "#"]:
+    #             loc_n = Replace(loc_n, Value(ch, output_field=TextField()), empty_text, output_field=TextField())
+    #         return Cast(loc_n, output_field=TextField())
+
+    #     # Strict queryset with addr_text
+    #     qs1 = base_qs.annotate(addr_text=addr_text).exclude(addr_text="")
+
+    #     # ---------- EXACT (score-based) ----------
+    #     exact_list = []
+    #     if raw_terms:
+    #         exact_score = Value(0, output_field=IntegerField())
+    #         for t in raw_terms:
+    #             exact_score += Case(
+    #                 When(addr_text__icontains=t, then=Value(1)),
+    #                 default=Value(0),
+    #                 output_field=IntegerField(),
+    #             )
+
+    #         exact_required = 2 if len(raw_terms) >= 2 else 1
+
+    #         exact_qs = (
+    #             qs1.annotate(exact_score=exact_score)
+    #             .filter(exact_score__gte=exact_required)
+    #             .order_by("-exact_score", "id")
+    #         )
+    #         exact_list = list(exact_qs[:desired])
+
+    #     # If exact strong enough -> return exact only
+    #     if len(exact_list) >= ENRICH_MIN:
+    #         combined = exact_list
+    #         mode = "exact_only"
+    #     else:
+    #         combined = list(exact_list)
+    #         ids = {o.id for o in combined}
+
+    #         # ---------- FUZZY within strict pool ----------
+    #         if words:
+    #             loc_n = normalize_expr(addr_text)
+    #             match_expr = Value(0, output_field=IntegerField())
+    #             for w in words:
+    #                 match_expr += Case(
+    #                     When(loc_n__contains=w, then=Value(1)),
+    #                     default=Value(0),
+    #                     output_field=IntegerField(),
+    #                 )
+
+    #             fuzzy_strict = (
+    #                 qs1.annotate(loc_n=loc_n, match_count=match_expr)
+    #                 .filter(match_count__gte=1)
+    #                 .exclude(id__in=ids)
+    #                 .order_by("-match_count", "id")
+    #             )
+
+    #             need = max(0, desired - len(combined))
+    #             combined += list(fuzzy_strict[:need])
+    #             ids = {o.id for o in combined}
+
+    #         # ---------- BROADEN: subcategory only (relax category), fuzzy again ----------
+    #         if len(combined) < desired and words:
+    #             broad_base = Course.objects.filter(subcategory__iexact=jobname)
+    #             broad_qs = broad_base.annotate(addr_text=addr_text).exclude(addr_text="")
+
+    #             loc_n = normalize_expr(addr_text)
+    #             match_expr = Value(0, output_field=IntegerField())
+    #             for w in words:
+    #                 match_expr += Case(
+    #                     When(loc_n__contains=w, then=Value(1)),
+    #                     default=Value(0),
+    #                     output_field=IntegerField(),
+    #                 )
+
+    #             fuzzy_broad = (
+    #                 broad_qs.annotate(loc_n=loc_n, match_count=match_expr)
+    #                 .filter(match_count__gte=1)
+    #                 .exclude(id__in=ids)
+    #                 .order_by("-match_count", "id")
+    #             )
+
+    #             need = max(0, desired - len(combined))
+    #             combined += list(fuzzy_broad[:need])
+    #             ids = {o.id for o in combined}
+
+    #         # ---------- LAST fill: pull remaining tailored items (strict pool), then broaden pool ----------
+    #         if len(combined) < desired:
+    #             need = desired - len(combined)
+    #             combined += list(qs1.exclude(id__in=ids).order_by("-id")[:need])
+    #             ids = {o.id for o in combined}
+
+    #         if len(combined) < desired:
+    #             need = desired - len(combined)
+    #             broad_fill = Course.objects.filter(subcategory__iexact=jobname).exclude(id__in=ids).order_by("-id")[:need]
+    #             combined += list(broad_fill)
+
+    #         if not combined:
+    #             # if subcategory has literally 0 rows, only then this happens
+    #             combined = list(Course.objects.filter(subcategory__iexact=jobname).order_by("-id")[:desired])
+    #             mode = "fallback"
+    #         else:
+    #             mode = "exact_plus_fuzzy" if exact_list else "fuzzy_only"
+
+    #     # Final slice AFTER combining (keeps exact-first ordering)
+    #     combined = combined[offset: offset + limit] if limit > 0 else combined
+
+    #     data = CoursesSerializer(combined, many=True, context={"request": request}).data
+    #     resp = Response(data, status=200)
+    #     resp["X-Search-Mode"] = mode
+    #     return resp
 
     # -----------------------
     # Serializer switching
