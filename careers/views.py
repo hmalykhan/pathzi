@@ -451,276 +451,277 @@
     #     return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-# careers/views.py
-import re
+# # careers/views.py
+# import re
 
-from django.db.models import (
-    Case,
-    IntegerField,
-    Q,
-    Subquery,
-    TextField,
-    Value,
-    When,
-)
-from django.db.models.functions import Cast, Coalesce, Lower, Replace, Trim
-from django.utils.functional import cached_property
-from rest_framework import status, viewsets
-from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound
-from rest_framework.response import Response
+# from django.db.models import (
+#     Case,
+#     IntegerField,
+#     Q,
+#     Subquery,
+#     TextField,
+#     Value,
+#     When,
+# )
+# from django.db.models.functions import Cast, Coalesce, Lower, Replace, Trim
+# from django.utils.functional import cached_property
+# from rest_framework import status, viewsets
+# from rest_framework.decorators import action
+# from rest_framework.exceptions import NotFound
+# from rest_framework.response import Response
 
-from accounts.models import UserProfile
-from careers.models import Career, UserSavedCareer
-from careers.api.permissions import CareerPermission
-from careers.api.serializers import CareerListSerializer, CareerDetailSerializer
+# from accounts.models import UserProfile
+# from careers.models import Career, UserSavedCareer
+# from careers.api.permissions import CareerPermission
+# from careers.api.serializers import CareerListSerializer, CareerDetailSerializer
 
-from courses.models import Course
-from courses.api.serializer import CoursesSerializer
+# from courses.models import Course
+# from courses.api.serializer import CoursesSerializer
 
-from jobs.models import Job
-from jobs.api.serializers import JobsSerializer
+# from jobs.models import Job
+# from jobs.api.serializers import JobsSerializer
 
-from apprenticeship.models import Apprenticeship
-from apprenticeship.api.serializers import ApprenticeshipSerializer
-
-
-FREE_CAREER_LIMIT = 5
-SEPARATORS = [" ", "\n", "\t", "\r", ",", ".", "-", "/", "#"]
+# from apprenticeship.models import Apprenticeship
+# from apprenticeship.api.serializers import ApprenticeshipSerializer
 
 
-class CareersView(viewsets.ModelViewSet):
-    serializer_class = CareerDetailSerializer
-    permission_classes = [CareerPermission]
+# FREE_CAREER_LIMIT = 5
+# SEPARATORS = [" ", "\n", "\t", "\r", ",", ".", "-", "/", "#"]
 
-    # IMPORTANT: disable pagination wrapper for this view even if global pagination is enabled
-    pagination_class = None
 
-    # -----------------------
-    # Cached helpers
-    # -----------------------
-    @cached_property
-    def _profile_cached(self):
-        user = getattr(self.request, "user", None)
-        if not user or not user.is_authenticated:
-            return None
-        return UserProfile.objects.filter(appuser=user).first()
+# class CareersView(viewsets.ModelViewSet):
+#     serializer_class = CareerDetailSerializer
+#     permission_classes = [CareerPermission]
 
-    def _get_or_create_profile(self):
-        profile, _ = UserProfile.objects.get_or_create(
-            appuser=self.request.user,
-            defaults={"age": 0},
-        )
-        return profile
+#     # IMPORTANT: disable pagination wrapper for this view even if global pagination is enabled
+#     pagination_class = None
 
-    def _is_subscribed(self) -> bool:
-        user = getattr(self.request, "user", None)
-        if not user or not user.is_authenticated:
-            return False
-        billing = getattr(user, "billing", None)
-        return bool(billing and billing.is_active)
+#     # -----------------------
+#     # Cached helpers
+#     # -----------------------
+#     @cached_property
+#     def _profile_cached(self):
+#         user = getattr(self.request, "user", None)
+#         if not user or not user.is_authenticated:
+#             return None
+#         return UserProfile.objects.filter(appuser=user).first()
 
-    def _norm_categories(self, profile):
-        categories = getattr(profile, "category", None) or []
-        if isinstance(categories, str):
-            categories = [categories]
-        return [c.strip().lower() for c in categories if c and c.strip()]
+#     def _get_or_create_profile(self):
+#         profile, _ = UserProfile.objects.get_or_create(
+#             appuser=self.request.user,
+#             defaults={"age": 0},
+#         )
+#         return profile
 
-    def _normalized_text_expr(self, field_name: str):
-        empty_text = Value("", output_field=TextField())
-        expr = Coalesce(Cast(field_name, output_field=TextField()), empty_text, output_field=TextField())
-        expr = Lower(Trim(expr))
-        for ch in SEPARATORS:
-            expr = Replace(expr, Value(ch, output_field=TextField()), empty_text, output_field=TextField())
-        return Cast(expr, output_field=TextField())
+#     def _is_subscribed(self) -> bool:
+#         user = getattr(self.request, "user", None)
+#         if not user or not user.is_authenticated:
+#             return False
+#         billing = getattr(user, "billing", None)
+#         return bool(billing and billing.is_active)
 
-    def _slice(self, qs):
-        """
-        Optional progressive loading WITHOUT changing response shape.
-        Frontend can later call: ?limit=20&offset=0, then offset=20, etc.
-        """
-        qp = getattr(self.request, "query_params", {})
-        try:
-            limit = int(qp.get("limit") or 0)
-            offset = int(qp.get("offset") or 0)
-        except (TypeError, ValueError):
-            limit, offset = 0, 0
+#     def _norm_categories(self, profile):
+#         categories = getattr(profile, "category", None) or []
+#         if isinstance(categories, str):
+#             categories = [categories]
+#         return [c.strip().lower() for c in categories if c and c.strip()]
 
-        if limit <= 0:
-            return qs
+#     def _normalized_text_expr(self, field_name: str):
+#         empty_text = Value("", output_field=TextField())
+#         expr = Coalesce(Cast(field_name, output_field=TextField()), empty_text, output_field=TextField())
+#         expr = Lower(Trim(expr))
+#         for ch in SEPARATORS:
+#             expr = Replace(expr, Value(ch, output_field=TextField()), empty_text, output_field=TextField())
+#         return Cast(expr, output_field=TextField())
 
-        limit = min(limit, 100)
-        offset = max(offset, 0)
-        return qs[offset : offset + limit]
+#     def _slice(self, qs):
+#         """
+#         Optional progressive loading WITHOUT changing response shape.
+#         Frontend can later call: ?limit=20&offset=0, then offset=20, etc.
+#         """
+#         qp = getattr(self.request, "query_params", {})
+#         try:
+#             limit = int(qp.get("limit") or 0)
+#             offset = int(qp.get("offset") or 0)
+#         except (TypeError, ValueError):
+#             limit, offset = 0, 0
 
-    def _nonempty(self, qs) -> bool:
-        return qs.values("id")[:1].exists()
+#         if limit <= 0:
+#             return qs
 
-    # -----------------------
-    # Careers base queryset + strict hiding of premium careers
-    # -----------------------
-    def _filtered_base_queryset(self):
-        user = getattr(self.request, "user", None)
-        if not user or not user.is_authenticated:
-            return Career.objects.none()
+#         limit = min(limit, 100)
+#         offset = max(offset, 0)
+#         return qs[offset : offset + limit]
 
-        profile = self._profile_cached
-        if not profile:
-            return Career.objects.none()
+#     def _nonempty(self, qs) -> bool:
+#         return qs.values("id")[:1].exists()
 
-        categories = self._norm_categories(profile)
-        if not categories:
-            return Career.objects.none()
+#     # -----------------------
+#     # Careers base queryset + strict hiding of premium careers
+#     # -----------------------
+#     def _filtered_base_queryset(self):
+#         user = getattr(self.request, "user", None)
+#         if not user or not user.is_authenticated:
+#             return Career.objects.none()
 
-        return Career.objects.annotate(cat_l=Lower("sub_type")).filter(cat_l__in=categories)
+#         profile = self._profile_cached
+#         if not profile:
+#             return Career.objects.none()
 
-    def _allowed_ids_subquery(self):
-        return (
-            self._filtered_base_queryset()
-            .order_by("id")
-            .values("id")[:FREE_CAREER_LIMIT]
-        )
+#         categories = self._norm_categories(profile)
+#         if not categories:
+#             return Career.objects.none()
 
-    def get_queryset(self):
-        qs = self._filtered_base_queryset().order_by("id")
+#         return Career.objects.annotate(cat_l=Lower("sub_type")).filter(cat_l__in=categories)
 
-        # list must show only 5 for free users
-        if getattr(self, "action", None) == "list" and not self._is_subscribed():
-            qs = qs[:FREE_CAREER_LIMIT]
+#     def _allowed_ids_subquery(self):
+#         return (
+#             self._filtered_base_queryset()
+#             .order_by("id")
+#             .values("id")[:FREE_CAREER_LIMIT]
+#         )
 
-        return qs
+#     def get_queryset(self):
+#         qs = self._filtered_base_queryset().order_by("id")
 
-    def get_object(self):
-        """
-        Free users must NOT access careers outside top 5.
-        Return 404 to hide existence.
-        """
-        obj = super().get_object()
+#         # list must show only 5 for free users
+#         if getattr(self, "action", None) == "list" and not self._is_subscribed():
+#             qs = qs[:FREE_CAREER_LIMIT]
 
-        if self._is_subscribed():
-            return obj
+#         return qs
 
-        allowed = Career.objects.filter(id=obj.id, id__in=Subquery(self._allowed_ids_subquery())).exists()
-        if not allowed:
-            raise NotFound("Not found.")
-        return obj
+#     def get_object(self):
+#         """
+#         Free users must NOT access careers outside top 5.
+#         Return 404 to hide existence.
+#         """
+#         obj = super().get_object()
 
-    # -----------------------
-    # Actions: save / unsave / my
-    # -----------------------
-    @action(detail=False, methods=["GET"])
-    def my(self, request):
-        profile = self._get_or_create_profile()
+#         if self._is_subscribed():
+#             return obj
 
-        saved_ids = UserSavedCareer.objects.filter(
-            user_profile=profile
-        ).values_list("career_id", flat=True)
+#         allowed = Career.objects.filter(id=obj.id, id__in=Subquery(self._allowed_ids_subquery())).exists()
+#         if not allowed:
+#             raise NotFound("Not found.")
+#         return obj
 
-        qs = self._filtered_base_queryset().filter(id__in=saved_ids).order_by("id")
+#     # -----------------------
+#     # Actions: save / unsave / my
+#     # -----------------------
+#     @action(detail=False, methods=["GET"])
+#     def my(self, request):
+#         profile = self._get_or_create_profile()
 
-        # for free users, still restrict to allowed top-5 careers
-        if not self._is_subscribed():
-            qs = qs.filter(id__in=Subquery(self._allowed_ids_subquery()))
+#         saved_ids = UserSavedCareer.objects.filter(
+#             user_profile=profile
+#         ).values_list("career_id", flat=True)
 
-        serializer = CareerListSerializer(qs, many=True, context={"request": request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
+#         qs = self._filtered_base_queryset().filter(id__in=saved_ids).order_by("id")
 
-    @action(detail=True, methods=["POST"])
-    def save(self, request, pk=None):
-        career = self.get_object()
-        profile = self._get_or_create_profile()
-        UserSavedCareer.objects.get_or_create(user_profile=profile, career_id=career.id)
-        serializer = CareerDetailSerializer(career, context={"request": request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
+#         # for free users, still restrict to allowed top-5 careers
+#         if not self._is_subscribed():
+#             qs = qs.filter(id__in=Subquery(self._allowed_ids_subquery()))
 
-    @action(detail=True, methods=["POST"])
-    def unsave(self, request, pk=None):
-        career = self.get_object()
-        profile = self._get_or_create_profile()
-        deleted, _ = UserSavedCareer.objects.filter(user_profile=profile, career_id=career.id).delete()
-        if deleted:
-            return Response({"message": "Career unsaved."}, status=status.HTTP_200_OK)
-        return Response({"error": "Career was not saved."}, status=status.HTTP_404_NOT_FOUND)
+#         serializer = CareerListSerializer(qs, many=True, context={"request": request})
+#         return Response(serializer.data, status=status.HTTP_200_OK)
 
-    # -----------------------
-    # COURSES: strict -> loose -> fallback (still returns list)
-    # -----------------------
-    @action(detail=True, methods=["GET"])
-    def courses(self, request, pk=None):
-        career = self.get_object()
-        jobname = (career.jobname or "").strip()
-        if not jobname:
-            return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
+#     @action(detail=True, methods=["POST"])
+#     def save(self, request, pk=None):
+#         career = self.get_object()
+#         profile = self._get_or_create_profile()
+#         UserSavedCareer.objects.get_or_create(user_profile=profile, career_id=career.id)
+#         serializer = CareerDetailSerializer(career, context={"request": request})
+#         return Response(serializer.data, status=status.HTTP_200_OK)
 
-        profile = self._profile_cached
-        if not profile:
-            return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
+#     @action(detail=True, methods=["POST"])
+#     def unsave(self, request, pk=None):
+#         career = self.get_object()
+#         profile = self._get_or_create_profile()
+#         deleted, _ = UserSavedCareer.objects.filter(user_profile=profile, career_id=career.id).delete()
+#         if deleted:
+#             return Response({"message": "Career unsaved."}, status=status.HTTP_200_OK)
+#         return Response({"error": "Career was not saved."}, status=status.HTTP_404_NOT_FOUND)
 
-        categories = self._norm_categories(profile)
-        if not categories:
-            return Response([], status=status.HTTP_200_OK)
+#     # -----------------------
+#     # COURSES: strict -> loose -> fallback (still returns list)
+#     # -----------------------
+#     @action(detail=True, methods=["GET"])
+#     def courses(self, request, pk=None):
+#         career = self.get_object()
+#         jobname = (career.jobname or "").strip()
+#         if not jobname:
+#             return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
 
-        base_qs = Course.objects.filter(subcategory__iexact=jobname)
-        base_qs = base_qs.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
+#         profile = self._profile_cached
+#         if not profile:
+#             return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # country/city/zip words
-        country = (getattr(profile, "country", None) or "").strip().lower()
-        city = (getattr(profile, "city", None) or "").strip().lower()
-        postal = (getattr(profile, "zip_code", None) or "").strip().lower()
-        profile_text = " ".join([x for x in [country, city, postal] if x])
-        words = [w for w in re.split(r"[^a-z0-9]+", profile_text) if w]
-        words = list(dict.fromkeys(words))
+#         categories = self._norm_categories(profile)
+#         if not categories:
+#             return Response([], status=status.HTTP_200_OK)
 
-        if not self._nonempty(base_qs):
-            return Response([], status=status.HTTP_200_OK)
+#         base_qs = Course.objects.filter(subcategory__iexact=jobname)
+#         base_qs = base_qs.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
 
-        # If no location data: return tailored+category
-        if not words:
-            qs = self._slice(base_qs.order_by("id"))
-            data = CoursesSerializer(qs, many=True, context={"request": request}).data
-            resp = Response(data, status=status.HTTP_200_OK)
-            resp["X-Search-Mode"] = "fallback"
-            return resp
+#         # country/city/zip words
+#         country = (getattr(profile, "country", None) or "").strip().lower()
+#         city = (getattr(profile, "city", None) or "").strip().lower()
+#         postal = (getattr(profile, "zip_code", None) or "").strip().lower()
+#         profile_text = " ".join([x for x in [country, city, postal] if x])
+#         words = [w for w in re.split(r"[^a-z0-9]+", profile_text) if w]
+#         words = list(dict.fromkeys(words))
 
-        addr_expr = self._normalized_text_expr("address")
-        qs = base_qs.annotate(loc_n=addr_expr)
+#         if not self._nonempty(base_qs):
+#             return Response([], status=status.HTTP_200_OK)
 
-        match_expr = Value(0, output_field=IntegerField())
-        for w in words:
-            match_expr += Case(
-                When(loc_n__contains=w, then=Value(1)),
-                default=Value(0),
-                output_field=IntegerField(),
-            )
-        qs = qs.annotate(match_count=match_expr)
+#         # If no location data: return tailored+category
+#         if not words:
+#             qs = self._slice(base_qs.order_by("id"))
+#             data = CoursesSerializer(qs, many=True, context={"request": request}).data
+#             resp = Response(data, status=status.HTTP_200_OK)
+#             resp["X-Search-Mode"] = "fallback"
+#             return resp
 
-        strict_threshold = 2 if len(words) >= 2 else 1
+#         addr_expr = self._normalized_text_expr("address")
+#         qs = base_qs.annotate(loc_n=addr_expr)
 
-        strict_qs = qs.exclude(loc_n="").filter(match_count__gte=strict_threshold).order_by("-match_count", "id")
-        loose_qs = qs.exclude(loc_n="").filter(match_count__gte=1).order_by("-match_count", "id")
-        fallback_qs = qs.order_by("-match_count", "id")
+#         match_expr = Value(0, output_field=IntegerField())
+#         for w in words:
+#             match_expr += Case(
+#                 When(loc_n__contains=w, then=Value(1)),
+#                 default=Value(0),
+#                 output_field=IntegerField(),
+#             )
+#         qs = qs.annotate(match_count=match_expr)
 
-        if self._nonempty(strict_qs):
-            out = self._slice(strict_qs)
-            mode = "strict"
-        elif self._nonempty(loose_qs):
-            out = self._slice(loose_qs)
-            mode = "loose"
-        else:
-            out = self._slice(fallback_qs)
-            mode = "fallback"
+#         strict_threshold = 2 if len(words) >= 2 else 1
 
-        data = CoursesSerializer(out, many=True, context={"request": request}).data
-        resp = Response(data, status=status.HTTP_200_OK)
-        resp["X-Search-Mode"] = mode
-        return resp
+#         strict_qs = qs.exclude(loc_n="").filter(match_count__gte=strict_threshold).order_by("-match_count", "id")
+#         loose_qs = qs.exclude(loc_n="").filter(match_count__gte=1).order_by("-match_count", "id")
+#         fallback_qs = qs.order_by("-match_count", "id")
+
+#         if self._nonempty(strict_qs):
+#             out = self._slice(strict_qs)
+#             mode = "strict"
+#         elif self._nonempty(loose_qs):
+#             out = self._slice(loose_qs)
+#             mode = "loose"
+#         else:
+#             out = self._slice(fallback_qs)
+#             mode = "fallback"
+
+#         data = CoursesSerializer(out, many=True, context={"request": request}).data
+#         resp = Response(data, status=status.HTTP_200_OK)
+#         resp["X-Search-Mode"] = mode
+#         return resp
 
     # -----------------------
     # JOBS: strict -> loose tokens -> fallback (no trigram lookups; safe on SQLite)
     # -----------------------
     # careers/views.py
-import re
 
+
+import re
 from django.db.models import (
     Case,
     IntegerField,
@@ -730,6 +731,8 @@ from django.db.models import (
     Value,
     When,
 )
+
+from django.utils import timezone
 from django.db.models.functions import Cast, Coalesce, Lower, Replace, Trim
 from django.utils.functional import cached_property
 from rest_framework import status, viewsets
@@ -824,8 +827,46 @@ class CareersView(viewsets.ModelViewSet):
         return qs.values("id")[:1].exists()
 
     # -----------------------
+    # ✅ REPORT MAP helper (for my_report in serializers)
+    # -----------------------
+    def _build_report_map(self, career_ids):
+        """
+        Return {career_id: UserSavedCareer} for current user_profile.
+        Used to embed my_report per career without N+1 queries.
+        """
+        profile = self._profile_cached
+        if not profile or not career_ids:
+            return {}
+
+        links = UserSavedCareer.objects.filter(
+            user_profile=profile,
+            career_id__in=career_ids,
+        )
+        return {l.career_id: l for l in links}
+
+    # -----------------------
     # Careers base queryset + strict hiding of premium careers
     # -----------------------
+    # def _filtered_base_queryset(self):
+    #     user = getattr(self.request, "user", None)
+    #     if not user or not user.is_authenticated:
+    #         return Career.objects.none()
+
+    #     profile = self._profile_cached
+    #     if not profile:
+    #         return Career.objects.none()
+
+    #     categories = self._norm_categories(profile)
+    #     if not categories:
+    #         return Career.objects.none()
+
+    #     return Career.objects.annotate(cat_l=Lower("sub_type")).filter(cat_l__in=categories)
+
+    def _norm_key(self, s: str) -> str:
+        # lowercase + trim + remove spaces/_/-
+        s = (s or "").strip().lower()
+        return re.sub(r"[ _-]+", "", s)
+
     def _filtered_base_queryset(self):
         user = getattr(self.request, "user", None)
         if not user or not user.is_authenticated:
@@ -835,11 +876,33 @@ class CareersView(viewsets.ModelViewSet):
         if not profile:
             return Career.objects.none()
 
-        categories = self._norm_categories(profile)
+        # normalize profile categories into keys
+        raw_categories = getattr(profile, "category", None) or []
+        if isinstance(raw_categories, str):
+            raw_categories = [raw_categories]
+
+        categories = []
+        seen = set()
+        for c in raw_categories:
+            k = self._norm_key(c)
+            if not k or k in seen:
+                continue
+            seen.add(k)
+            categories.append(k)
+
         if not categories:
             return Career.objects.none()
 
-        return Career.objects.annotate(cat_l=Lower("sub_type")).filter(cat_l__in=categories)
+        # normalize Career.sub_type in DB the same way
+        empty = Value("", output_field=TextField())
+        sub = Coalesce(Cast("sub_type", output_field=TextField()), empty, output_field=TextField())
+        sub = Lower(Trim(sub))
+        sub = Replace(sub, Value(" ", output_field=TextField()), empty, output_field=TextField())
+        sub = Replace(sub, Value("_", output_field=TextField()), empty, output_field=TextField())
+        sub = Replace(sub, Value("-", output_field=TextField()), empty, output_field=TextField())
+        sub = Cast(sub, output_field=TextField())
+
+        return Career.objects.annotate(cat_l=sub).filter(cat_l__in=categories)
 
     def _allowed_ids_subquery(self):
         return (
@@ -873,6 +936,73 @@ class CareersView(viewsets.ModelViewSet):
         return obj
 
     # -----------------------
+    # ✅ Override list/retrieve to include my_report everywhere
+    # -----------------------
+
+    @action(detail=True, methods=["POST"], url_path="report")
+    def report(self, request, pk=None):
+        career = self.get_object()
+        profile = self._get_or_create_profile()
+
+        # ✅ OPTION A STRICT: must be saved first
+        link = UserSavedCareer.objects.filter(
+            user_profile=profile,
+            career_id=career.id,
+        ).first()
+
+        if not link:
+            return Response(
+                {"detail": "Career is not saved. Save career first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        report_data = request.data.get("report", None)
+        if report_data is None:
+            return Response(
+                {"detail": "report is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ✅ OVERWRITE behavior
+        link.report = report_data
+        link.report_status = True
+        link.generated_at = timezone.now()
+        link.save(update_fields=["report", "report_status", "generated_at"])
+
+        return Response(
+            {
+                "career_id": career.id,
+                "report_status": link.report_status,
+                "report": link.report,
+                "generated_at": link.generated_at,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def list(self, request, *args, **kwargs):
+        qs = self.get_queryset()
+        careers = list(qs)
+
+        report_map = self._build_report_map([c.id for c in careers])
+
+        serializer = CareerListSerializer(
+            careers,
+            many=True,
+            context={"request": request, "report_map": report_map},
+        )
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def retrieve(self, request, *args, **kwargs):
+        career = self.get_object()
+        report_map = self._build_report_map([career.id])
+
+        serializer = CareerDetailSerializer(
+            career,
+            context={"request": request, "report_map": report_map},
+        )
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    # -----------------------
     # Actions: save / unsave / my
     # -----------------------
     @action(detail=False, methods=["GET"])
@@ -889,44 +1019,62 @@ class CareersView(viewsets.ModelViewSet):
         if not self._is_subscribed():
             qs = qs.filter(id__in=Subquery(self._allowed_ids_subquery()))
 
-        serializer = CareerListSerializer(qs, many=True, context={"request": request})
+        careers = list(qs)
+        report_map = self._build_report_map([c.id for c in careers])
+
+        serializer = CareerListSerializer(
+            careers,
+            many=True,
+            context={"request": request, "report_map": report_map},
+        )
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=["POST"])
+    @action(detail=True, methods=["POST", "GET"])
     def save(self, request, pk=None):
         career = self.get_object()
         profile = self._get_or_create_profile()
-        UserSavedCareer.objects.get_or_create(user_profile=profile, career_id=career.id)
-        serializer = CareerDetailSerializer(career, context={"request": request})
+
+        link, _ = UserSavedCareer.objects.get_or_create(
+            user_profile=profile,
+            career_id=career.id,
+        )
+
+        serializer = CareerDetailSerializer(
+            career,
+            context={"request": request, "report_map": {career.id: link}},
+        )
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=["POST"])
+    @action(detail=True, methods=["POST", "GET"])
     def unsave(self, request, pk=None):
         career = self.get_object()
         profile = self._get_or_create_profile()
-        deleted, _ = UserSavedCareer.objects.filter(user_profile=profile, career_id=career.id).delete()
+        deleted, _ = UserSavedCareer.objects.filter(
+            user_profile=profile,
+            career_id=career.id
+        ).delete()
+
         if deleted:
             return Response({"message": "Career unsaved."}, status=status.HTTP_200_OK)
         return Response({"error": "Career was not saved."}, status=status.HTTP_404_NOT_FOUND)
-    
 
+    # -----------------------
+    # Location helpers (unchanged)
+    # -----------------------
     def _location_terms(self, profile):
-        # take ALL location-related profile fields
         country = (getattr(profile, "country", None) or "").strip().lower()
         city = (getattr(profile, "city", None) or "").strip().lower()
         postal = (getattr(profile, "zip_code", None) or "").strip().lower()
         address = (getattr(profile, "address", None) or "").strip().lower()
 
-        raw_terms = [t for t in [city, postal, address] if t]  # exact considers these strongly
-        raw_terms = list(dict.fromkeys(raw_terms))  # dedupe keep order
+        raw_terms = [t for t in [city, postal, address] if t]
+        raw_terms = list(dict.fromkeys(raw_terms))
 
-        # tokens used for fuzzy “makes sense”
         profile_text = " ".join([x for x in [country, city, postal, address] if x])
         words = [w for w in re.split(r"[^a-z0-9]+", profile_text) if w]
         words = list(dict.fromkeys(words))
 
         return raw_terms, words
-
 
     def _merge_exact_then_fuzzy(
         self,
@@ -938,19 +1086,14 @@ class CareersView(viewsets.ModelViewSet):
         default_limit: int = 50,
     ):
         """
-        1) exact: full-term icontains match (city/zip/address) + rank by exact_score
-        2) fuzzy: token match_count on normalized field + rank by match_count
-        Append fuzzy results if exact results are not enough.
-        Returns plain list JSON (no pagination wrapper).
+        (unchanged)
         """
-
         profile = self._profile_cached
         if not profile:
             return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
 
         raw_terms, words = self._location_terms(profile)
 
-        # Optional progressive loading without changing shape
         qp = getattr(request, "query_params", {})
         try:
             limit = int(qp.get("limit") or 0)
@@ -963,13 +1106,11 @@ class CareersView(viewsets.ModelViewSet):
 
         desired = (offset + limit) if limit > 0 else default_limit
 
-        # If no location data at all: just return tailored base
         if not raw_terms and not words:
             items = list(base_qs.order_by("-id")[:desired])
             items = items[offset : offset + limit] if limit > 0 else items
             return Response(serializer_cls(items, many=True, context={"request": request}).data, status=status.HTTP_200_OK)
 
-        # ---------- EXACT stage (city/zip/address full strings) ----------
         exact_q = Q()
         for t in raw_terms:
             exact_q |= Q(**{f"{field_name}__icontains": t})
@@ -982,7 +1123,6 @@ class CareersView(viewsets.ModelViewSet):
                 output_field=IntegerField(),
             )
 
-        exact_qs = base_qs
         if raw_terms:
             exact_qs = base_qs.filter(exact_q).annotate(exact_score=exact_score).order_by("-exact_score", "id")
         else:
@@ -991,12 +1131,9 @@ class CareersView(viewsets.ModelViewSet):
         exact_list = list(exact_qs[:desired])
         exact_ids = [obj.id for obj in exact_list]
 
-        # ---------- FUZZY stage (token match_count on normalized field) ----------
-        # use normalized loc_n for robust matching
         loc_expr = self._normalized_text_expr(field_name)
         fuzzy_qs = base_qs.annotate(loc_n=loc_expr).exclude(loc_n="")
 
-        # token match_count
         match_expr = Value(0, output_field=IntegerField())
         for w in words:
             match_expr += Case(
@@ -1017,21 +1154,17 @@ class CareersView(viewsets.ModelViewSet):
         need = max(0, desired - len(exact_list))
         fuzzy_list = list(fuzzy_qs[:need]) if need > 0 else []
 
-        # If NO exact results, return fuzzy (still makes sense)
         if not exact_list:
             combined = fuzzy_list
             mode = "fuzzy_only"
         else:
-            # exact exists → enrich by appending fuzzy
             combined = exact_list + fuzzy_list
             mode = "exact_plus_fuzzy"
 
-        # If still empty (rare), fallback to tailored base
         if not combined:
             combined = list(base_qs.order_by("-id")[:desired])
             mode = "fallback"
 
-        # Apply offset/limit AFTER merging
         combined = combined[offset : offset + limit] if limit > 0 else combined
 
         data = serializer_cls(combined, many=True, context={"request": request}).data
@@ -1531,7 +1664,10 @@ class CareersView(viewsets.ModelViewSet):
         resp["X-Search-Mode"] = mode
         return resp
 
-
+    def get_serializer_class(self):
+        if self.action in ("list", "my"):
+            return CareerListSerializer
+        return CareerDetailSerializer
     
 
     # THIS IS CODE WITHOUT THE FALLBACK.
@@ -1934,100 +2070,7 @@ class CareersView(viewsets.ModelViewSet):
 
     #         exact_qs = (
     #             qs1.annotate(exact_score=exact_score)
-    #             .filter(exact_score__gte=exact_required)
-    #             .order_by("-exact_score", "id")
-    #         )
-    #         exact_list = list(exact_qs[:desired])
-
-    #     # If exact strong enough -> return exact only
-    #     if len(exact_list) >= ENRICH_MIN:
-    #         combined = exact_list
-    #         mode = "exact_only"
-    #     else:
-    #         combined = list(exact_list)
-    #         ids = {o.id for o in combined}
-
-    #         # ---------- FUZZY within strict pool ----------
-    #         if words:
-    #             loc_n = normalize_expr(addr_text)
-    #             match_expr = Value(0, output_field=IntegerField())
-    #             for w in words:
-    #                 match_expr += Case(
-    #                     When(loc_n__contains=w, then=Value(1)),
-    #                     default=Value(0),
-    #                     output_field=IntegerField(),
-    #                 )
-
-    #             fuzzy_strict = (
-    #                 qs1.annotate(loc_n=loc_n, match_count=match_expr)
-    #                 .filter(match_count__gte=1)
-    #                 .exclude(id__in=ids)
-    #                 .order_by("-match_count", "id")
-    #             )
-
-    #             need = max(0, desired - len(combined))
-    #             combined += list(fuzzy_strict[:need])
-    #             ids = {o.id for o in combined}
-
-    #         # ---------- BROADEN: subcategory only (relax category), fuzzy again ----------
-    #         if len(combined) < desired and words:
-    #             broad_base = Course.objects.filter(subcategory__iexact=jobname)
-    #             broad_qs = broad_base.annotate(addr_text=addr_text).exclude(addr_text="")
-
-    #             loc_n = normalize_expr(addr_text)
-    #             match_expr = Value(0, output_field=IntegerField())
-    #             for w in words:
-    #                 match_expr += Case(
-    #                     When(loc_n__contains=w, then=Value(1)),
-    #                     default=Value(0),
-    #                     output_field=IntegerField(),
-    #                 )
-
-    #             fuzzy_broad = (
-    #                 broad_qs.annotate(loc_n=loc_n, match_count=match_expr)
-    #                 .filter(match_count__gte=1)
-    #                 .exclude(id__in=ids)
-    #                 .order_by("-match_count", "id")
-    #             )
-
-    #             need = max(0, desired - len(combined))
-    #             combined += list(fuzzy_broad[:need])
-    #             ids = {o.id for o in combined}
-
-    #         # ---------- LAST fill: pull remaining tailored items (strict pool), then broaden pool ----------
-    #         if len(combined) < desired:
-    #             need = desired - len(combined)
-    #             combined += list(qs1.exclude(id__in=ids).order_by("-id")[:need])
-    #             ids = {o.id for o in combined}
-
-    #         if len(combined) < desired:
-    #             need = desired - len(combined)
-    #             broad_fill = Course.objects.filter(subcategory__iexact=jobname).exclude(id__in=ids).order_by("-id")[:need]
-    #             combined += list(broad_fill)
-
-    #         if not combined:
-    #             # if subcategory has literally 0 rows, only then this happens
-    #             combined = list(Course.objects.filter(subcategory__iexact=jobname).order_by("-id")[:desired])
-    #             mode = "fallback"
-    #         else:
-    #             mode = "exact_plus_fuzzy" if exact_list else "fuzzy_only"
-
-    #     # Final slice AFTER combining (keeps exact-first ordering)
-    #     combined = combined[offset: offset + limit] if limit > 0 else combined
-
-    #     data = CoursesSerializer(combined, many=True, context={"request": request}).data
-    #     resp = Response(data, status=200)
-    #     resp["X-Search-Mode"] = mode
-    #     return resp
-
-    # -----------------------
-    # Serializer switching
-    # -----------------------
-    def get_serializer_class(self):
-        if self.action in ("list", "my"):
-            return CareerListSerializer
-        return CareerDetailSerializer
-
+    #             .filter(exact_score__gte=exact_required)# careers/views.py
 
 
 

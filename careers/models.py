@@ -91,11 +91,19 @@ class UserSavedCareer(models.Model):
     """
     API-owned join table for save/unsave/my.
     Stores scraper row PK (Career.id) as career_id.
+
+    Also stores per-user-per-career report data (user+career oriented).
     """
     user_profile = models.ForeignKey(
         UserProfile, on_delete=models.CASCADE, related_name="career_links"
     )
     career_id = models.BigIntegerField(db_index=True)  # stores Career.id
+
+    # ✅ report fields (do NOT break old functionality)
+    report_status = models.BooleanField(default=False)
+    report = models.JSONField(default=dict, blank=True)
+    generated_at = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
