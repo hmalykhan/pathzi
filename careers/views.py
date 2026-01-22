@@ -2071,6 +2071,7 @@ class CareersView(viewsets.ModelViewSet):
     #         exact_qs = (
     #             qs1.annotate(exact_score=exact_score)
     #             .filter(exact_score__gte=exact_required)# careers/views.py
+    #         )
 
 
 

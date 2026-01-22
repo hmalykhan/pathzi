@@ -190,24 +190,24 @@ EMAIL_TIMEOUT = 30  # Prevent indefinite hangs on SMTP connections
 # This is the stripe data check it out.
 import os
 
-STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
-STRIPE_PRICE_ID_MONTHLY = os.getenv("STRIPE_PRICE_ID_MONTHLY")
+# Stripe settings (use python-decouple so it reads from .env)
+STRIPE_SECRET_KEY = config("STRIPE_SECRET_KEY", default=None)
+STRIPE_WEBHOOK_SECRET = config("STRIPE_WEBHOOK_SECRET", default=None)
 
-# IMPORTANT for Ephemeral Keys (mobile SDK needs a fixed Stripe API version)
-STRIPE_API_VERSION = os.getenv("STRIPE_API_VERSION", "2025-12-15")
+# Use a real Stripe API version format like 2023-10-16 (keep yours if you intentionally set it)
+STRIPE_API_VERSION = config("STRIPE_API_VERSION", default="2023-10-16")
 
-# Where Stripe Portal returns after user is done
-BILLING_RETURN_URL = os.getenv("BILLING_RETURN_URL", "http://localhost:3000/account")
+BILLING_RETURN_URL = config("BILLING_RETURN_URL", default="http://localhost:3000/account")
 
+STRIPE_PRICE_ID_MONTHLY = config("STRIPE_PRICE_ID_MONTHLY", default=None)
+STRIPE_PRICE_ID_QUARTERLY = config("STRIPE_PRICE_ID_QUARTERLY", default=None)
+STRIPE_PRICE_ID_YEARLY = config("STRIPE_PRICE_ID_YEARLY", default=None)
 
-# Password Hashing - Use Argon2 for better performance and security
-# Argon2 is ~5x faster than PBKDF2 and recommended by Django
-PASSWORD_HASHERS = [
-    'django.contrib.auth.hashers.Argon2PasswordHasher',  # Primary hasher (fast & secure)
-    'django.contrib.auth.hashers.PBKDF2PasswordHasher',  # Fallback for existing passwords
-    'django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher',
-]
+STRIPE_PLANS = {
+    "monthly":   {"price_id": STRIPE_PRICE_ID_MONTHLY},
+    "quarterly": {"price_id": STRIPE_PRICE_ID_QUARTERLY},
+    "yearly":    {"price_id": STRIPE_PRICE_ID_YEARLY},
+}
 
 
 
@@ -256,3 +256,5 @@ SIMPLE_JWT = {
     "ROTATE_REFRESH_TOKENS": False,
     "BLACKLIST_AFTER_ROTATION": False,
 }
+
+

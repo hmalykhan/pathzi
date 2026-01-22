@@ -1,4 +1,63 @@
-# billing/models.py
+# # billing/models.py
+# from django.conf import settings
+# from django.db import models
+# from django.utils import timezone
+
+
+# class BillingProfile(models.Model):
+
+
+    
+#     STATUS_CHOICES = [
+#         ("none", "None"),
+#         ("incomplete", "Incomplete"),
+#         ("trialing", "Trialing"),
+#         ("active", "Active"),
+#         ("past_due", "Past due"),
+#         ("canceled", "Canceled"),
+#         ("unpaid", "Unpaid"),
+#     ]
+
+#     user = models.OneToOneField(
+#         settings.AUTH_USER_MODEL,
+#         on_delete=models.CASCADE,
+#         related_name="billing",
+#     )
+#     stripe_customer_id = models.CharField(max_length=64, blank=True, null=True, db_index=True)
+#     stripe_subscription_id = models.CharField(max_length=64, blank=True, null=True, db_index=True)
+
+#     subscription_status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="none")
+#     current_period_end = models.DateTimeField(blank=True, null=True)
+
+#     updated_at = models.DateTimeField(auto_now=True)
+#     created_at = models.DateTimeField(auto_now_add=True)
+
+#     @property
+#     def is_active(self) -> bool:
+#         if self.subscription_status not in ("active", "trialing"):
+#             return False
+#         # If we have period end, enforce it.
+#         if self.current_period_end and self.current_period_end < timezone.now():
+#             return False
+#         # If period end is missing, we still consider active/trialing as active,
+#         # and rely on status endpoint / webhooks to self-heal it.
+#         return True
+
+
+
+# class StripeEvent(models.Model):
+#     """
+#     Used to de-duplicate webhook deliveries (Stripe can retry events).
+#     """
+#     event_id = models.CharField(max_length=128, unique=True)
+#     event_type = models.CharField(max_length=128)
+#     payload = models.JSONField()
+#     received_at = models.DateTimeField(auto_now_add=True)
+
+
+
+
+
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -15,13 +74,30 @@ class BillingProfile(models.Model):
         ("unpaid", "Unpaid"),
     ]
 
+    PLAN_CHOICES = [
+        ("free", "Free"),
+        ("monthly", "Monthly"),
+        ("quarterly", "Quarterly"),
+        ("yearly", "Yearly"),
+    ]
+
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="billing",
     )
+
     stripe_customer_id = models.CharField(max_length=64, blank=True, null=True, db_index=True)
     stripe_subscription_id = models.CharField(max_length=64, blank=True, null=True, db_index=True)
+
+    # NEW: track plan and Stripe price
+    plan_id = models.CharField(max_length=20, choices=PLAN_CHOICES, default="free")
+    stripe_price_id = models.CharField(max_length=64, blank=True, null=True)
+
+    # OPTIONAL: pending downgrade tracking (if you schedule downgrades)
+    pending_plan_id = models.CharField(max_length=20, choices=PLAN_CHOICES, blank=True, null=True)
+    pending_change_at = models.DateTimeField(blank=True, null=True)
+    stripe_schedule_id = models.CharField(max_length=64, blank=True, null=True)
 
     subscription_status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="none")
     current_period_end = models.DateTimeField(blank=True, null=True)
@@ -33,13 +109,9 @@ class BillingProfile(models.Model):
     def is_active(self) -> bool:
         if self.subscription_status not in ("active", "trialing"):
             return False
-        # If we have period end, enforce it.
         if self.current_period_end and self.current_period_end < timezone.now():
             return False
-        # If period end is missing, we still consider active/trialing as active,
-        # and rely on status endpoint / webhooks to self-heal it.
         return True
-
 
 
 class StripeEvent(models.Model):
@@ -50,3 +122,4 @@ class StripeEvent(models.Model):
     event_type = models.CharField(max_length=128)
     payload = models.JSONField()
     received_at = models.DateTimeField(auto_now_add=True)
+
