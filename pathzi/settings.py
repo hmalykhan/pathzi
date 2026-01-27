@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'careers',
     "billing",
     "django_extensions",
+    "geo_search"
 ]
 
 MIDDLEWARE = [
@@ -173,6 +174,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 GOOGLE_CLIENT_ID = config("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = config("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = config("GOOGLE_REDIRECT_URI")
+GEOAPIFY_API_KEY = config("GEOAPIFY_API_KEY")
+GEOAPIFY_DEFAULT_COUNTRY = config("GEOAPIFY_DEFAULT_COUNTRY")
 
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = "smtp.sendgrid.net"
