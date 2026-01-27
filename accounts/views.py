@@ -26,7 +26,9 @@ from google.auth.transport import requests as google_requests
 
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import PasswordResetOTP, UserProfile
+from .serializers import CoordinatesSerializer
+
+from .models import PasswordResetOTP, UserProfile, Coordinates
 from .serializers import (
     UserSerializer,
     UserProfileSerializer,
@@ -177,9 +179,9 @@ class SignUpAPI(generics.CreateAPIView):
 
 class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
     """
-    GET /me/profile/
-    PUT /me/profile/
-    PATCH /me/profile/
+    GET /accounts/user_profile/
+    PUT /accounts/user_profile/
+    PATCH /accounts/user_profile/
     """
     serializer_class = UserProfileSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -188,9 +190,9 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
         profile, _ = UserProfile.objects.get_or_create(appuser=self.request.user)
         return profile
 
-    def patch(self, request):
+    def patch(self, request, *args, **kwargs):
         profile, _ = UserProfile.objects.get_or_create(appuser=request.user)
-        serializer = UserProfileSerializer(profile, data=request.data, partial=True)
+        serializer = self.get_serializer(profile, data=request.data, partial=True)
 
         if serializer.is_valid():
             serializer.save()
@@ -204,7 +206,6 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
                 status=status.HTTP_200_OK,
             )
 
-        # single-message errors
         errors = serializer.errors
         if "non_field_errors" in errors and errors["non_field_errors"]:
             msg = errors["non_field_errors"][0]
@@ -217,11 +218,83 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
                 msg = "Invalid data."
 
         logger.warning("Profile update validation failed: user_id=%s msg=%s", request.user.id, str(msg))
+        return Response({"status": False, "message": str(msg)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+class CurrentUserCoordinatesListCreateAPI(generics.ListCreateAPIView):
+    """
+    GET  /accounts/coordinates/        -> list my coordinates
+    POST /accounts/coordinates/        -> create new coordinate for me
+    """
+    serializer_class = CoordinatesSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_user_profile(self):
+        profile, _ = UserProfile.objects.get_or_create(appuser=self.request.user)
+        return profile
+
+    def get_queryset(self):
+        profile = self.get_user_profile()
+        return Coordinates.objects.filter(user_profile=profile).order_by("-id")
+
+    def perform_create(self, serializer):
+        profile = self.get_user_profile()
+        serializer.save(user_profile=profile)
+
+    # Optional: if you want same response format as your profile API
+    def create(self, request, *args, **kwargs):
+        resp = super().create(request, *args, **kwargs)
         return Response(
-            {"status": False, "message": str(msg)},
-            status=status.HTTP_400_BAD_REQUEST,
+            {"status": True, "message": "Coordinate created successfully.", "data": resp.data},
+            status=resp.status_code,
         )
 
+
+class CurrentUserCoordinateDetailAPI(generics.RetrieveUpdateDestroyAPIView):
+    """
+    GET    /accounts/coordinates/<id>/  -> retrieve one coordinate
+    PATCH  /accounts/coordinates/<id>/  -> update coordinate by id
+    PUT    /accounts/coordinates/<id>/  -> update coordinate by id
+    DELETE /accounts/coordinates/<id>/  -> delete coordinate by id
+    """
+    serializer_class = CoordinatesSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    lookup_field = "pk"
+
+    def get_user_profile(self):
+        profile, _ = UserProfile.objects.get_or_create(appuser=self.request.user)
+        return profile
+
+    def get_queryset(self):
+        profile = self.get_user_profile()
+        return Coordinates.objects.filter(user_profile=profile)
+
+    # Optional: match your "status/message" format
+    def patch(self, request, *args, **kwargs):
+        resp = super().patch(request, *args, **kwargs)
+        if resp.status_code < 400:
+            return Response(
+                {"status": True, "message": "Coordinate updated successfully.", "data": resp.data},
+                status=resp.status_code,
+            )
+        return resp
+
+    def put(self, request, *args, **kwargs):
+        resp = super().put(request, *args, **kwargs)
+        if resp.status_code < 400:
+            return Response(
+                {"status": True, "message": "Coordinate updated successfully.", "data": resp.data},
+                status=resp.status_code,
+            )
+        return resp
+
+    def delete(self, request, *args, **kwargs):
+        super().delete(request, *args, **kwargs)
+        return Response(
+            {"status": True, "message": "Coordinate deleted successfully."},
+            status=status.HTTP_200_OK,
+        )
 
 class LoginAPI(APIView):
     """

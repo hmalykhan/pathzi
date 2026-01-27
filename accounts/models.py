@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
 from datetime import timedelta
+from django.core.exceptions import ValidationError
 
 
 class PasswordResetOTP(models.Model):
@@ -26,9 +27,12 @@ class UserProfile(models.Model):
 
     category = models.JSONField(default=list, blank=True)  # list of strings
 
-    # ✅ new fields
     report_status = models.BooleanField(default=False)
     report = models.JSONField(default=list, blank=True)  # list of (long) strings
+
+    # old location fields (keep for backwards compatibility)
+    lat = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    lng = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
 
     def clean(self):
         super().clean()
@@ -51,6 +55,9 @@ class Coordinates(models.Model):
         on_delete=models.CASCADE,
         related_name="coordinates",
     )
+
+    title = models.CharField(max_length=50, blank=True, null=True)  # ✅ NEW
+
     latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
     postal_code = models.CharField(max_length=20, blank=True, null=True)
@@ -58,3 +65,5 @@ class Coordinates(models.Model):
     city = models.CharField(max_length=100, blank=True, null=True)
     active = models.BooleanField(default=True)
 
+    def __str__(self):
+        return f"{self.title or 'Location'} - {self.city or ''} ({self.latitude}, {self.longitude})"
