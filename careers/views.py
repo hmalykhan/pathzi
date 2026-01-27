@@ -939,20 +939,45 @@ class CareersView(viewsets.ModelViewSet):
     # ✅ Override list/retrieve to include my_report everywhere
     # -----------------------
 
-    @action(detail=True, methods=["POST"], url_path="report")
+    @action(detail=True, methods=["GET", "PUT"], url_path="report")
     def report(self, request, pk=None):
         career = self.get_object()
         profile = self._get_or_create_profile()
 
-        # ✅ OPTION A STRICT: must be saved first
         link = UserSavedCareer.objects.filter(
             user_profile=profile,
             career_id=career.id,
         ).first()
 
+        # ✅ IMPORTANT: if NOT saved -> error (prevents leak)
         if not link:
             return Response(
                 {"detail": "Career is not saved. Save career first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+            # If you prefer hiding existence instead, use this:
+            # raise NotFound("Not found.")
+
+        # ✅ GET: saved career -> show report or blank defaults
+        if request.method == "GET":
+            return Response(
+                {
+                    "report_status": bool(link.report_status),
+                    "report": link.report or {},
+                    "generated_at": link.generated_at,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # ✅ PUT: forbid client from trying to set these
+        if "career_id" in request.data:
+            return Response(
+                {"detail": "career_id is not allowed in request body."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if "generated_at" in request.data:
+            return Response(
+                {"detail": "generated_at is not allowed in request body."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -963,7 +988,7 @@ class CareersView(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ✅ OVERWRITE behavior
+        # overwrite behavior
         link.report = report_data
         link.report_status = True
         link.generated_at = timezone.now()
@@ -971,13 +996,14 @@ class CareersView(viewsets.ModelViewSet):
 
         return Response(
             {
-                "career_id": career.id,
-                "report_status": link.report_status,
+                "report_status": bool(link.report_status),
                 "report": link.report,
                 "generated_at": link.generated_at,
             },
             status=status.HTTP_200_OK,
         )
+
+
 
     def list(self, request, *args, **kwargs):
         qs = self.get_queryset()
