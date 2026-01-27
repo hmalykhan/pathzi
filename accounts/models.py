@@ -58,8 +58,8 @@ class Coordinates(models.Model):
 
     title = models.CharField(max_length=50, blank=True, null=True)  # ✅ NEW
 
-    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
-    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
     postal_code = models.CharField(max_length=20, blank=True, null=True)
     state = models.CharField(max_length=100, blank=True, null=True)
     city = models.CharField(max_length=100, blank=True, null=True)
