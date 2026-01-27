@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'apprenticeship',
     'careers',
     "billing",
+    "django_extensions",
 ]
 
 MIDDLEWARE = [

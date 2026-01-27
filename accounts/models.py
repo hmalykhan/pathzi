@@ -30,6 +30,12 @@ class UserProfile(models.Model):
     report_status = models.BooleanField(default=False)
     report = models.JSONField(default=list, blank=True)  # list of (long) strings
 
+
+    # ✅ NEW: location
+    lat = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    lng = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+
+
     def clean(self):
         super().clean()
 
