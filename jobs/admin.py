@@ -61,6 +61,11 @@ class DwpJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
         "remote_working",
         "disability_confident",
         "last_scrape_status",
+        "city",
+        "state",
+        "zip_code",
+        "latitude",
+        "longitude",
     )
 
     list_filter = (
@@ -73,6 +78,11 @@ class DwpJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
         "disability_confident",
         "posting_date",
         "closing_date",
+        "city",
+        "state",
+        "zip_code",
+        "latitude",
+        "longitude",
     )
 
     search_fields = (
@@ -87,6 +97,11 @@ class DwpJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
         "apply_url",
         "image_url",
         "raw_text",
+        "city",
+        "state",
+        "zip_code",
+        "latitude",
+        "longitude",
     )
 
     readonly_fields = (
@@ -128,6 +143,18 @@ class DwpJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
                     "additional_salary_information",
                     "disability_confident",
                     "listing_snippet",
+                )
+            },
+        ),
+        (
+            "Geo",
+            {
+                "fields": (
+                    "city",
+                    "state",
+                    "zip_code",
+                    "latitude",
+                    "longitude",
                 )
             },
         ),

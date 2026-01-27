@@ -43,3 +43,18 @@ class UserProfile(models.Model):
 
         validate_string_list(self.category, "category")
         validate_string_list(self.report, "report")
+
+
+class Coordinates(models.Model):
+    user_profile = models.ForeignKey(
+        UserProfile,
+        on_delete=models.CASCADE,
+        related_name="coordinates",
+    )
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    postal_code = models.CharField(max_length=20, blank=True, null=True)
+    state = models.CharField(max_length=100, blank=True, null=True)
+    city = models.CharField(max_length=100, blank=True, null=True)
+    active = models.BooleanField(default=True)
+

@@ -60,6 +60,11 @@ class NcsCourseAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
         "scraped_at",
         "last_scrape_status",
         "last_checked_at",
+        "city",
+        "state",
+        "zip_code",
+        "latitude",
+        "longitude",
     )
 
     list_filter = (
@@ -70,6 +75,11 @@ class NcsCourseAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
         "course_qualification_level",
         "scraped_at",
         "last_scrape_status",
+        "city",
+        "state",
+        "zip_code",
+        "latitude",
+        "longitude",
     )
 
     search_fields = (
@@ -90,6 +100,11 @@ class NcsCourseAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
         "phone",
         "website",
         "cost_description",
+        "city",
+        "state",
+        "zip_code",
+        "latitude",
+        "longitude",
     )
 
     readonly_fields = (
@@ -155,6 +170,11 @@ class NcsCourseAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
                     "email",
                     "phone",
                     "website",
+                    "city",
+                    "state",
+                    "zip_code",
+                    "latitude",
+                    "longitude",
                 )
             },
         ),

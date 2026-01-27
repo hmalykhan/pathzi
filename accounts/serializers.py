@@ -13,6 +13,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
     jobs = serializers.SerializerMethodField()
     apprenticeships = serializers.SerializerMethodField()
     careers = serializers.SerializerMethodField()
+    coordinates = serializers.SerializerMethodField()
+
 
     # ✅ category as JSON list of strings
     category = serializers.ListField(
@@ -157,6 +159,19 @@ class UserProfileSerializer(serializers.ModelSerializer):
                 fields = "__all__"
 
         return CareerFullSerializer(qs, many=True, context=self.context).data
+    
+    def get_coordinates(self, obj):
+        Coordinates = apps.get_model("your_app_name_here", "Coordinates")  # change app label
+
+        qs = Coordinates.objects.filter(user_profile=obj)
+
+        class CoordinatesSerializer(serializers.ModelSerializer):
+            class Meta:
+                model = Coordinates
+                fields = "__all__"
+
+        return CoordinatesSerializer(qs, many=True, context=self.context).data
+
 
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(source='get_full_name', read_only = True)

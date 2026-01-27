@@ -72,6 +72,13 @@ class DwpJob(models.Model):
     last_scrape_message = models.TextField(blank=True, default="")
     last_scrape_run_id = models.UUIDField(null=True, blank=True, db_index=True)
 
+    city = models.CharField(max_length=100, blank=True, default="")
+    state = models.CharField(max_length=100, blank=True, default="")
+    zip_code = models.CharField(max_length=20, blank=True, default="")
+
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+
     class Meta:
         managed = False
         db_table = SCRAPED_DWPJOB_TABLE

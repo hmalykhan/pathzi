@@ -285,6 +285,9 @@ from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from stripe import error as stripe_error
+
+
 
 from .models import BillingProfile
 from .utils import subscription_period_end_dt
@@ -777,15 +780,20 @@ class CancelSubscriptionView(APIView):
 
         cancel_at_period_end = bool(request.data.get("cancel_at_period_end", True))
 
-        # Fetch current subscription state
-        sub = stripe.Subscription.retrieve(
-            billing.stripe_subscription_id,
-            expand=["items"],
-        )
+        # Fetch current subscription state (safe)
+        try:
+            sub = stripe.Subscription.retrieve(
+                billing.stripe_subscription_id,
+                expand=["items"],
+            )
+        except stripe_error.StripeError as e:
+            return Response(
+                {"detail": "Stripe error while retrieving subscription.", "stripe_error": str(e)},
+                status=502,
+            )
 
-        # ✅ If already canceled, do not modify
+        # ✅ If already canceled, do not modify (same behavior as your code)
         if sub.get("status") == "canceled":
-            # Update local DB (self-heal)
             billing.subscription_status = "canceled"
             billing.current_period_end = subscription_period_end_dt(sub) or billing.current_period_end
             billing.save(update_fields=["subscription_status", "current_period_end", "updated_at"])
@@ -797,12 +805,23 @@ class CancelSubscriptionView(APIView):
                 "current_period_end": billing.current_period_end,
             }, status=200)
 
-        # Otherwise we can update cancellation settings
-        sub = stripe.Subscription.modify(
-            billing.stripe_subscription_id,
-            cancel_at_period_end=cancel_at_period_end,
-            expand=["items"],
-        )
+        # Otherwise we can update cancellation settings (safe)
+        try:
+            sub = stripe.Subscription.modify(
+                billing.stripe_subscription_id,
+                cancel_at_period_end=cancel_at_period_end,
+                expand=["items"],
+            )
+        except stripe_error.InvalidRequestError as e:
+            return Response(
+                {"detail": "Cannot update cancellation for this subscription.", "stripe_error": str(e)},
+                status=409,
+            )
+        except stripe_error.StripeError as e:
+            return Response(
+                {"detail": "Stripe error while updating cancellation.", "stripe_error": str(e)},
+                status=502,
+            )
 
         billing.subscription_status = sub.get("status") or billing.subscription_status
         pe = subscription_period_end_dt(sub)
@@ -815,6 +834,7 @@ class CancelSubscriptionView(APIView):
             "cancel_at_period_end": sub.get("cancel_at_period_end"),
             "current_period_end": billing.current_period_end,
         })
+
 
 
 
@@ -829,11 +849,41 @@ class ResumeSubscriptionView(APIView):
         if not billing or not billing.stripe_subscription_id:
             return Response({"detail": "No subscription found."}, status=400)
 
-        sub = stripe.Subscription.modify(
-            billing.stripe_subscription_id,
-            cancel_at_period_end=False,
-            expand=["items"],
-        )
+        # read Stripe truth first
+        try:
+            current = stripe.Subscription.retrieve(
+                billing.stripe_subscription_id,
+                expand=["items"],
+            )
+        except stripe_error.StripeError as e:
+            return Response(
+                {"detail": "Stripe error while retrieving subscription.", "stripe_error": str(e)},
+                status=502,
+            )
+
+        if current.get("status") == "canceled":
+            return Response(
+                {"detail": "Subscription already canceled. Subscribe again to resume.", "status": "canceled"},
+                status=409,
+            )
+
+        # now it's safe to resume
+        try:
+            sub = stripe.Subscription.modify(
+                billing.stripe_subscription_id,
+                cancel_at_period_end=False,
+                expand=["items"],
+            )
+        except stripe_error.InvalidRequestError as e:
+            return Response(
+                {"detail": "Cannot resume this subscription.", "stripe_error": str(e)},
+                status=409,
+            )
+        except stripe_error.StripeError as e:
+            return Response(
+                {"detail": "Stripe error while resuming subscription.", "stripe_error": str(e)},
+                status=502,
+            )
 
         billing.subscription_status = sub.get("status") or billing.subscription_status
         pe = subscription_period_end_dt(sub)
@@ -846,3 +896,5 @@ class ResumeSubscriptionView(APIView):
             "cancel_at_period_end": sub.get("cancel_at_period_end"),
             "current_period_end": billing.current_period_end,
         })
+
+

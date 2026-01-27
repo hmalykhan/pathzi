@@ -41,6 +41,11 @@ class ApprenticeshipVacancyAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
         "last_checked_at",
         "last_scrape_status",
         "scraped_at",
+        "city",
+        "state",
+        "zip_code",
+        "latitude",
+        "longitude",
     )
     list_filter = (
         "last_scrape_status",
@@ -48,6 +53,11 @@ class ApprenticeshipVacancyAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
         "subcategory",
         "scraped_at",
         "last_checked_at",
+        "city",
+        "state",
+        "zip_code",
+        "latitude",
+        "longitude",
     )
     search_fields = (
         "vacancy_ref",
@@ -59,6 +69,11 @@ class ApprenticeshipVacancyAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
         "training_course",
         "training_provider",
         "image_url",
+        "city",
+        "state",
+        "zip_code",
+        "latitude",
+        "longitude",
     )
     readonly_fields = (
         "scraped_at",
@@ -111,6 +126,18 @@ class ApprenticeshipVacancyAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
                     "what_youll_learn_items",
                     "training_schedule",
                     "more_training_information",
+                )
+            },
+        ),
+        (
+            "Geo",
+            {
+                "fields": (
+                    "city",
+                    "state",
+                    "zip_code",
+                    "latitude",
+                    "longitude",
                 )
             },
         ),
