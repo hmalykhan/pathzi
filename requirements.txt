@@ -21,4 +21,5 @@ psycopg
 argon2-cffi
 stripe
 django-environ
-python-dotenvdjango-extensions
+python-dotenv
+django-extensions
