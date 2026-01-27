@@ -177,9 +177,9 @@ class SignUpAPI(generics.CreateAPIView):
 
 class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
     """
-    GET /me/profile/
-    PUT /me/profile/
-    PATCH /me/profile/
+    GET /accounts/user_profile/
+    PUT /accounts/user_profile/
+    PATCH /accounts/user_profile/
     """
     serializer_class = UserProfileSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -188,9 +188,9 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
         profile, _ = UserProfile.objects.get_or_create(appuser=self.request.user)
         return profile
 
-    def patch(self, request):
+    def patch(self, request, *args, **kwargs):
         profile, _ = UserProfile.objects.get_or_create(appuser=request.user)
-        serializer = UserProfileSerializer(profile, data=request.data, partial=True)
+        serializer = self.get_serializer(profile, data=request.data, partial=True)
 
         if serializer.is_valid():
             serializer.save()
@@ -204,7 +204,6 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
                 status=status.HTTP_200_OK,
             )
 
-        # single-message errors
         errors = serializer.errors
         if "non_field_errors" in errors and errors["non_field_errors"]:
             msg = errors["non_field_errors"][0]
@@ -217,10 +216,7 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
                 msg = "Invalid data."
 
         logger.warning("Profile update validation failed: user_id=%s msg=%s", request.user.id, str(msg))
-        return Response(
-            {"status": False, "message": str(msg)},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        return Response({"status": False, "message": str(msg)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class LoginAPI(APIView):

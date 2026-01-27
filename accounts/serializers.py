@@ -1,96 +1,117 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import UserProfile
-from qualification.api.serializer import QualificationSerializer
-from courses.api.serializer import CoursesSerializer
-from jobs.api.serializers import JobsSerializer
 from django.apps import apps
+
+from .models import UserProfile, Coordinates
+
+
+class FlexibleStringListField(serializers.ListField):
+    """
+    Accepts:
+      - "administration"
+      - ["administration", "it"]
+      - null
+    Always stores as list of strings.
+    """
+    def to_internal_value(self, data):
+        if data is None:
+            return []
+        if isinstance(data, str):
+            data = [data]
+        return super().to_internal_value(data)
+
+
+class CoordinatesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Coordinates
+        fields = ["id", "title", "latitude", "longitude", "postal_code", "state", "city", "active"]
+        read_only_fields = ["id"]
+
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
     appuser = serializers.StringRelatedField(read_only=True)
+
+    # existing functionality
     courses = serializers.SerializerMethodField()
     jobs = serializers.SerializerMethodField()
     apprenticeships = serializers.SerializerMethodField()
     careers = serializers.SerializerMethodField()
-    coordinates = serializers.SerializerMethodField()
 
+    # ✅ now writable + readable (no more SerializerMethodField)
+    coordinates = CoordinatesSerializer(many=True, required=False)
 
-    # ✅ category as JSON list of strings
-    category = serializers.ListField(
+    # ✅ accept string or list
+    category = FlexibleStringListField(
         child=serializers.CharField(max_length=200),
         required=False,
         allow_empty=True
     )
 
-    # ✅ report as JSON list of strings
-    report = serializers.ListField(
-        child=serializers.CharField(),  # no max_length to allow long strings
+    report = FlexibleStringListField(
+        child=serializers.CharField(),
         required=False,
         allow_empty=True
     )
-
 
     class Meta:
         model = UserProfile
         fields = "__all__"
 
     def validate_category(self, value):
-        """
-        Accepts:
-          - ["Administration", "IT"]
-          - "Administration"   (optional single string)
-        Saves:
-          - list of non-empty strings
-          - stripped
-          - unique (case-insensitive)
-        """
-        if value is None:
-            return []
-
-        if isinstance(value, str):
-            value = [value]
-
-        cleaned = []
-        seen = set()
-        for item in value:
+        cleaned, seen = [], set()
+        for item in value or []:
+            item = (item or "").strip()
             if not item:
                 continue
-            item = item.strip()
-            if not item:
-                continue
-
-            key = item.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-
-            cleaned.append(item)  # or item.lower() if you want stored lowercase
-        return cleaned
-    
-    def validate_report(self, value):
-        if value is None:
-            return []
-
-        if isinstance(value, str):
-            value = [value]
-
-        cleaned = []
-        seen = set()
-        for item in value:
-            if not item:
-                continue
-            item = item.strip()
-            if not item:
-                continue
-
             key = item.lower()
             if key in seen:
                 continue
             seen.add(key)
             cleaned.append(item)
-
         return cleaned
+
+    def validate_report(self, value):
+        cleaned, seen = [], set()
+        for item in value or []:
+            item = (item or "").strip()
+            if not item:
+                continue
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(item)
+        return cleaned
+
+    def update(self, instance, validated_data):
+        coords_data = validated_data.pop("coordinates", None)
+
+        # update profile fields normally
+        instance = super().update(instance, validated_data)
+
+        # if coordinates provided, upsert (won't delete existing unless you want)
+        if coords_data is not None:
+            for item in coords_data:
+                coord_id = item.get("id", None)
+
+                # if id provided -> update existing (only if belongs to this profile)
+                if coord_id:
+                    Coordinates.objects.filter(id=coord_id, user_profile=instance).update(
+                        title=item.get("title"),
+                        latitude=item.get("latitude"),
+                        longitude=item.get("longitude"),
+                        postal_code=item.get("postal_code"),
+                        state=item.get("state"),
+                        city=item.get("city"),
+                        active=item.get("active", True),
+                    )
+                else:
+                    Coordinates.objects.create(user_profile=instance, **item)
+
+        return instance
+
+    # ------- EXISTING METHODS (unchanged behavior) -------
 
     def get_courses(self, obj):
         Course = apps.get_model("courses", "Course")
@@ -110,7 +131,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         return CourseFullSerializer(qs, many=True, context=self.context).data
 
     def get_jobs(self, obj):
-        Job = apps.get_model("jobs", "Job")  # proxy mapped to scraper table
+        Job = apps.get_model("jobs", "Job")
         UserSavedJob = apps.get_model("jobs", "UserSavedJob")
 
         job_ids = UserSavedJob.objects.filter(
@@ -144,7 +165,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         return ApprenticeshipFullSerializer(qs, many=True, context=self.context).data
 
     def get_careers(self, obj):
-        Career = apps.get_model("careers", "Career")  # proxy mapped to fetch_careerjob
+        Career = apps.get_model("careers", "Career")
         UserSavedCareer = apps.get_model("careers", "UserSavedCareer")
 
         career_ids = UserSavedCareer.objects.filter(
@@ -159,25 +180,15 @@ class UserProfileSerializer(serializers.ModelSerializer):
                 fields = "__all__"
 
         return CareerFullSerializer(qs, many=True, context=self.context).data
-    
-    def get_coordinates(self, obj):
-        Coordinates = apps.get_model("your_app_name_here", "Coordinates")  # change app label
-
-        qs = Coordinates.objects.filter(user_profile=obj)
-
-        class CoordinatesSerializer(serializers.ModelSerializer):
-            class Meta:
-                model = Coordinates
-                fields = "__all__"
-
-        return CoordinatesSerializer(qs, many=True, context=self.context).data
 
 
 class UserSerializer(serializers.ModelSerializer):
-    full_name = serializers.CharField(source='get_full_name', read_only = True)
+    full_name = serializers.CharField(source="get_full_name", read_only=True)
+
     class Meta:
         model = User
-        fields = ["id", "username", "email", "full_name"]  # don't expose password!
+        fields = ["id", "username", "email", "full_name"]
+
     def validate_username(self, value):
         if User.objects.filter(username=value).exists():
             raise serializers.ValidationError("Username already taken.")
@@ -189,31 +200,29 @@ class UserSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Email already registered.")
         return value
 
+
 class SignUpSerializer(serializers.Serializer):
     username = serializers.CharField()
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
     password2 = serializers.CharField(write_only=True, min_length=8)
 
-    # Removed validate_username and validate_email methods
-    # These were causing DB queries during validation
-    # Uniqueness is now checked in the view for better performance and control
-
     def validate(self, attrs):
         if attrs["password"] != attrs["password2"]:
-            # can be string OR dict; string is easier for single-message handling
             raise serializers.ValidationError({"password2": "Passwords do not match."})
         return attrs
-    
-    
+
+
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
+
 
 class ResetPasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(write_only=True)
     new_password = serializers.CharField(write_only=True, min_length=8)
     new_password2 = serializers.CharField(write_only=True, min_length=8)
+
 
 class ForgotPasswordSerializer(serializers.Serializer):
     email = serializers.EmailField()
@@ -225,6 +234,7 @@ class ForgotPasswordConfirmSerializer(serializers.Serializer):
     new_password = serializers.CharField(write_only=True, min_length=8)
     new_password2 = serializers.CharField(write_only=True, min_length=8)
 
+
 class GoogleAuthSerializer(serializers.Serializer):
     id_token = serializers.CharField()
 
@@ -234,6 +244,7 @@ class UserDataSerializer(serializers.Serializer):
     username = serializers.CharField()
     email = serializers.EmailField()
     name = serializers.CharField()
+
 
 class GoogleLoginResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
