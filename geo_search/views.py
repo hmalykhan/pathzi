@@ -154,17 +154,23 @@ class PostcodesListAPI(APIView):
         return Response({"status": True, "data": data})
 
 
+
 class NearbySearchAPI(APIView):
     """
     POST /geo/nearby/
     Uses:
     - location.lat/lon (address) OR
     - location.city OR location.postcode -> resolves DB centroid -> radius search
+
+    ✅ If city/postcode provided:
+      - filter by exact city/postcode fields only (no location_summary partial matching)
+    ✅ Also returns DB primary key as the value for job_id/course_id/vacancy_ref
     """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         body = request.data or {}
+
         types = parse_types(body.get("types"))
         radius_km = float(body.get("radius_km") or 50)
         radius_km = min(max(radius_km, 1.0), 200.0)
@@ -181,6 +187,7 @@ class NearbySearchAPI(APIView):
         city = (location.get("city") or "").strip()
         postcode = (location.get("postcode") or location.get("zip_code") or "").strip()
 
+        # Decide center
         if lat is not None and lon is not None:
             lat = float(lat)
             lon = float(lon)
@@ -199,14 +206,194 @@ class NearbySearchAPI(APIView):
             lat, lon = center
             center_source = "db_centroid"
 
-        results = {t: search_nearby(t, lat, lon, radius_km, q=q, category=category, subcategory=subcategory, page=page, page_size=page_size)
-                   for t in types}
+        results = {
+            t: search_nearby(
+                t=t,
+                lat=lat,
+                lon=lon,
+                radius_km=radius_km,
+                q=q,
+                category=category,
+                subcategory=subcategory,
+                page=page,
+                page_size=page_size,
+                city=city or None,
+                postcode=postcode or None,
+            )
+            for t in types
+        }
 
-        return Response({
-            "status": True,
-            "center_source": center_source,
-            "center": {"lat": lat, "lon": lon},
-            "radius_km": radius_km,
-            "types": types,
-            "results": results,
-        })
+        return Response(
+            {
+                "status": True,
+                "center_source": center_source,
+                "center": {"lat": lat, "lon": lon},
+                "radius_km": radius_km,
+                "types": types,
+                "results": results,
+            }
+        )
+    """
+    POST /geo/nearby/
+    Uses:
+    - location.lat/lon (address) OR
+    - location.city OR location.postcode -> resolves DB centroid -> radius search
+
+    ✅ If city/postcode provided:
+      - filter by exact city/postcode fields only (no location_summary partial matching)
+    ✅ Also returns DB primary key as the value for job_id/course_id/vacancy_ref
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        body = request.data or {}
+
+        types = parse_types(body.get("types"))
+        radius_km = float(body.get("radius_km") or 50)
+        radius_km = min(max(radius_km, 1.0), 200.0)
+
+        location = body.get("location") or {}
+        q = body.get("q") or ""
+        category = body.get("category") or ""
+        subcategory = body.get("subcategory") or ""
+        page = int(body.get("page") or 1)
+        page_size = int(body.get("page_size") or 20)
+
+        lat = location.get("lat")
+        lon = location.get("lon")
+        city = (location.get("city") or "").strip()
+        postcode = (location.get("postcode") or location.get("zip_code") or "").strip()
+
+        # Decide center
+        if lat is not None and lon is not None:
+            lat = float(lat)
+            lon = float(lon)
+            center_source = "address"
+        else:
+            center = weighted_centroid_for_city_or_postcode(
+                city=city or None,
+                postcode=postcode or None,
+                types=types,
+            )
+            if not center:
+                return Response(
+                    {"status": False, "message": "No coordinates found for selected city/postcode in DB."},
+                    status=400,
+                )
+            lat, lon = center
+            center_source = "db_centroid"
+
+        results = {
+            t: search_nearby(
+                t=t,
+                lat=lat,
+                lon=lon,
+                radius_km=radius_km,
+                q=q,
+                category=category,
+                subcategory=subcategory,
+                page=page,
+                page_size=page_size,
+                city=city or None,
+                postcode=postcode or None,
+            )
+            for t in types
+        }
+
+        return Response(
+            {
+                "status": True,
+                "center_source": center_source,
+                "center": {"lat": lat, "lon": lon},
+                "radius_km": radius_km,
+                "types": types,
+                "results": results,
+            }
+        )
+    """
+    POST /geo/nearby/
+
+    Uses:
+    - location.lat/lon (address) OR
+    - location.city OR location.postcode -> resolves DB centroid -> radius search
+
+    NEW BEHAVIOR:
+    - If user provides city -> results must match EXACT city field (case-insensitive)
+    - If user provides postcode -> results must match EXACT postcode/zip field (case-insensitive)
+    - Each returned record includes DB primary key "id"
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        body = request.data or {}
+
+        types = parse_types(body.get("types"))
+        radius_km = float(body.get("radius_km") or 50)
+        radius_km = min(max(radius_km, 1.0), 200.0)
+
+        location = body.get("location") or {}
+        q = body.get("q") or ""
+        category = body.get("category") or ""
+        subcategory = body.get("subcategory") or ""
+        page = int(body.get("page") or 1)
+        page_size = int(body.get("page_size") or 20)
+
+        lat = location.get("lat")
+        lon = location.get("lon")
+        city = (location.get("city") or "").strip()
+        postcode = (location.get("postcode") or location.get("zip_code") or "").strip()
+
+        # Decide center
+        if lat is not None and lon is not None:
+            lat = float(lat)
+            lon = float(lon)
+            center_source = "address"
+        else:
+            center = weighted_centroid_for_city_or_postcode(
+                city=city or None,
+                postcode=postcode or None,
+                types=types,
+            )
+            if not center:
+                return Response(
+                    {"status": False, "message": "No coordinates found for selected city/postcode in DB."},
+                    status=400,
+                )
+            lat, lon = center
+            center_source = "db_centroid"
+
+        # ✅ PASS city/postcode into search_nearby so results match EXACT city/zip fields
+        results = {
+            t: search_nearby(
+                t,
+                lat,
+                lon,
+                radius_km,
+                q=q,
+                category=category,
+                subcategory=subcategory,
+                page=page,
+                page_size=page_size,
+                city=city or None,
+                postcode=postcode or None,
+            )
+            for t in types
+        }
+
+        return Response(
+            {
+                "status": True,
+                "center_source": center_source,
+                "center": {"lat": lat, "lon": lon},
+                "radius_km": radius_km,
+                "types": types,
+                "filters": {
+                    "city": city or None,
+                    "postcode": postcode or None,
+                    "q": q or None,
+                    "category": category or None,
+                    "subcategory": subcategory or None,
+                },
+                "results": results,
+            }
+        )
