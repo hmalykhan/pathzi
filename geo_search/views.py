@@ -49,9 +49,11 @@ def parse_types(value):
 
 class LocationAutocompleteAPI(APIView):
     """
-    GET /geo/autocomplete/?text=lah&types=jobs,courses&limit=8
-    - city/postcode -> DB
-    - address -> Geoapify
+    GET /geo/autocomplete/?text=...&types=jobs,courses&limit=8
+
+    Strategy:
+    1) If looks like postcode -> try DB postcode suggestions, if empty -> Geoapify
+    2) Else -> try DB city suggestions, if empty -> Geoapify
     """
     permission_classes = [IsAuthenticated]
 
@@ -64,31 +66,46 @@ class LocationAutocompleteAPI(APIView):
         limit = int(request.query_params.get("limit") or 8)
         limit = min(max(limit, 1), 20)
 
-        kind = detect_search_kind(text)
-
-        # ✅ caching makes repeated calls instant
-        cache_key = f"geo_autocomplete:v2:{kind}:{text.lower()}:{','.join(types)}:{limit}"
+        # Cache key depends on input + types + limit
+        cache_key = f"geo_autocomplete:v3:{text.lower()}:{','.join(types)}:{limit}"
         cached = cache.get(cache_key)
         if cached is not None:
-            return Response({"status": True, "kind": kind, "data": cached})
+            return Response(cached)
 
-        if kind == "city":
-            data = db_suggest_distinct("city", text, types, limit=limit)
-        elif kind == "postcode":
+        # 1) Decide if it's "probably postcode"
+        kind_guess = detect_search_kind(text)  # city/postcode/address (guess)
+        data = []
+        kind_final = ""
+
+        # If postcode guess -> try postcode DB first
+        if kind_guess == "postcode":
             data = db_suggest_distinct("zip_code", text, types, limit=limit)
-        else:
-            # ✅ avoid hammering geoapify on 1-2 chars
-            if len(text) < 3:
-                data = []
+            if data:
+                kind_final = "postcode"
             else:
+                # fallback to Geoapify (maybe it's address with numbers)
+                kind_final = "address"
                 country = getattr(settings, "GEOAPIFY_DEFAULT_COUNTRY", "") or ""
-                try:
-                    data = geoapify_autocomplete(text, limit=limit, country_code=country)
-                except Exception:
-                    data = []
+                data = geoapify_autocomplete(text, limit=limit, country_code=country)
 
-        cache.set(cache_key, data, timeout=60 * 10)
-        return Response({"status": True, "kind": kind, "data": data})
+        else:
+            # 2) Try city DB first (for everything that isn't postcode)
+            data = db_suggest_distinct("city", text, types, limit=limit)
+            if data:
+                kind_final = "city"
+            else:
+                # fallback to Geoapify address
+                kind_final = "address"
+                # optional: don't call geoapify on very short input
+                if len(text) < 3:
+                    data = []
+                else:
+                    country = getattr(settings, "GEOAPIFY_DEFAULT_COUNTRY", "") or ""
+                    data = geoapify_autocomplete(text, limit=limit, country_code=country)
+
+        resp = {"status": True, "kind": kind_final, "data": data}
+        cache.set(cache_key, resp, timeout=60 * 10)
+        return Response(resp)
 
 
 class CitiesListAPI(APIView):
