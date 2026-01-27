@@ -3,6 +3,7 @@ import random
 import urllib.parse
 import requests
 import threading
+from django.db import transaction
 
 from datetime import timedelta
 
@@ -177,6 +178,48 @@ class SignUpAPI(generics.CreateAPIView):
         )
 
 
+
+
+def _sync_profile_from_coordinate(profile: UserProfile, coord: Coordinates) -> None:
+    """
+    Copy active coordinate location into UserProfile (only updates non-empty values).
+    Since Coordinates doesn't have an address field, we build a simple address string.
+    """
+    update_fields = []
+
+    if coord.city:
+        profile.city = coord.city
+        update_fields.append("city")
+
+    if coord.postal_code:
+        profile.zip_code = coord.postal_code
+        update_fields.append("zip_code")
+
+    # Build a simple address string: "City, State, Postcode"
+    parts = [p for p in [coord.city, coord.state, coord.postal_code] if p]
+    if parts:
+        profile.address = ", ".join(parts)
+        update_fields.append("address")
+
+    if coord.latitude is not None:
+        profile.lat = coord.latitude
+        update_fields.append("lat")
+
+    if coord.longitude is not None:
+        profile.lng = coord.longitude
+        update_fields.append("lng")
+
+    if update_fields:
+        profile.save(update_fields=list(set(update_fields)))
+
+
+def _set_only_one_active(profile: UserProfile, active_coord_id: int) -> None:
+    """
+    Ensures only one coordinate is active for this profile.
+    """
+    Coordinates.objects.filter(user_profile=profile).exclude(id=active_coord_id).update(active=False)
+
+
 class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
     """
     GET /accounts/user_profile/
@@ -198,11 +241,7 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
             serializer.save()
             logger.info("Profile updated: user_id=%s", request.user.id)
             return Response(
-                {
-                    "status": True,
-                    "message": "Profile updated successfully.",
-                    "data": serializer.data,
-                },
+                {"status": True, "message": "Profile updated successfully.", "data": serializer.data},
                 status=status.HTTP_200_OK,
             )
 
@@ -221,11 +260,13 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
         return Response({"status": False, "message": str(msg)}, status=status.HTTP_400_BAD_REQUEST)
 
 
-
 class CurrentUserCoordinatesListCreateAPI(generics.ListCreateAPIView):
     """
     GET  /accounts/coordinates/        -> list my coordinates
     POST /accounts/coordinates/        -> create new coordinate for me
+
+    ✅ NEW behavior:
+    - If created coordinate is active=True (default), deactivate others + sync UserProfile.
     """
     serializer_class = CoordinatesSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -238,11 +279,16 @@ class CurrentUserCoordinatesListCreateAPI(generics.ListCreateAPIView):
         profile = self.get_user_profile()
         return Coordinates.objects.filter(user_profile=profile).order_by("-id")
 
+    @transaction.atomic
     def perform_create(self, serializer):
         profile = self.get_user_profile()
-        serializer.save(user_profile=profile)
+        coord = serializer.save(user_profile=profile)
 
-    # Optional: if you want same response format as your profile API
+        # if it is active, make others inactive + sync profile
+        if coord.active:
+            _set_only_one_active(profile, coord.id)
+            _sync_profile_from_coordinate(profile, coord)
+
     def create(self, request, *args, **kwargs):
         resp = super().create(request, *args, **kwargs)
         return Response(
@@ -253,10 +299,14 @@ class CurrentUserCoordinatesListCreateAPI(generics.ListCreateAPIView):
 
 class CurrentUserCoordinateDetailAPI(generics.RetrieveUpdateDestroyAPIView):
     """
-    GET    /accounts/coordinates/<id>/  -> retrieve one coordinate
-    PATCH  /accounts/coordinates/<id>/  -> update coordinate by id
-    PUT    /accounts/coordinates/<id>/  -> update coordinate by id
-    DELETE /accounts/coordinates/<id>/  -> delete coordinate by id
+    GET    /accounts/coordinates/<id>/
+    PATCH  /accounts/coordinates/<id>/
+    PUT    /accounts/coordinates/<id>/
+    DELETE /accounts/coordinates/<id>/
+
+    ✅ NEW behavior:
+    - When coordinate becomes active=True (or is already active), deactivate others
+    - Sync UserProfile city/zip/address/lat/lng from this active coordinate
     """
     serializer_class = CoordinatesSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -270,7 +320,40 @@ class CurrentUserCoordinateDetailAPI(generics.RetrieveUpdateDestroyAPIView):
         profile = self.get_user_profile()
         return Coordinates.objects.filter(user_profile=profile)
 
-    # Optional: match your "status/message" format
+    @transaction.atomic
+    def perform_update(self, serializer):
+        profile = self.get_user_profile()
+        coord = serializer.save()
+
+        # If this coord is active (either toggled now or already active), enforce one-active + sync profile
+        if coord.active:
+            _set_only_one_active(profile, coord.id)
+            _sync_profile_from_coordinate(profile, coord)
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        profile = self.get_user_profile()
+        was_active = bool(instance.active)
+
+        instance.delete()
+
+        # If the deleted one was active, choose a fallback active coordinate (latest)
+        if was_active:
+            fallback = Coordinates.objects.filter(user_profile=profile).order_by("-id").first()
+            if fallback:
+                fallback.active = True
+                fallback.save(update_fields=["active"])
+                _set_only_one_active(profile, fallback.id)
+                _sync_profile_from_coordinate(profile, fallback)
+            else:
+                # no coordinates left -> optionally clear profile location
+                profile.city = ""
+                profile.zip_code = ""
+                profile.address = ""
+                profile.lat = None
+                profile.lng = None
+                profile.save(update_fields=["city", "zip_code", "address", "lat", "lng"])
+
     def patch(self, request, *args, **kwargs):
         resp = super().patch(request, *args, **kwargs)
         if resp.status_code < 400:
@@ -295,7 +378,6 @@ class CurrentUserCoordinateDetailAPI(generics.RetrieveUpdateDestroyAPIView):
             {"status": True, "message": "Coordinate deleted successfully."},
             status=status.HTTP_200_OK,
         )
-
 class LoginAPI(APIView):
     """
     POST /login/
