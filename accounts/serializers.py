@@ -28,7 +28,6 @@ class CoordinatesSerializer(serializers.ModelSerializer):
         read_only_fields = ["id"]
 
 
-
 class UserProfileSerializer(serializers.ModelSerializer):
     appuser = serializers.StringRelatedField(read_only=True)
 

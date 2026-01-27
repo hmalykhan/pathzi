@@ -20,6 +20,10 @@ from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
 )
+from .views import (
+    CurrentUserCoordinatesListCreateAPI,
+    CurrentUserCoordinateDetailAPI,
+)
 
 urlpatterns = [
 path('users/',UserAPI.as_view()),
@@ -35,6 +39,9 @@ path("forgot_password_confirmation/", ForgotPasswordConfirmationOTP.as_view()),
 path("otp_check/",Otp_Checker.as_view() ),
 
 path("user_profile/", CurrentUserProfileAPI.as_view(), name="user_profile"),
+path("coordinates/", CurrentUserCoordinatesListCreateAPI.as_view(), name="my-coordinates"),
+path("coordinates/<int:pk>/", CurrentUserCoordinateDetailAPI.as_view(), name="my-coordinate-detail"),
+
 
 path("auth/google/", GoogleMobileAuthAPI.as_view(), name="google_mobile_auth"),
 
