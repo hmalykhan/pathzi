@@ -287,14 +287,15 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from stripe import error as stripe_error
 
-
-
 from .models import BillingProfile
 from .utils import subscription_period_end_dt
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
+# ----------------------------
+# Helpers
+# ----------------------------
 def _price_id_for_plan(plan_id: str) -> str | None:
     cfg = getattr(settings, "STRIPE_PLANS", {}).get(plan_id) or {}
     return cfg.get("price_id")
@@ -305,8 +306,13 @@ def _extract_subscription_item(sub) -> tuple[str | None, str | None]:
     if not items:
         return None, None
     item = items[0]
-    price = item.get("price") or {}
-    price_id = price.get("id") if isinstance(price, dict) else None
+    price = item.get("price")
+    if isinstance(price, dict):
+        price_id = price.get("id")
+    elif isinstance(price, str):
+        price_id = price
+    else:
+        price_id = None
     return item.get("id"), price_id
 
 
@@ -333,15 +339,10 @@ def _unix(dt: datetime) -> int:
 
 def _get_invoice(subscription):
     inv = subscription.get("latest_invoice")
-
-    # already expanded
     if isinstance(inv, dict):
         return inv
-
-    # id only, fetch + expand
     if isinstance(inv, str) and inv:
         return stripe.Invoice.retrieve(inv, expand=["payment_intent"])
-
     return None
 
 
@@ -350,7 +351,6 @@ def _get_client_secret_from_invoice(invoice):
         return None, None
 
     hosted_url = invoice.get("hosted_invoice_url")
-
     pi = invoice.get("payment_intent")
     if not pi:
         return None, hosted_url
@@ -361,24 +361,39 @@ def _get_client_secret_from_invoice(invoice):
         except Exception:
             return None, hosted_url
 
-    return pi.get("client_secret"), hosted_url
+    return (pi.get("client_secret") if isinstance(pi, dict) else None), hosted_url
 
 
 def _release_schedule_if_any(schedule_id: str | None):
     """
-    If you created a SubscriptionSchedule (for downgrade at period end),
-    release it before making other subscription changes.
+    Releases a SubscriptionSchedule so subscription can be changed again.
+    Safe to call multiple times.
     """
     if not schedule_id:
         return
     try:
         stripe.SubscriptionSchedule.release(schedule_id)
     except Exception:
-        # safe ignore (maybe already released/canceled)
         return
 
 
+def _normalize_schedule_id(val) -> str | None:
+    """
+    Stripe subscription.schedule can be a string id or an expanded dict.
+    """
+    if not val:
+        return None
+    if isinstance(val, str):
+        return val
+    if isinstance(val, dict):
+        return val.get("id")
+    return None
+
+
 def _sync_billing_from_stripe(billing: BillingProfile) -> BillingProfile:
+    """
+    Pull Stripe subscription truth and self-heal local BillingProfile.
+    """
     if not billing.stripe_subscription_id:
         return billing
 
@@ -429,6 +444,9 @@ def _sync_billing_from_stripe(billing: BillingProfile) -> BillingProfile:
     return billing
 
 
+# ----------------------------
+# Views
+# ----------------------------
 class SubscribeView(APIView):
     """
     POST { "plan_id": "monthly|quarterly|yearly|free" }
@@ -448,22 +466,24 @@ class SubscribeView(APIView):
 
         plan_id = (request.data.get("plan_id") or "monthly").lower().strip()
 
-        # If an old downgrade schedule exists, release it to avoid conflicts
-        _release_schedule_if_any(getattr(profile, "stripe_schedule_id", None))
-        profile.stripe_schedule_id = None
-        profile.pending_plan_id = None
-        profile.pending_change_at = None
-        profile.save(update_fields=["stripe_schedule_id", "pending_plan_id", "pending_change_at", "updated_at"])
-
         # Free plan: no Stripe payment
         if plan_id == "free":
             profile.plan_id = "free"
             profile.subscription_status = "none"
             profile.current_period_end = None
             profile.stripe_price_id = None
+            profile.pending_plan_id = None
+            profile.pending_change_at = None
+            profile.stripe_schedule_id = None
             profile.save(update_fields=[
-                "plan_id", "subscription_status", "current_period_end",
-                "stripe_price_id", "updated_at"
+                "plan_id",
+                "subscription_status",
+                "current_period_end",
+                "stripe_price_id",
+                "pending_plan_id",
+                "pending_change_at",
+                "stripe_schedule_id",
+                "updated_at",
             ])
             return Response({"plan_id": "free", "detail": "Free plan selected."})
 
@@ -471,7 +491,7 @@ class SubscribeView(APIView):
         if not price_id:
             return Response({"detail": "Invalid plan_id"}, status=400)
 
-        # If already active, block duplicate subscribe
+        # If already active, block duplicate subscribe (with a sync to prevent drift)
         if profile.is_active and profile.stripe_subscription_id:
             profile = _sync_billing_from_stripe(profile)
             if profile.is_active:
@@ -602,6 +622,7 @@ class SubscriptionStatusView(APIView):
                 "pending_change_at": None,
             })
 
+        # self-heal when missing important fields
         if billing.stripe_subscription_id and (billing.current_period_end is None or not billing.plan_id):
             billing = _sync_billing_from_stripe(billing)
 
@@ -638,17 +659,13 @@ class ChangePlanView(APIView):
         if not new_price_id:
             return Response({"detail": "Plan not configured."}, status=400)
 
-        # If a previous schedule exists (old downgrade), release it first
-        _release_schedule_if_any(getattr(billing, "stripe_schedule_id", None))
-        billing.stripe_schedule_id = None
-        billing.pending_plan_id = None
-        billing.pending_change_at = None
-        billing.save(update_fields=["stripe_schedule_id", "pending_plan_id", "pending_change_at", "updated_at"])
-
-        sub = stripe.Subscription.retrieve(
-            billing.stripe_subscription_id,
-            expand=["items", "latest_invoice.payment_intent"],
-        )
+        try:
+            sub = stripe.Subscription.retrieve(
+                billing.stripe_subscription_id,
+                expand=["items", "latest_invoice.payment_intent", "schedule"],
+            )
+        except stripe_error.StripeError as e:
+            return Response({"detail": "Stripe error retrieving subscription.", "stripe_error": str(e)}, status=502)
 
         item_id, current_price_id = _extract_subscription_item(sub)
         if not item_id or not current_price_id:
@@ -665,27 +682,47 @@ class ChangePlanView(APIView):
         is_upgrade = new_amt > current_amt
         period_end = subscription_period_end_dt(sub)
 
-        # -----------------------
-        # UPGRADE: apply now
-        # -----------------------
-        if is_upgrade:
-            # IMPORTANT: In pending updates mode you can't pass cancel_at_period_end in same call.
-            # So clear it in a separate call first (if needed).
-            if sub.get("cancel_at_period_end"):
-                stripe.Subscription.modify(sub["id"], cancel_at_period_end=False)
+        # clear local pending markers before applying new change
+        billing.pending_plan_id = None
+        billing.pending_change_at = None
+        billing.stripe_schedule_id = None
+        billing.save(update_fields=["pending_plan_id", "pending_change_at", "stripe_schedule_id", "updated_at"])
 
-            updated = stripe.Subscription.modify(
-                sub["id"],
-                items=[{"id": item_id, "price": new_price_id}],
-                proration_behavior="always_invoice",
-                payment_behavior="pending_if_incomplete",
-                expand=["latest_invoice.payment_intent", "items"],
-            )
+        # =====================
+        # UPGRADE (charge now)
+        # =====================
+        if is_upgrade:
+            try:
+                # If subscription is attached to a schedule, release it first
+                sched = sub.get("schedule")
+                sched_id = None
+                if isinstance(sched, dict):
+                    sched_id = sched.get("id")
+                elif isinstance(sched, str):
+                    sched_id = sched
+
+                if sched_id:
+                    _release_schedule_if_any(sched_id)
+
+                # If user had scheduled cancellation, remove it first (separate call)
+                if sub.get("cancel_at_period_end"):
+                    stripe.Subscription.modify(sub["id"], cancel_at_period_end=False)
+
+                updated = stripe.Subscription.modify(
+                    sub["id"],
+                    items=[{"id": item_id, "price": new_price_id}],
+                    proration_behavior="always_invoice",
+                    payment_behavior="pending_if_incomplete",
+                    expand=["latest_invoice.payment_intent", "items"],
+                )
+
+            except stripe_error.StripeError as e:
+                return Response({"detail": "Stripe rejected upgrade request.", "stripe_error": str(e)}, status=409)
 
             invoice = _get_invoice(updated)
             client_secret, hosted_url = _get_client_secret_from_invoice(invoice)
 
-            # Mark as pending locally; webhooks will set the real plan after payment succeeds
+            # mark locally as pending; webhook will finalize plan when Stripe confirms
             billing.pending_plan_id = new_plan
             billing.pending_change_at = timezone.now()
             billing.save(update_fields=["pending_plan_id", "pending_change_at", "updated_at"])
@@ -704,37 +741,70 @@ class ChangePlanView(APIView):
 
             return Response(resp)
 
-        # -----------------------
-        # DOWNGRADE: schedule at period end
-        # -----------------------
+        # ==========================
+        # DOWNGRADE (at period end)
+        # ==========================
         if not period_end:
             return Response({"detail": "Missing current_period_end. Wait for webhook/status sync."}, status=400)
 
-        # Create schedule from existing subscription
-        schedule = stripe.SubscriptionSchedule.create(from_subscription=sub["id"])
+        period_end_ts = _unix(period_end)
 
-        schedule = stripe.SubscriptionSchedule.modify(
-            schedule["id"],
-            end_behavior="release",
-            phases=[
+        try:
+            # If subscription already has a schedule, modify it (DON'T create new)
+            sched = sub.get("schedule")
+            schedule_id = None
+            if isinstance(sched, dict):
+                schedule_id = sched.get("id")
+            elif isinstance(sched, str):
+                schedule_id = sched
+
+            if schedule_id:
+                schedule = stripe.SubscriptionSchedule.retrieve(schedule_id, expand=["phases"])
+            else:
+                # create schedule from subscription, then retrieve to read the real phase start_date
+                created = stripe.SubscriptionSchedule.create(from_subscription=sub["id"])
+                schedule_id = created.get("id")
+                schedule = stripe.SubscriptionSchedule.retrieve(schedule_id, expand=["phases"])
+
+            phases = schedule.get("phases") or []
+            if not phases:
+                return Response({"detail": "Stripe schedule has no phases."}, status=409)
+
+            # IMPORTANT: you cannot change current phase start_date.
+            current_phase_start = phases[0].get("start_date")
+            if not current_phase_start:
+                return Response({"detail": "Stripe schedule missing current phase start_date."}, status=409)
+
+            # Build phases using REAL timestamps (no "now")
+            new_phases = [
                 {
-                    "start_date": "now",
-                    "end_date": _unix(period_end),
+                    "start_date": int(current_phase_start),
+                    "end_date": int(period_end_ts),
                     "items": [{"price": current_price_id, "quantity": 1}],
                     "proration_behavior": "none",
                 },
                 {
-                    "start_date": _unix(period_end),
+                    "start_date": int(period_end_ts),
                     "items": [{"price": new_price_id, "quantity": 1}],
                     "proration_behavior": "none",
                 },
-            ],
-            proration_behavior="none",
-        )
+            ]
+
+            schedule = stripe.SubscriptionSchedule.modify(
+                schedule_id,
+                end_behavior="release",
+                phases=new_phases,
+            )
+
+        except stripe_error.StripeError as e:
+            return Response(
+                {"detail": "Stripe rejected schedule modification.", "stripe_error": str(e)},
+                status=409,
+            )
 
         billing.pending_plan_id = new_plan
         billing.pending_change_at = period_end
-        billing.stripe_schedule_id = schedule.get("id")
+        billing.stripe_schedule_id = schedule_id
         billing.save(update_fields=["pending_plan_id", "pending_change_at", "stripe_schedule_id", "updated_at"])
 
         return Response({
@@ -746,9 +816,11 @@ class ChangePlanView(APIView):
         })
 
 
+
+
 class CustomerPortalView(APIView):
     """
-    POST -> returns { url } to open Stripe Customer Portal in a WebView.
+    POST -> returns { url } to open Stripe Customer Portal in a WebView (optional).
     """
     permission_classes = [IsAuthenticated]
 
@@ -766,11 +838,18 @@ class CustomerPortalView(APIView):
         if cfg_id:
             kwargs["configuration"] = cfg_id
 
-        session = stripe.billing_portal.Session.create(**kwargs)
+        try:
+            session = stripe.billing_portal.Session.create(**kwargs)
+        except stripe_error.StripeError as e:
+            return Response({"detail": "Stripe error creating portal session.", "stripe_error": str(e)}, status=502)
+
         return Response({"url": session["url"]})
 
 
 class CancelSubscriptionView(APIView):
+    """
+    POST { "cancel_at_period_end": true|false }
+    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -780,32 +859,31 @@ class CancelSubscriptionView(APIView):
 
         cancel_at_period_end = bool(request.data.get("cancel_at_period_end", True))
 
-        # Fetch current subscription state (safe)
+        # Fetch current subscription state first (avoid crashing)
         try:
-            sub = stripe.Subscription.retrieve(
+            current = stripe.Subscription.retrieve(
                 billing.stripe_subscription_id,
                 expand=["items"],
             )
         except stripe_error.StripeError as e:
-            return Response(
-                {"detail": "Stripe error while retrieving subscription.", "stripe_error": str(e)},
-                status=502,
-            )
+            return Response({"detail": "Stripe error retrieving subscription.", "stripe_error": str(e)}, status=502)
 
-        # ✅ If already canceled, do not modify (same behavior as your code)
-        if sub.get("status") == "canceled":
+        # If already canceled, do not modify
+        if current.get("status") == "canceled":
             billing.subscription_status = "canceled"
-            billing.current_period_end = subscription_period_end_dt(sub) or billing.current_period_end
+            pe = subscription_period_end_dt(current)
+            if pe is not None:
+                billing.current_period_end = pe
             billing.save(update_fields=["subscription_status", "current_period_end", "updated_at"])
 
             return Response({
                 "detail": "Subscription is already canceled.",
                 "status": "canceled",
-                "cancel_at_period_end": sub.get("cancel_at_period_end"),
+                "cancel_at_period_end": current.get("cancel_at_period_end"),
                 "current_period_end": billing.current_period_end,
             }, status=200)
 
-        # Otherwise we can update cancellation settings (safe)
+        # Otherwise, update cancel_at_period_end
         try:
             sub = stripe.Subscription.modify(
                 billing.stripe_subscription_id,
@@ -813,15 +891,9 @@ class CancelSubscriptionView(APIView):
                 expand=["items"],
             )
         except stripe_error.InvalidRequestError as e:
-            return Response(
-                {"detail": "Cannot update cancellation for this subscription.", "stripe_error": str(e)},
-                status=409,
-            )
+            return Response({"detail": "Cannot update cancellation for this subscription.", "stripe_error": str(e)}, status=409)
         except stripe_error.StripeError as e:
-            return Response(
-                {"detail": "Stripe error while updating cancellation.", "stripe_error": str(e)},
-                status=502,
-            )
+            return Response({"detail": "Stripe error updating cancellation.", "stripe_error": str(e)}, status=502)
 
         billing.subscription_status = sub.get("status") or billing.subscription_status
         pe = subscription_period_end_dt(sub)
@@ -836,11 +908,10 @@ class CancelSubscriptionView(APIView):
         })
 
 
-
-
 class ResumeSubscriptionView(APIView):
     """
-    POST -> undo cancel_at_period_end
+    POST -> undo cancel_at_period_end (ONLY works if subscription is still active/trialing).
+    If already canceled, user must subscribe again.
     """
     permission_classes = [IsAuthenticated]
 
@@ -849,17 +920,13 @@ class ResumeSubscriptionView(APIView):
         if not billing or not billing.stripe_subscription_id:
             return Response({"detail": "No subscription found."}, status=400)
 
-        # read Stripe truth first
         try:
             current = stripe.Subscription.retrieve(
                 billing.stripe_subscription_id,
                 expand=["items"],
             )
         except stripe_error.StripeError as e:
-            return Response(
-                {"detail": "Stripe error while retrieving subscription.", "stripe_error": str(e)},
-                status=502,
-            )
+            return Response({"detail": "Stripe error retrieving subscription.", "stripe_error": str(e)}, status=502)
 
         if current.get("status") == "canceled":
             return Response(
@@ -867,7 +934,6 @@ class ResumeSubscriptionView(APIView):
                 status=409,
             )
 
-        # now it's safe to resume
         try:
             sub = stripe.Subscription.modify(
                 billing.stripe_subscription_id,
@@ -875,15 +941,9 @@ class ResumeSubscriptionView(APIView):
                 expand=["items"],
             )
         except stripe_error.InvalidRequestError as e:
-            return Response(
-                {"detail": "Cannot resume this subscription.", "stripe_error": str(e)},
-                status=409,
-            )
+            return Response({"detail": "Cannot resume this subscription.", "stripe_error": str(e)}, status=409)
         except stripe_error.StripeError as e:
-            return Response(
-                {"detail": "Stripe error while resuming subscription.", "stripe_error": str(e)},
-                status=502,
-            )
+            return Response({"detail": "Stripe error resuming subscription.", "stripe_error": str(e)}, status=502)
 
         billing.subscription_status = sub.get("status") or billing.subscription_status
         pe = subscription_period_end_dt(sub)

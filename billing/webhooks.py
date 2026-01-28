@@ -137,6 +137,7 @@
 
 
 
+# billing/webhooks.py
 import json
 import stripe
 
@@ -146,10 +147,13 @@ from django.http import HttpResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
+from stripe import error as stripe_error
+
 from .models import BillingProfile, StripeEvent
 from .utils import subscription_period_end_dt, ts_to_dt
 
 stripe.api_key = settings.STRIPE_SECRET_KEY
+
 _MISSING = object()
 
 
@@ -161,11 +165,20 @@ def _json_safe(obj):
 
 
 def _subscription_price_id(sub_obj):
+    """
+    Returns the Stripe Price ID from a Subscription object (dict).
+    Handles both expanded and non-expanded price shapes.
+    """
     items = (sub_obj.get("items") or {}).get("data") or []
     if not items:
         return None
-    price = items[0].get("price") or {}
-    return price.get("id") if isinstance(price, dict) else None
+
+    price = items[0].get("price")
+    if isinstance(price, str):
+        return price
+    if isinstance(price, dict):
+        return price.get("id")
+    return None
 
 
 def _plan_id_from_price_id(price_id: str | None):
@@ -189,12 +202,17 @@ def _update_billing(
     pending_change_at=_MISSING,
     stripe_schedule_id=_MISSING,
 ):
+    """
+    Update BillingProfile without overwriting fields unless we explicitly intend to.
+    Use _MISSING sentinel to mean "don't touch this field".
+    """
     qs = BillingProfile.objects.none()
 
     if sub_id:
         qs = BillingProfile.objects.filter(stripe_subscription_id=sub_id)
     if (not qs.exists()) and customer_id:
         qs = BillingProfile.objects.filter(stripe_customer_id=customer_id)
+
     if not qs.exists():
         return
 
@@ -240,7 +258,7 @@ def stripe_webhook(request):
             sig_header,
             settings.STRIPE_WEBHOOK_SECRET,
         )
-    except (ValueError, stripe.error.SignatureVerificationError):
+    except (ValueError, stripe_error.SignatureVerificationError):
         return HttpResponse(status=400)
 
     # De-dupe (race safe)
@@ -258,7 +276,9 @@ def stripe_webhook(request):
     event_type = event["type"]
     obj = event["data"]["object"]
 
-    # Optional: if you use schedules for downgrades, track pending changes
+    # -----------------------------
+    # SubscriptionSchedule events (downgrades)
+    # -----------------------------
     if event_type.startswith("subscription_schedule."):
         sched = obj
         sub_id = sched.get("subscription")
@@ -271,8 +291,8 @@ def stripe_webhook(request):
             next_phase = phases[1]
             items = next_phase.get("items") or []
             if items:
-                price = items[0].get("price") or {}
-                price_id = price.get("id") if isinstance(price, dict) else None
+                price = items[0].get("price")
+                price_id = price.get("id") if isinstance(price, dict) else (price if isinstance(price, str) else None)
                 pending_plan = _plan_id_from_price_id(price_id)
             pending_at = ts_to_dt(next_phase.get("start_date"))
 
@@ -284,7 +304,12 @@ def stripe_webhook(request):
                 pending_change_at=pending_at,
             )
 
-        if event_type == "subscription_schedule.released" and sub_id:
+        # Clear schedule info when it ends/releases
+        if event_type in (
+            "subscription_schedule.released",
+            "subscription_schedule.canceled",
+            "subscription_schedule.completed",
+        ) and sub_id:
             _update_billing(
                 sub_id=sub_id,
                 pending_plan_id=None,
@@ -294,7 +319,9 @@ def stripe_webhook(request):
 
         return HttpResponse(status=200)
 
-    # Subscription state sync
+    # -----------------------------
+    # customer.subscription.* events
+    # -----------------------------
     if event_type.startswith("customer.subscription."):
         sub_id = obj.get("id")
         customer_id = obj.get("customer")
@@ -304,8 +331,10 @@ def stripe_webhook(request):
         price_id = _subscription_price_id(obj)
         plan_id = _plan_id_from_price_id(price_id)
 
-        # If items/period_end missing in event payload, fetch the subscription once
-        if (period_end is None or price_id is None) and sub_id:
+        pending_update = obj.get("pending_update")
+
+        # Fetch full subscription only when needed
+        if sub_id and (period_end is None or price_id is None or pending_update is None):
             sub = _retrieve_subscription(sub_id)
             if sub:
                 period_end = period_end or subscription_period_end_dt(sub)
@@ -313,8 +342,11 @@ def stripe_webhook(request):
                 status = sub.get("status") or status
                 price_id = price_id or _subscription_price_id(sub)
                 plan_id = plan_id or _plan_id_from_price_id(price_id)
+                if pending_update is None:
+                    pending_update = sub.get("pending_update")
 
-        # If subscription actually changed now, clear pending info
+        clear_pending = not bool(pending_update)
+
         _update_billing(
             sub_id=sub_id,
             customer_id=customer_id,
@@ -322,13 +354,15 @@ def stripe_webhook(request):
             period_end=period_end,
             plan_id=plan_id if plan_id is not None else _MISSING,
             stripe_price_id=price_id if price_id is not None else _MISSING,
-            pending_plan_id=None,
-            pending_change_at=None,
-            stripe_schedule_id=None,
+            pending_plan_id=None if clear_pending else _MISSING,
+            pending_change_at=None if clear_pending else _MISSING,
+            # IMPORTANT: don't wipe stripe_schedule_id here
         )
         return HttpResponse(status=200)
 
-    # Invoice events (payment success/fail/action required)
+    # -----------------------------
+    # Invoice events (payment state)
+    # -----------------------------
     if event_type in ("invoice.paid", "invoice.payment_failed", "invoice.payment_action_required"):
         sub_id = obj.get("subscription")
         if not sub_id:
@@ -341,6 +375,8 @@ def stripe_webhook(request):
         price_id = _subscription_price_id(sub)
         plan_id = _plan_id_from_price_id(price_id)
 
+        clear_pending = not bool(sub.get("pending_update"))
+
         _update_billing(
             sub_id=sub_id,
             customer_id=sub.get("customer"),
@@ -348,8 +384,12 @@ def stripe_webhook(request):
             period_end=subscription_period_end_dt(sub),
             plan_id=plan_id if plan_id is not None else _MISSING,
             stripe_price_id=price_id if price_id is not None else _MISSING,
+            pending_plan_id=None if clear_pending else _MISSING,
+            pending_change_at=None if clear_pending else _MISSING,
         )
         return HttpResponse(status=200)
 
     return HttpResponse(status=200)
+
+
 
