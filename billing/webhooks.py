@@ -168,16 +168,16 @@ def _subscription_price_id(sub_obj):
     """
     Returns the Stripe Price ID from a Subscription object (dict).
     Handles both expanded and non-expanded price shapes.
+
+    NOTE: Slightly safer than items[0] only: we pick the first item with a usable price id.
     """
     items = (sub_obj.get("items") or {}).get("data") or []
-    if not items:
-        return None
-
-    price = items[0].get("price")
-    if isinstance(price, str):
-        return price
-    if isinstance(price, dict):
-        return price.get("id")
+    for item in items:
+        price = item.get("price")
+        if isinstance(price, str) and price:
+            return price
+        if isinstance(price, dict) and price.get("id"):
+            return price.get("id")
     return None
 
 
@@ -242,6 +242,7 @@ def _update_billing(
 
 def _retrieve_subscription(sub_id: str):
     try:
+        # keep expand minimal; items is enough for price id
         return stripe.Subscription.retrieve(sub_id, expand=["items"])
     except Exception:
         return None
@@ -347,13 +348,18 @@ def stripe_webhook(request):
 
         clear_pending = not bool(pending_update)
 
+        # IMPORTANT FIX:
+        # If Stripe gave us a price_id, we also write plan_id derived from it (even if None).
+        plan_field = plan_id if price_id is not None else _MISSING
+        price_field = price_id if price_id is not None else _MISSING
+
         _update_billing(
             sub_id=sub_id,
             customer_id=customer_id,
             status=status,
             period_end=period_end,
-            plan_id=plan_id if plan_id is not None else _MISSING,
-            stripe_price_id=price_id if price_id is not None else _MISSING,
+            plan_id=plan_field,
+            stripe_price_id=price_field,
             pending_plan_id=None if clear_pending else _MISSING,
             pending_change_at=None if clear_pending else _MISSING,
             # IMPORTANT: don't wipe stripe_schedule_id here
@@ -377,19 +383,20 @@ def stripe_webhook(request):
 
         clear_pending = not bool(sub.get("pending_update"))
 
+        # IMPORTANT FIX: same rule here
+        plan_field = plan_id if price_id is not None else _MISSING
+        price_field = price_id if price_id is not None else _MISSING
+
         _update_billing(
             sub_id=sub_id,
             customer_id=sub.get("customer"),
             status=sub.get("status", "none"),
             period_end=subscription_period_end_dt(sub),
-            plan_id=plan_id if plan_id is not None else _MISSING,
-            stripe_price_id=price_id if price_id is not None else _MISSING,
+            plan_id=plan_field,
+            stripe_price_id=price_field,
             pending_plan_id=None if clear_pending else _MISSING,
             pending_change_at=None if clear_pending else _MISSING,
         )
         return HttpResponse(status=200)
 
     return HttpResponse(status=200)
-
-
-

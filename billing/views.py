@@ -303,17 +303,19 @@ def _price_id_for_plan(plan_id: str) -> str | None:
 
 def _extract_subscription_item(sub) -> tuple[str | None, str | None]:
     items = (sub.get("items") or {}).get("data") or []
-    if not items:
-        return None, None
-    item = items[0]
-    price = item.get("price")
-    if isinstance(price, dict):
-        price_id = price.get("id")
-    elif isinstance(price, str):
-        price_id = price
-    else:
-        price_id = None
-    return item.get("id"), price_id
+    for item in items:
+        price = item.get("price")
+        if isinstance(price, dict):
+            price_id = price.get("id")
+        elif isinstance(price, str):
+            price_id = price
+        else:
+            price_id = None
+
+        if price_id:
+            return item.get("id"), price_id
+
+    return None, None
 
 
 def _plan_id_from_price_id(price_id: str | None) -> str | None:
@@ -622,9 +624,19 @@ class SubscriptionStatusView(APIView):
                 "pending_change_at": None,
             })
 
-        # self-heal when missing important fields
-        if billing.stripe_subscription_id and (billing.current_period_end is None or not billing.plan_id):
-            billing = _sync_billing_from_stripe(billing)
+        # fallback self-heal (webhook should keep DB accurate, but keep this for safety)
+        if billing.stripe_subscription_id:
+            price_id = getattr(billing, "stripe_price_id", None)
+            expected_plan = _plan_id_from_price_id(price_id) if price_id else None
+
+            if (
+                billing.current_period_end is None
+                or not billing.plan_id
+                or not price_id
+                or (price_id and expected_plan is None)
+                or (expected_plan and billing.plan_id != expected_plan)
+            ):
+                billing = _sync_billing_from_stripe(billing)
 
         return Response({
             "is_active": billing.is_active,
@@ -816,8 +828,6 @@ class ChangePlanView(APIView):
         })
 
 
-
-
 class CustomerPortalView(APIView):
     """
     POST -> returns { url } to open Stripe Customer Portal in a WebView (optional).
@@ -956,5 +966,3 @@ class ResumeSubscriptionView(APIView):
             "cancel_at_period_end": sub.get("cancel_at_period_end"),
             "current_period_end": billing.current_period_end,
         })
-
-
