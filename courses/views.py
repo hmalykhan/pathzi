@@ -66,66 +66,66 @@ class CoursesView(viewsets.ModelViewSet):
 
         return Response({"error": "Course was not saved."}, status=status.HTTP_404_NOT_FOUND)
 
-    def get_queryset(self):
-        user = getattr(self.request, "user", None)
-        if not user or not user.is_authenticated:
-            return Course.objects.none()
+    # def get_queryset(self):
+    #     user = getattr(self.request, "user", None)
+    #     if not user or not user.is_authenticated:
+    #         return Course.objects.none()
 
-        profile = UserProfile.objects.filter(appuser=user).first()
-        if not profile:
-            return Course.objects.none()
+    #     profile = UserProfile.objects.filter(appuser=user).first()
+    #     if not profile:
+    #         return Course.objects.none()
 
-        # ---------- category filter (case-insensitive) ----------
-        categories = profile.category or []
-        if isinstance(categories, str):
-            categories = [categories]
-        categories = [c.strip().lower() for c in categories if c and c.strip()]
-        if not categories:
-            return Course.objects.none()
+    #     # ---------- category filter (case-insensitive) ----------
+    #     categories = profile.category or []
+    #     if isinstance(categories, str):
+    #         categories = [categories]
+    #     categories = [c.strip().lower() for c in categories if c and c.strip()]
+    #     if not categories:
+    #         return Course.objects.none()
 
-        base_qs = Course.objects.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
+    #     base_qs = Course.objects.annotate(cat_l=Lower("category")).filter(cat_l__in=categories)
 
-        # ---------- build words from country/city/zip ----------
-        country = (getattr(profile, "country", None) or "").strip().lower()
-        city = (getattr(profile, "city", None) or "").strip().lower()
-        postal = (getattr(profile, "zip_code", None) or "").strip().lower()
+    #     # ---------- build words from country/city/zip ----------
+    #     country = (getattr(profile, "country", None) or "").strip().lower()
+    #     city = (getattr(profile, "city", None) or "").strip().lower()
+    #     postal = (getattr(profile, "zip_code", None) or "").strip().lower()
 
-        profile_text = " ".join([x for x in [country, city, postal] if x])
-        words = [w for w in re.split(r"[^a-z0-9]+", profile_text) if w]
-        words = list(dict.fromkeys(words))  # dedupe keep order
+    #     profile_text = " ".join([x for x in [country, city, postal] if x])
+    #     words = [w for w in re.split(r"[^a-z0-9]+", profile_text) if w]
+    #     words = list(dict.fromkeys(words))  # dedupe keep order
 
-        if not words:
-            return Course.objects.none()
+    #     if not words:
+    #         return Course.objects.none()
 
-        THRESHOLD = 2 if len(words) >= 2 else 1
+    #     THRESHOLD = 2 if len(words) >= 2 else 1
 
-        # ---------- normalize course address to loc_n ----------
-        empty_text = Value("", output_field=TextField())
-        addr = Coalesce(Cast("address", output_field=TextField()), empty_text, output_field=TextField())
-        addr = Lower(Trim(addr))
+    #     # ---------- normalize course address to loc_n ----------
+    #     empty_text = Value("", output_field=TextField())
+    #     addr = Coalesce(Cast("address", output_field=TextField()), empty_text, output_field=TextField())
+    #     addr = Lower(Trim(addr))
 
-        # remove spaces + common separators (same logic you had)
-        for ch in [" ", "\n", "\t", "\r", ",", ".", "-", "/", "#"]:
-            addr = Replace(
-                addr,
-                Value(ch, output_field=TextField()),
-                empty_text,
-                output_field=TextField(),
-            )
+    #     # remove spaces + common separators (same logic you had)
+    #     for ch in [" ", "\n", "\t", "\r", ",", ".", "-", "/", "#"]:
+    #         addr = Replace(
+    #             addr,
+    #             Value(ch, output_field=TextField()),
+    #             empty_text,
+    #             output_field=TextField(),
+    #         )
 
-        addr = Cast(addr, output_field=TextField())
+    #     addr = Cast(addr, output_field=TextField())
 
-        qs = base_qs.annotate(loc_n=addr).exclude(loc_n="")
+    #     qs = base_qs.annotate(loc_n=addr).exclude(loc_n="")
 
-        # ---------- match_count = number of words found in loc_n ----------
-        match_expr = Value(0, output_field=IntegerField())
-        for w in words:
-            match_expr += Case(
-                When(loc_n__contains=w, then=Value(1)),
-                default=Value(0),
-                output_field=IntegerField(),
-            )
+    #     # ---------- match_count = number of words found in loc_n ----------
+    #     match_expr = Value(0, output_field=IntegerField())
+    #     for w in words:
+    #         match_expr += Case(
+    #             When(loc_n__contains=w, then=Value(1)),
+    #             default=Value(0),
+    #             output_field=IntegerField(),
+    #         )
 
-        qs = qs.annotate(match_count=match_expr)
+    #     qs = qs.annotate(match_count=match_expr)
 
-        return qs.filter(match_count__gte=THRESHOLD).order_by("-match_count")
+    #     return qs.filter(match_count__gte=THRESHOLD).order_by("-match_count")
