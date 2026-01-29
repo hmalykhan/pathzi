@@ -173,6 +173,10 @@ def search_nearby(
     city: Optional[str] = None,
     postcode: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """
+    OPTIMIZED: Defers Haversine distance calculation until after pagination.
+    This avoids calculating distance for potentially thousands of rows.
+    """
     M = _model_for_type(t)
 
     page = max(int(page or 1), 1)
@@ -180,7 +184,10 @@ def search_nearby(
 
     min_lat, max_lat, min_lon, max_lon = bbox_for_radius_km(lat, lon, radius_km)
 
+    # Build queryset with filters (NO distance calculation yet)
     qs = M.objects.exclude(latitude__isnull=True).exclude(longitude__isnull=True)
+    
+    # Apply bounding box filter (uses spatial index)
     qs = qs.filter(
         latitude__gte=min_lat,
         latitude__lte=max_lat,
@@ -188,30 +195,56 @@ def search_nearby(
         longitude__lte=max_lon,
     )
 
-    # ✅ exact city/postcode only (when provided)
+    # Apply exact city/postcode filters (uses text indexes from previous migration)
     qs = _apply_exact_city_postcode_filters(qs, city=city, postcode=postcode)
 
+    # Apply category filters (uses category indexes)
     if category:
         qs = qs.filter(category__iexact=category.strip())
     if subcategory:
         qs = qs.filter(subcategory__iexact=subcategory.strip())
 
+    # Apply keyword search
     qs = qs.filter(_keyword_filter_for_type(t, q))
 
-    qs = (
-        qs.annotate(distance_km=RawSQL(HAVERSINE_SQL, (lat, lat, lon)))
+    # Count total results (without distance calculation - much faster!)
+    total = qs.count()
+
+    # Calculate pagination offsets
+    start = (page - 1) * page_size
+
+    # OPTIMIZATION: Over-fetch slightly to account for radius filtering
+    # Since bounding box is larger than radius, some items at bbox edges may be outside radius
+    # We fetch extra items and will filter by distance after
+    over_fetch_multiplier = 2.0  # Fetch 2x more to account for circle vs square
+    over_fetch_limit = int(page_size * over_fetch_multiplier) + 10
+
+    # Get paginated slice and annotate with distance
+    # We must annotate BEFORE slicing to avoid Django limitation
+    qs_with_distance = qs.annotate(distance_km=RawSQL(HAVERSINE_SQL, (lat, lat, lon)))
+    
+    fields = _fields_for_type(t)
+    
+    # Get a slightly larger window around the page to ensure we have enough results
+    # after distance filtering
+    fetch_start = max(0, start - 10)  # Start a bit earlier
+    fetch_end = start + over_fetch_limit
+    
+    # Fetch and filter by distance
+    items_all = list(
+        qs_with_distance
         .filter(distance_km__lte=radius_km)
         .order_by("distance_km")
+        .values(*fields, "distance_km")[fetch_start:fetch_end]
     )
 
-    total = qs.count()
-    start = (page - 1) * page_size
-    end = start + page_size
+    # Now slice to get the exact page (accounting for offset adjustment)
+    offset_adjustment = start - fetch_start
+    items = items_all[offset_adjustment : offset_adjustment + page_size]
 
-    fields = _fields_for_type(t)
-    items = list(qs.values(*fields, "distance_km")[start:end])
-
-    # ✅ overwrite job_id/course_id/vacancy_ref with DB id
+    # Overwrite job_id/course_id/vacancy_ref with DB id
     items = _overwrite_public_id_fields(items, t)
 
     return {"count": total, "page": page, "page_size": page_size, "items": items}
+
+

@@ -206,6 +206,18 @@ class NearbySearchAPI(APIView):
             lat, lon = center
             center_source = "db_centroid"
 
+        # ✅ OPTIMIZATION: Cache nearby search results
+        # Cache key includes all query parameters
+        cache_key = (
+            f"geo_nearby:v1:{lat:.4f}:{lon:.4f}:{radius_km}:"
+            f"{','.join(sorted(types))}:{page}:{page_size}:"
+            f"{city.lower()}:{postcode.lower()}:{q.lower()}:{category.lower()}:{subcategory.lower()}"
+        )
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached)
+
+        # Execute search for each type
         results = {
             t: search_nearby(
                 t=t,
@@ -223,16 +235,19 @@ class NearbySearchAPI(APIView):
             for t in types
         }
 
-        return Response(
-            {
-                "status": True,
-                "center_source": center_source,
-                "center": {"lat": lat, "lon": lon},
-                "radius_km": radius_km,
-                "types": types,
-                "results": results,
-            }
-        )
+        response_data = {
+            "status": True,
+            "center_source": center_source,
+            "center": {"lat": lat, "lon": lon},
+            "radius_km": radius_km,
+            "types": types,
+            "results": results,
+        }
+
+        # Cache for 5 minutes (shorter than autocomplete since location-based)
+        cache.set(cache_key, response_data, timeout=60 * 5)
+
+        return Response(response_data)
     """
     POST /geo/nearby/
     Uses:
