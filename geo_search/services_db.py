@@ -21,26 +21,41 @@ def db_suggest_distinct(field: str, text: str, types: List[str], limit: int = 8)
     """
     Autocomplete suggestions from DB (prefix first, fallback contains).
     field: 'city' or 'zip_code'
+    
+    OPTIMIZED: Uses UNION queries to fetch from all models in a single database round-trip.
     """
     models = get_models_for_types(types)
     text = (text or "").strip()
-    if not text:
+    if not text or not models:
         return []
 
-    seen = set()
-    out = []
-
-    # 1) prefix match
-    for M in models:
-        qs = (
-            M.objects.exclude(**{f"{field}__isnull": True})
+    # Helper to build a queryset for a single model
+    def build_qs(model, lookup_type):
+        return (
+            model.objects
+            .exclude(**{f"{field}__isnull": True})
             .exclude(**{field: ""})
-            .filter(**{f"{field}__istartswith": text})
+            .filter(**{f"{field}__{lookup_type}": text})
             .values_list(field, flat=True)
             .distinct()
-            .order_by(field)[:limit]
+            .order_by(field)[:limit * 2]  # Get extra to allow deduplication
         )
-        for v in qs:
+
+    # Phase 1: Try prefix match (istartswith) with UNION
+    prefix_qs = None
+    for M in models:
+        qs = build_qs(M, "istartswith")
+        if prefix_qs is None:
+            prefix_qs = qs
+        else:
+            prefix_qs = prefix_qs.union(qs)
+    
+    # Execute and deduplicate
+    seen = set()
+    out = []
+    
+    if prefix_qs:
+        for v in prefix_qs:
             v = (v or "").strip()
             if not v:
                 continue
@@ -56,18 +71,18 @@ def db_suggest_distinct(field: str, text: str, types: List[str], limit: int = 8)
             if len(out) >= limit:
                 return out
 
-    # 2) fallback contains
+    # Phase 2: Fallback to contains match (icontains) if prefix didn't yield results
     if not out:
+        contains_qs = None
         for M in models:
-            qs = (
-                M.objects.exclude(**{f"{field}__isnull": True})
-                .exclude(**{field: ""})
-                .filter(**{f"{field}__icontains": text})
-                .values_list(field, flat=True)
-                .distinct()
-                .order_by(field)[:limit]
-            )
-            for v in qs:
+            qs = build_qs(M, "icontains")
+            if contains_qs is None:
+                contains_qs = qs
+            else:
+                contains_qs = contains_qs.union(qs)
+        
+        if contains_qs:
+            for v in contains_qs:
                 v = (v or "").strip()
                 if not v:
                     continue
@@ -84,6 +99,7 @@ def db_suggest_distinct(field: str, text: str, types: List[str], limit: int = 8)
                     return out
 
     return out
+
 
 def db_list_distinct_with_counts(field: str, types: List[str], q: str = "", limit: int = 500) -> List[Dict]:
     """
