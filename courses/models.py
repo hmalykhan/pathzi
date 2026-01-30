@@ -89,6 +89,7 @@ class NcsCourse(models.Model):
 
     cost = models.CharField(max_length=255, blank=True, default="")
     cost_description = models.TextField(blank=True, default="")
+    requirement_summery = models.TextField(blank=True, default="")
 
     scraped_at = models.DateTimeField()
 

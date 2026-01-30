@@ -166,6 +166,7 @@ class DwpJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
                     "summary_bullets",
                     "what_youll_do",
                     "skills_youll_need",
+                    "requirement_summery",
                     "raw_text",
                 )
             },

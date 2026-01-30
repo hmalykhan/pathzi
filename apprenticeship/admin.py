@@ -93,6 +93,7 @@ class ApprenticeshipVacancyAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
             {
                 "fields": (
                     "summary_text",
+                    "requirement_summery",
                     "wage",
                     "wage_extra",
                     "training_course",

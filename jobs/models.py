@@ -63,6 +63,7 @@ class DwpJob(models.Model):
 
     what_youll_do = models.TextField(blank=True, default="")
     skills_youll_need = models.TextField(blank=True, default="")
+    requirement_summery = models.TextField(blank=True, default="")
 
     raw_text = models.TextField(blank=True, default="")
 

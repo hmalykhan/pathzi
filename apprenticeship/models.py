@@ -44,6 +44,7 @@ class ApprenticeshipVacancy(models.Model):
     posted_text = models.CharField(max_length=255)
 
     summary_text = models.TextField()
+    requirement_summery = models.TextField(blank=True, default="")
 
     wage = models.CharField(max_length=255)
     wage_extra = models.TextField()

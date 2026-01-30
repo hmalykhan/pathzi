@@ -138,6 +138,7 @@ class NcsCourseAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
                     "duration",
                     "cost",
                     "cost_description",
+                    "requirement_summery",
                     "course_description",
                 )
             },
