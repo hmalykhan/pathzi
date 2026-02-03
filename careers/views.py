@@ -1,3 +1,4 @@
+# For payment method uncomment 161, 161, 176, 177
 import re
 from django.db.models import Subquery, TextField, Value
 from django.db.models.functions import Cast, Coalesce, Lower, Replace, Trim
@@ -156,7 +157,7 @@ class CareersView(viewsets.ModelViewSet):
         qs = self._filtered_base_queryset().order_by("id")
 
         # list must show only 5 for free users
-        # if getattr(self, "action", None) == "list" and not self._is_subscribed():
+        # if getattr(self, "action", None) -m ""== "list" and not self._is_subscribed():
             # qs = qs[:FREE_CAREER_LIMIT]
 
         return qs
@@ -172,8 +173,8 @@ class CareersView(viewsets.ModelViewSet):
             return obj
 
         allowed = Career.objects.filter(id=obj.id, id__in=Subquery(self._allowed_ids_subquery())).exists()
-        if not allowed:
-            raise NotFound("Not found.")
+        # if not allowed:
+            # raise NotFound("Not found.")
         return obj
 
     # -----------------------

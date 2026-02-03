@@ -150,9 +150,25 @@ class JobsSerializer(serializers.ModelSerializer):
             ignore_conflicts=True,
         )
 
+    # def update(self, instance, validated_data):
+    #     print("VALIDATED:", validated_data)
+    #     profiles = validated_data.pop("user_profile_id", None)
+    #     if profiles is not None:
+    #         self._sync_links(instance, profiles)
+    #     return instance
+
     def update(self, instance, validated_data):
-        print("VALIDATED:", validated_data)
         profiles = validated_data.pop("user_profile_id", None)
+
+        # ✅ update model fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        if validated_data:
+            instance.save(update_fields=list(validated_data.keys()))
+
+        # ✅ update link table if provided
         if profiles is not None:
             self._sync_links(instance, profiles)
+
         return instance
