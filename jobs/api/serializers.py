@@ -22,9 +22,6 @@
 
 
 
-
-
-# jobs/serializers.py
 # jobs/serializers.py
 from django.db.models import QuerySet
 from rest_framework import serializers
@@ -40,6 +37,12 @@ class UserProfileNestedSerializer(serializers.ModelSerializer):
 
 
 class JobsSerializer(serializers.ModelSerializer):
+
+    ADMIN_WRITABLE_FIELDS = {
+        "city", "state", "zip_code", "latitude", "longitude",
+        "user_profile_id",  # if you still want this
+    }
+
     user_profile = serializers.SerializerMethodField(read_only=True)
 
     user_profile_id = serializers.PrimaryKeyRelatedField(
@@ -69,6 +72,11 @@ class JobsSerializer(serializers.ModelSerializer):
         for name, field in self.fields.items():
             if name not in ("user_profile", "user_profile_id"):
                 field.read_only = True
+
+        if request and request.user.is_authenticated and request.user.is_staff:
+            for name in self.ADMIN_WRITABLE_FIELDS:
+                if name in self.fields:
+                    self.fields[name].read_only = False
 
         # ✅ PERF: avoid N+1 when serializer is used with many=True
         self._profiles_by_job_id = None
@@ -143,6 +151,7 @@ class JobsSerializer(serializers.ModelSerializer):
         )
 
     def update(self, instance, validated_data):
+        print("VALIDATED:", validated_data)
         profiles = validated_data.pop("user_profile_id", None)
         if profiles is not None:
             self._sync_links(instance, profiles)

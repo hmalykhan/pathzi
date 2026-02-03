@@ -40,9 +40,7 @@ class CourseScrapeLog(models.Model):
     postcode = models.CharField(max_length=64, blank=True, default="")
     distance = models.IntegerField(default=0)
     start_url = models.URLField(max_length=1000, blank=True, default="")
-
     course_id = models.UUIDField(null=True, blank=True, db_index=True)
-
     status = models.CharField(max_length=20, default="")
     message = models.TextField(blank=True, default="")
 
