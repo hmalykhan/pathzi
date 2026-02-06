@@ -27,7 +27,6 @@ from apprenticeship.api.serializers import ApprenticeshipSerializer
 
 FREE_CAREER_LIMIT = 5
 
-
 class CareersView(viewsets.ModelViewSet):
     serializer_class = CareerDetailSerializer
     permission_classes = [CareerPermission]

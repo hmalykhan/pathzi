@@ -31,7 +31,7 @@ class CareerScrapeLogAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     readonly_fields = ("created_at",)
 
 
-# --- Career job admin (same as project 1 style + image previews) ---
+# --- Career job admin (read-only + image previews prefer dg_image_url) ---
 @admin.register(CareerJob)
 class CareerJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = (
@@ -46,7 +46,7 @@ class CareerJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
         "last_scrape_status",
         "last_checked_at",
     )
-    search_fields = ("jobname", "sub_type", "job_slug", "job_url", "image_url")
+    search_fields = ("jobname", "sub_type", "job_slug", "job_url", "image_url", "dg_image_url")
     list_filter = ("career_type", "sub_type", "last_scrape_status")
     ordering = ("-scraped_at",)
 
@@ -61,22 +61,53 @@ class CareerJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
 
     fieldsets = (
         ("Identity", {"fields": ("career_type", "sub_type", "job_slug", "job_url")}),
-        ("Image", {"fields": ("image_url", "image_preview_large")}),
+        # show both urls, but previews/open prefer dg_image_url
+        ("Image", {"fields": ("image_url", "dg_image_url", "image_preview_large")}),
         ("Profile", {"fields": ("jobname", "job_description", "salary", "hours", "timings")}),
-        ("How to become", {"fields": ("how_to_become", "college", "college_entry_req", "apprenticeship", "apprenticeship_entry_req")}),
-        ("Meta", {"fields": ("scraped_at", "last_checked_at", "last_scrape_status", "last_scrape_message", "last_scrape_run_id")}),
+        (
+            "How to become",
+            {
+                "fields": (
+                    "how_to_become",
+                    "college",
+                    "college_entry_req",
+                    "apprenticeship",
+                    "apprenticeship_entry_req",
+                )
+            },
+        ),
+        (
+            "Meta",
+            {
+                "fields": (
+                    "scraped_at",
+                    "last_checked_at",
+                    "last_scrape_status",
+                    "last_scrape_message",
+                    "last_scrape_run_id",
+                )
+            },
+        ),
     )
 
+    # ---- helpers (display only; keeps image_url unchanged) ----
+    def _preferred_image_url(self, obj: CareerJob) -> str:
+        dg = (getattr(obj, "dg_image_url", "") or "").strip()
+        if dg:
+            return dg
+        return (getattr(obj, "image_url", "") or "").strip()
+
     def image_open_link(self, obj: CareerJob):
-        url = (getattr(obj, "image_url", "") or "").strip()
+        url = self._preferred_image_url(obj)
         if not url:
             return "-"
-        return format_html('<a href="{}" target="_blank" rel="noopener">open</a>', url)
+        label = "open (DO)" if (getattr(obj, "dg_image_url", "") or "").strip() else "open (Cloudinary)"
+        return format_html('<a href="{}" target="_blank" rel="noopener">{}</a>', url, label)
 
     image_open_link.short_description = "image"
 
     def image_preview_thumb(self, obj: CareerJob):
-        url = (getattr(obj, "image_url", "") or "").strip()
+        url = self._preferred_image_url(obj)
         if not url:
             return "-"
         return format_html(
@@ -87,9 +118,9 @@ class CareerJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     image_preview_thumb.short_description = "preview"
 
     def image_preview_large(self, obj: CareerJob):
-        url = (getattr(obj, "image_url", "") or "").strip()
+        url = self._preferred_image_url(obj)
         if not url:
-            return "No image_url"
+            return "No image_url / dg_image_url"
         return format_html(
             '<div style="margin-top:8px">'
             '<img src="{}" style="max-height:320px;max-width:320px;object-fit:cover;border-radius:10px;border:1px solid #ddd;" />'
