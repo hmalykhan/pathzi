@@ -179,28 +179,96 @@ class CareersView(viewsets.ModelViewSet):
     # -----------------------
     # ✅ Report endpoint (unchanged)
     # -----------------------
+    # @action(detail=True, methods=["GET", "PUT"], url_path="report")
+    # def report(self, request, pk=None):
+    #     career = self.get_object()
+    #     profile = self._get_or_create_profile()
+
+    #     link = UserSavedCareer.objects.filter(
+    #         user_profile=profile,
+    #         career_id=career.id,
+    #     ).first()
+
+    #     if not link:
+    #         return Response(
+    #             {"detail": "Career is not saved. Save career first."},
+    #             status=status.HTTP_400_BAD_REQUEST,
+    #         )
+
+    #     if request.method == "GET":
+    #         return Response(
+    #             {
+    #                 "report_status": bool(link.report_status),
+    #                 "report": link.report or {},
+    #                 "generated_at": link.generated_at,
+    #             },
+    #             status=status.HTTP_200_OK,
+    #         )
+
+    #     if "career_id" in request.data:
+    #         return Response(
+    #             {"detail": "career_id is not allowed in request body."},
+    #             status=status.HTTP_400_BAD_REQUEST,
+    #         )
+    #     if "generated_at" in request.data:
+    #         return Response(
+    #             {"detail": "generated_at is not allowed in request body."},
+    #             status=status.HTTP_400_BAD_REQUEST,
+    #         )
+
+    #     report_data = request.data.get("report", None)
+    #     if report_data is None:
+    #         return Response(
+    #             {"detail": "report is required"},
+    #             status=status.HTTP_400_BAD_REQUEST,
+    #         )
+
+    #     link.report = report_data
+    #     link.report_status = True
+    #     link.generated_at = timezone.now()
+    #     link.save(update_fields=["report", "report_status", "generated_at"])
+
+    #     return Response(
+    #         {
+    #             "report_status": bool(link.report_status),
+    #             "report": link.report,
+    #             "generated_at": link.generated_at,
+    #         },
+    #         status=status.HTTP_200_OK,
+    #     )
+
     @action(detail=True, methods=["GET", "PUT"], url_path="report")
     def report(self, request, pk=None):
-        career = self.get_object()
+        # Match DRF get_object() behavior: invalid pk => 404 {"detail":"Not found."}
+        try:
+            career_id = int(pk)
+        except (TypeError, ValueError):
+            raise NotFound()
+
         profile = self._get_or_create_profile()
 
-        link = UserSavedCareer.objects.filter(
-            user_profile=profile,
-            career_id=career.id,
-        ).first()
+        # Cheap exists check (instead of fetching the full Career row)
+        if not Career.objects.filter(id=career_id).exists():
+            raise NotFound()
 
-        if not link:
-            return Response(
-                {"detail": "Career is not saved. Save career first."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        qs = UserSavedCareer.objects.filter(
+            user_profile_id=profile.id,
+            career_id=career_id,
+        )
 
         if request.method == "GET":
+            row = qs.values("report_status", "report", "generated_at").first()
+            if not row:
+                return Response(
+                    {"detail": "Career is not saved. Save career first."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
             return Response(
                 {
-                    "report_status": bool(link.report_status),
-                    "report": link.report or {},
-                    "generated_at": link.generated_at,
+                    "report_status": bool(row["report_status"]),
+                    "report": row["report"] or {},
+                    "generated_at": row["generated_at"],
                 },
                 status=status.HTTP_200_OK,
             )
@@ -223,16 +291,25 @@ class CareersView(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        link.report = report_data
-        link.report_status = True
-        link.generated_at = timezone.now()
-        link.save(update_fields=["report", "report_status", "generated_at"])
+        now = timezone.now()
+
+        updated = qs.update(
+            report=report_data,
+            report_status=True,
+            generated_at=now,
+        )
+
+        if updated == 0:
+            return Response(
+                {"detail": "Career is not saved. Save career first."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         return Response(
             {
-                "report_status": bool(link.report_status),
-                "report": link.report,
-                "generated_at": link.generated_at,
+                "report_status": True,
+                "report": report_data,
+                "generated_at": now,
             },
             status=status.HTTP_200_OK,
         )
