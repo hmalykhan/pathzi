@@ -551,7 +551,7 @@ class ForgotPasswordAPI(APIView):
             # Don't reveal whether user exists
             logger.info("ForgotPassword requested for non-existing email=%s", email)
             return Response(
-                {"status": True, "message": "OTP sent if email exists"},
+                {"status": False, "message": "OTP sent if email exists"},
                 status=status.HTTP_200_OK,
             )
 
