@@ -272,6 +272,7 @@ class CareerDetailSerializer(serializers.ModelSerializer):
             "my_report",  # ✅ added
         )
 
+    # new
     # def __init__(self, *args, **kwargs):
     #     super().__init__(*args, **kwargs)
 
@@ -406,6 +407,7 @@ class CareerDetailSerializer(serializers.ModelSerializer):
             ignore_conflicts=True,
         )
 
+    # old
     @transaction.atomic
     def update(self, instance, validated_data):
         profiles = validated_data.pop("user_profile_id", None)
@@ -413,6 +415,7 @@ class CareerDetailSerializer(serializers.ModelSerializer):
             self._sync_links(instance, profiles)
         return instance
 
+    # new
     # @transaction.atomic
     # def update(self, instance, validated_data):
     #     profiles = validated_data.pop("user_profile_id", None)

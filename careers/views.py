@@ -161,7 +161,8 @@ class CareersView(viewsets.ModelViewSet):
             # qs = qs[:FREE_CAREER_LIMIT]
 
         return qs
-
+    
+    # old
     # def get_object(self):
     #     """
     #     Free users must NOT access careers outside top 5.
@@ -177,6 +178,7 @@ class CareersView(viewsets.ModelViewSet):
     #         # raise NotFound("Not found.")
     #     return obj
 
+    # new
     def get_object(self):
         """
         Free users must NOT access careers outside top 5.

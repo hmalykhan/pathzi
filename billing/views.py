@@ -1022,6 +1022,53 @@ class SubscribeView(APIView):
         expand_fields = ["latest_invoice.confirmation_secret", "pending_setup_intent", "items"]
 
         # 3) Reuse existing incomplete subscription if present
+        # old
+        # if profile.stripe_subscription_id and profile.subscription_status in ("incomplete", "past_due", "unpaid"):
+        #     sub = stripe.Subscription.retrieve(
+        #         profile.stripe_subscription_id,
+        #         expand=expand_fields,
+        #     )
+
+        #     item_id, current_price_id = _extract_subscription_item(sub)
+        #     if item_id and current_price_id and current_price_id != price_id:
+        #         stripe.Subscription.modify(
+        #             sub["id"],
+        #             items=[{"id": item_id, "price": price_id}],
+        #             proration_behavior="none",
+        #             expand=expand_fields,
+        #         )
+        #         sub = stripe.Subscription.retrieve(
+        #             profile.stripe_subscription_id,
+        #             expand=expand_fields,
+        #         )
+
+        #     profile.plan_id = plan_id
+        #     profile.stripe_price_id = price_id
+        #     profile.save(update_fields=["plan_id", "stripe_price_id", "updated_at"])
+
+        #     invoice = _get_invoice(sub)
+        #     pay_cs, hosted_url = _get_client_secret_from_invoice(invoice)
+        #     setup_cs = _get_setup_intent_client_secret(sub)
+
+        #     resp = {
+        #         "plan_id": plan_id,
+        #         "customer_id": profile.stripe_customer_id,
+        #         "ephemeral_key_secret": eph_key["secret"],
+        #         "subscription_id": sub["id"],
+        #     }
+        #     if pay_cs:
+        #         resp["payment_intent_client_secret"] = pay_cs
+        #     if setup_cs:
+        #         resp["setup_intent_client_secret"] = setup_cs
+
+        #     if hosted_url and not (pay_cs or setup_cs):
+        #         resp["hosted_invoice_url"] = hosted_url
+        #         resp["detail"] = "No client_secret found. Use hosted_invoice_url (open in WebView) to complete payment."
+
+        #     return Response(resp, status=200 if (pay_cs or setup_cs or hosted_url) else 400)
+
+
+        # new
         if profile.stripe_subscription_id and profile.subscription_status in ("incomplete", "past_due", "unpaid"):
             sub = stripe.Subscription.retrieve(
                 profile.stripe_subscription_id,
@@ -1029,42 +1076,64 @@ class SubscribeView(APIView):
             )
 
             item_id, current_price_id = _extract_subscription_item(sub)
-            if item_id and current_price_id and current_price_id != price_id:
-                stripe.Subscription.modify(
-                    sub["id"],
-                    items=[{"id": item_id, "price": price_id}],
-                    proration_behavior="none",
-                    expand=expand_fields,
-                )
-                sub = stripe.Subscription.retrieve(
-                    profile.stripe_subscription_id,
-                    expand=expand_fields,
-                )
 
-            profile.plan_id = plan_id
-            profile.stripe_price_id = price_id
-            profile.save(update_fields=["plan_id", "stripe_price_id", "updated_at"])
+            # ✅ If plan changed, cancel old incomplete subscription and create a fresh one
+            if current_price_id and current_price_id != price_id:
+                try:
+                    stripe.Subscription.delete(profile.stripe_subscription_id)
+                except Exception:
+                    pass
 
-            invoice = _get_invoice(sub)
-            pay_cs, hosted_url = _get_client_secret_from_invoice(invoice)
-            setup_cs = _get_setup_intent_client_secret(sub)
+                # Clear only subscription-related fields (keep customer_id)
+                profile.stripe_subscription_id = None
+                profile.subscription_status = "none"
+                profile.current_period_end = None
+                profile.stripe_price_id = None
+                profile.pending_plan_id = None
+                profile.pending_change_at = None
+                profile.stripe_schedule_id = None
+                profile.plan_id = "free"
+                profile.save(update_fields=[
+                    "stripe_subscription_id",
+                    "subscription_status",
+                    "current_period_end",
+                    "stripe_price_id",
+                    "pending_plan_id",
+                    "pending_change_at",
+                    "stripe_schedule_id",
+                    "plan_id",
+                    "updated_at",
+                ])
 
-            resp = {
-                "plan_id": plan_id,
-                "customer_id": profile.stripe_customer_id,
-                "ephemeral_key_secret": eph_key["secret"],
-                "subscription_id": sub["id"],
-            }
-            if pay_cs:
-                resp["payment_intent_client_secret"] = pay_cs
-            if setup_cs:
-                resp["setup_intent_client_secret"] = setup_cs
+                # IMPORTANT: do NOT return; continue to step (4) create NEW subscription
 
-            if hosted_url and not (pay_cs or setup_cs):
-                resp["hosted_invoice_url"] = hosted_url
-                resp["detail"] = "No client_secret found. Use hosted_invoice_url (open in WebView) to complete payment."
+            else:
+                # ✅ Same plan: reuse existing incomplete subscription
+                profile.plan_id = plan_id
+                profile.stripe_price_id = price_id
+                profile.save(update_fields=["plan_id", "stripe_price_id", "updated_at"])
 
-            return Response(resp, status=200 if (pay_cs or setup_cs or hosted_url) else 400)
+                invoice = _get_invoice(sub)
+                pay_cs, hosted_url = _get_client_secret_from_invoice(invoice)
+                setup_cs = _get_setup_intent_client_secret(sub)
+
+                resp = {
+                    "plan_id": plan_id,
+                    "customer_id": profile.stripe_customer_id,
+                    "ephemeral_key_secret": eph_key["secret"],
+                    "subscription_id": sub["id"],
+                }
+                if pay_cs:
+                    resp["payment_intent_client_secret"] = pay_cs
+                if setup_cs:
+                    resp["setup_intent_client_secret"] = setup_cs
+
+                if hosted_url and not (pay_cs or setup_cs):
+                    resp["hosted_invoice_url"] = hosted_url
+                    resp["detail"] = "No client_secret found. Use hosted_invoice_url (open in WebView) to complete payment."
+
+                return Response(resp, status=200 if (pay_cs or setup_cs or hosted_url) else 400)
+
 
         # 4) Create NEW subscription
         idempotency_key = (
