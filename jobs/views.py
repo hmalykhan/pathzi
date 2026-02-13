@@ -16,6 +16,7 @@ from jobs.api.permissions import JobPermission
 
 
 class JobsView(viewsets.ModelViewSet):
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
     permission_classes = [JobPermission]
     queryset = Job.objects.all()
     serializer_class = JobsSerializer

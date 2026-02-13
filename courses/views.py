@@ -15,6 +15,7 @@ from .api.permissions import CoursePermission
 
 
 class CoursesView(viewsets.ModelViewSet):
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
     queryset = Course.objects.all()
     serializer_class = CoursesSerializer
     permission_classes = [CoursePermission]

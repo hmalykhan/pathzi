@@ -15,6 +15,7 @@ from django.contrib.postgres.search import TrigramSimilarity
 
 
 class ApprenticeshipView(viewsets.ModelViewSet):
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
     queryset = Apprenticeship.objects.all()
     serializer_class = ApprenticeshipSerializer
     permission_classes = [ApprenticeshipPermission]

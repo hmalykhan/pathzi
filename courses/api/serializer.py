@@ -197,6 +197,17 @@ class CoursesListSerializer(serializers.ListSerializer):
 
 
 class CoursesSerializer(serializers.ModelSerializer):
+
+    ADMIN_WRITABLE_FIELDS = {
+        "city", "state", "zip_code", "latitude", "longitude", "category", "subcategory"
+        # "user_profile_id",  # if you still want this
+    }
+
+    # ADMIN_WRITABLE_FIELDS = {
+    # f.name for f in Course._meta.fields
+    # if f.name not in {"id", "course_id"}
+    # } | {"user_profile_id"}
+
     user_profile = serializers.SerializerMethodField(read_only=True)
 
     user_profile_id = serializers.PrimaryKeyRelatedField(
@@ -211,17 +222,37 @@ class CoursesSerializer(serializers.ModelSerializer):
         fields = "__all__"
         list_serializer_class = CoursesListSerializer  # ✅ bulk optimization
 
+    # def __init__(self, *args, **kwargs):
+    #     super().__init__(*args, **kwargs)
+
+    #     request = self.context.get("request")
+    #     if request and request.user.is_authenticated and not request.user.is_staff:
+    #         self.fields.pop("user_profile_id", None)
+
+    #     # scraped fields are read-only
+    #     for name, field in self.fields.items():
+    #         if name not in ("user_profile", "user_profile_id"):
+    #             field.read_only = True
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         request = self.context.get("request")
+
+        # ✅ Non-staff users cannot write link field
         if request and request.user.is_authenticated and not request.user.is_staff:
             self.fields.pop("user_profile_id", None)
 
-        # scraped fields are read-only
+        # ✅ Default: prevent writing scraped fields
         for name, field in self.fields.items():
             if name not in ("user_profile", "user_profile_id"):
                 field.read_only = True
+
+        # ✅ Staff: allow only admin-writable fields to be edited
+        if request and request.user.is_authenticated and request.user.is_staff:
+            for name in self.ADMIN_WRITABLE_FIELDS:
+                if name in self.fields:
+                    self.fields[name].read_only = False
 
     def get_user_profile(self, obj):
         # ✅ Fast path for list endpoints
@@ -277,8 +308,24 @@ class CoursesSerializer(serializers.ModelSerializer):
 
         return course_obj
 
+    # def update(self, instance, validated_data):
+    #     profiles = validated_data.pop("user_profile_id", None)
+    #     if profiles is not None:
+    #         self._sync_user_links(instance, profiles)
+    #     return instance
+
     def update(self, instance, validated_data):
         profiles = validated_data.pop("user_profile_id", None)
+
+        # ✅ update model fields (only staff-editable ones will ever be here)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        if validated_data:
+            instance.save(update_fields=list(validated_data.keys()))
+
+        # ✅ update link table if provided
         if profiles is not None:
             self._sync_user_links(instance, profiles)
+
         return instance

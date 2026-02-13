@@ -4,6 +4,7 @@ from django.db.models import Subquery, TextField, Value
 from django.db.models.functions import Cast, Coalesce, Lower, Replace, Trim
 from django.utils import timezone
 from django.utils.functional import cached_property
+from django.shortcuts import get_object_or_404
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -161,81 +162,54 @@ class CareersView(viewsets.ModelViewSet):
 
         return qs
 
+    # def get_object(self):
+    #     """
+    #     Free users must NOT access careers outside top 5.
+    #     Return 404 to hide existence.
+    #     """
+    #     obj = super().get_object()
+
+    #     if self._is_subscribed():
+    #         return obj
+
+    #     allowed = Career.objects.filter(id=obj.id, id__in=Subquery(self._allowed_ids_subquery())).exists()
+    #     # if not allowed:
+    #         # raise NotFound("Not found.")
+    #     return obj
+
     def get_object(self):
         """
         Free users must NOT access careers outside top 5.
         Return 404 to hide existence.
         """
+
+        # ✅ Admin/staff can retrieve ANY career by ID (bypass filtered queryset)
+        if self.request.user.is_authenticated and self.request.user.is_staff:
+            lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+            lookup_value = self.kwargs.get(lookup_url_kwarg)
+
+            obj = get_object_or_404(
+                Career.objects.all(),
+                **{self.lookup_field: lookup_value}
+            )
+            self.check_object_permissions(self.request, obj)
+            return obj
+
+        # ✅ everyone else: keep EXACT existing behavior
         obj = super().get_object()
 
         if self._is_subscribed():
             return obj
 
-        allowed = Career.objects.filter(id=obj.id, id__in=Subquery(self._allowed_ids_subquery())).exists()
+        allowed = Career.objects.filter(
+            id=obj.id,
+            id__in=Subquery(self._allowed_ids_subquery())
+        ).exists()
+
         # if not allowed:
-            # raise NotFound("Not found.")
+        #     raise NotFound("Not found.")
+
         return obj
-
-    # -----------------------
-    # ✅ Report endpoint (unchanged)
-    # -----------------------
-    # @action(detail=True, methods=["GET", "PUT"], url_path="report")
-    # def report(self, request, pk=None):
-    #     career = self.get_object()
-    #     profile = self._get_or_create_profile()
-
-    #     link = UserSavedCareer.objects.filter(
-    #         user_profile=profile,
-    #         career_id=career.id,
-    #     ).first()
-
-    #     if not link:
-    #         return Response(
-    #             {"detail": "Career is not saved. Save career first."},
-    #             status=status.HTTP_400_BAD_REQUEST,
-    #         )
-
-    #     if request.method == "GET":
-    #         return Response(
-    #             {
-    #                 "report_status": bool(link.report_status),
-    #                 "report": link.report or {},
-    #                 "generated_at": link.generated_at,
-    #             },
-    #             status=status.HTTP_200_OK,
-    #         )
-
-    #     if "career_id" in request.data:
-    #         return Response(
-    #             {"detail": "career_id is not allowed in request body."},
-    #             status=status.HTTP_400_BAD_REQUEST,
-    #         )
-    #     if "generated_at" in request.data:
-    #         return Response(
-    #             {"detail": "generated_at is not allowed in request body."},
-    #             status=status.HTTP_400_BAD_REQUEST,
-    #         )
-
-    #     report_data = request.data.get("report", None)
-    #     if report_data is None:
-    #         return Response(
-    #             {"detail": "report is required"},
-    #             status=status.HTTP_400_BAD_REQUEST,
-    #         )
-
-    #     link.report = report_data
-    #     link.report_status = True
-    #     link.generated_at = timezone.now()
-    #     link.save(update_fields=["report", "report_status", "generated_at"])
-
-    #     return Response(
-    #         {
-    #             "report_status": bool(link.report_status),
-    #             "report": link.report,
-    #             "generated_at": link.generated_at,
-    #         },
-    #         status=status.HTTP_200_OK,
-    #     )
 
     @action(detail=True, methods=["GET", "PUT"], url_path="report")
     def report(self, request, pk=None):

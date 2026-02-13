@@ -228,6 +228,11 @@ class CareerDetailSerializer(serializers.ModelSerializer):
     category = serializers.CharField(source="sub_type", read_only=True)
     subcategory = serializers.CharField(source="jobname", read_only=True)
 
+    ADMIN_WRITABLE_FIELDS = {
+        "category", "subcategory"
+        # "user_profile_id",  # if you still want this
+    }
+
     # existing admin feature
     user_profile = serializers.SerializerMethodField(read_only=True)
 
@@ -267,6 +272,55 @@ class CareerDetailSerializer(serializers.ModelSerializer):
             "my_report",  # ✅ added
         )
 
+    # def __init__(self, *args, **kwargs):
+    #     super().__init__(*args, **kwargs)
+
+    #     request = self.context.get("request")
+
+    #     if request and request.user.is_authenticated and not request.user.is_staff:
+    #         self.fields.pop("user_profile_id", None)
+
+    #     # ✅ default: everything read-only except these
+    #     for name, field in self.fields.items():
+    #         if name not in ("user_profile", "user_profile_id", "my_report"):
+    #             field.read_only = True
+
+    #     # ✅ staff: allow only ADMIN_WRITABLE_FIELDS
+    #     if request and request.user.is_authenticated and request.user.is_staff:
+    #         for name in self.ADMIN_WRITABLE_FIELDS:
+    #             if name in self.fields:
+    #                 self.fields[name].read_only = False
+
+    #     # ---- existing prefetch behavior for user_profile (unchanged) ----
+    #     self._profiles_by_career_id = None
+    #     instance = getattr(self, "instance", None)
+    #     if instance is None:
+    #         return
+
+    #     if isinstance(instance, (list, tuple, QuerySet)):
+    #         career_ids = [obj.id for obj in instance]
+    #         if career_ids:
+    #             links = UserSavedCareer.objects.filter(career_id__in=career_ids).values(
+    #                 "career_id", "user_profile_id"
+    #             )
+
+    #             prof_ids_by_career = {}
+    #             all_profile_ids = set()
+    #             for row in links:
+    #                 cid = row["career_id"]
+    #                 pid = row["user_profile_id"]
+    #                 prof_ids_by_career.setdefault(cid, set()).add(pid)
+    #                 all_profile_ids.add(pid)
+
+    #             profiles = UserProfile.objects.filter(id__in=all_profile_ids)
+    #             profiles_by_id = {p.id: p for p in profiles}
+
+    #             self._profiles_by_career_id = {
+    #                 cid: [profiles_by_id[pid] for pid in pids if pid in profiles_by_id]
+    #                 for cid, pids in prof_ids_by_career.items()
+    #             }
+
+    # original
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -358,3 +412,20 @@ class CareerDetailSerializer(serializers.ModelSerializer):
         if profiles is not None:
             self._sync_links(instance, profiles)
         return instance
+
+    # @transaction.atomic
+    # def update(self, instance, validated_data):
+    #     profiles = validated_data.pop("user_profile_id", None)
+
+    #     # ✅ update model fields (only admin-writable ones can reach here)
+    #     for attr, value in validated_data.items():
+    #         setattr(instance, attr, value)
+
+    #     if validated_data:
+    #         instance.save(update_fields=list(validated_data.keys()))
+
+    #     # ✅ keep existing link sync behavior if enabled
+    #     if profiles is not None:
+    #         self._sync_links(instance, profiles)
+
+    #     return instance

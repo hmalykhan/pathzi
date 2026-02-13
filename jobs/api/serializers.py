@@ -38,10 +38,16 @@ class UserProfileNestedSerializer(serializers.ModelSerializer):
 
 class JobsSerializer(serializers.ModelSerializer):
 
+# add the field you want in admin wirtable fields to edit them.
     ADMIN_WRITABLE_FIELDS = {
-        "city", "state", "zip_code", "latitude", "longitude",
-        "user_profile_id",  # if you still want this
+        "city", "state", "zip_code", "latitude", "longitude", "category", "subcategory"
+        # "user_profile_id",  # if you still want this
     }
+
+    # ADMIN_WRITABLE_FIELDS = {
+    # f.name for f in Job._meta.fields
+    # if f.name not in {"id", "job_id"}
+    # } | {"user_profile_id"}
 
     user_profile = serializers.SerializerMethodField(read_only=True)
 

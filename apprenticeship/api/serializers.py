@@ -57,6 +57,11 @@ class ApprenticeshipListSerializer(serializers.ListSerializer):
 
 
 class ApprenticeshipSerializer(serializers.ModelSerializer):
+
+    ADMIN_WRITABLE_FIELDS = {
+        "city", "state", "zip_code", "latitude", "longitude", "category", "subcategory"
+        # "user_profile_id",  # if you still want this
+    }
     user_profile = serializers.SerializerMethodField(read_only=True)
 
     user_profile_id = serializers.PrimaryKeyRelatedField(
@@ -71,17 +76,37 @@ class ApprenticeshipSerializer(serializers.ModelSerializer):
         fields = "__all__"
         list_serializer_class = ApprenticeshipListSerializer  # ✅ enable bulk optimization
 
+    # def __init__(self, *args, **kwargs):
+    #     super().__init__(*args, **kwargs)
+
+    #     request = self.context.get("request")
+    #     if request and request.user.is_authenticated and not request.user.is_staff:
+    #         self.fields.pop("user_profile_id", None)
+
+    #     # ✅ scraped fields read-only
+    #     for name, field in self.fields.items():
+    #         if name not in ("user_profile", "user_profile_id"):
+    #             field.read_only = True
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         request = self.context.get("request")
+
+        # non-staff cannot write link field
         if request and request.user.is_authenticated and not request.user.is_staff:
             self.fields.pop("user_profile_id", None)
 
-        # ✅ scraped fields read-only
+        # default: everything read-only except user_profile + user_profile_id
         for name, field in self.fields.items():
             if name not in ("user_profile", "user_profile_id"):
                 field.read_only = True
+
+        # staff: allow only ADMIN_WRITABLE_FIELDS
+        if request and request.user.is_authenticated and request.user.is_staff:
+            for name in self.ADMIN_WRITABLE_FIELDS:
+                if name in self.fields:
+                    self.fields[name].read_only = False
 
     def get_user_profile(self, obj):
         # ✅ fast path for list
@@ -120,8 +145,24 @@ class ApprenticeshipSerializer(serializers.ModelSerializer):
             ignore_conflicts=True,
         )
 
+    # def update(self, instance, validated_data):
+    #     profiles = validated_data.pop("user_profile_id", None)
+    #     if profiles is not None:
+    #         self._sync_links(instance, profiles)
+    #     return instance
+
     def update(self, instance, validated_data):
         profiles = validated_data.pop("user_profile_id", None)
+
+        # save allowed model fields (only admin-writable ones can reach here)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        if validated_data:
+            instance.save(update_fields=list(validated_data.keys()))
+
+        # sync link table if provided
         if profiles is not None:
             self._sync_links(instance, profiles)
+
         return instance
