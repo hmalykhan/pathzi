@@ -1287,7 +1287,63 @@ class ChangePlanView(APIView):
         billing.save(update_fields=["pending_plan_id", "pending_change_at", "stripe_schedule_id", "updated_at"])
 
         # =====================
-        # UPGRADE (charge now)
+        # UPGRADE(original upgrade) (charge now)
+        # =====================
+        # if is_upgrade:
+        #     try:
+        #         # If subscription is attached to a schedule, release it first
+        #         sched = sub.get("schedule")
+        #         sched_id = None
+        #         if isinstance(sched, dict):
+        #             sched_id = sched.get("id")
+        #         elif isinstance(sched, str):
+        #             sched_id = sched
+
+        #         if sched_id:
+        #             _release_schedule_if_any(sched_id)
+
+        #         # If user had scheduled cancellation, remove it first (separate call)
+        #         if sub.get("cancel_at_period_end"):
+        #             stripe.Subscription.modify(sub["id"], cancel_at_period_end=False)
+
+        #         updated = stripe.Subscription.modify(
+        #             sub["id"],
+        #             items=[{"id": item_id, "price": new_price_id}],
+        #             proration_behavior="always_invoice",
+        #             payment_behavior="pending_if_incomplete",
+        #             expand=["latest_invoice.confirmation_secret", "pending_setup_intent", "items"],
+        #         )
+
+        #     except stripe_error.StripeError as e:
+        #         return Response({"detail": "Stripe rejected upgrade request.", "stripe_error": str(e)}, status=409)
+
+        #     invoice = _get_invoice(updated)
+        #     pay_cs, hosted_url = _get_client_secret_from_invoice(invoice)
+        #     setup_cs = _get_setup_intent_client_secret(updated)
+
+        #     # mark locally as pending; webhook will finalize plan when Stripe confirms
+        #     billing.pending_plan_id = new_plan
+        #     billing.pending_change_at = timezone.now()
+        #     billing.save(update_fields=["pending_plan_id", "pending_change_at", "updated_at"])
+
+        #     resp = {
+        #         "mode": "upgrade_now",
+        #         "requested_plan_id": new_plan,
+        #         "requires_payment": bool(pay_cs or setup_cs),
+        #         "stripe_subscription_id": updated.get("id"),
+        #         "status": updated.get("status"),
+        #     }
+        #     if pay_cs:
+        #         resp["payment_intent_client_secret"] = pay_cs
+        #     if setup_cs:
+        #         resp["setup_intent_client_secret"] = setup_cs
+        #     if hosted_url and not (pay_cs or setup_cs):
+        #         resp["hosted_invoice_url"] = hosted_url
+
+        #     return Response(resp)
+
+        # =====================
+        # UPGRADE(new upgrade) (charge now)
         # =====================
         if is_upgrade:
             try:
@@ -1302,7 +1358,7 @@ class ChangePlanView(APIView):
                 if sched_id:
                     _release_schedule_if_any(sched_id)
 
-                # If user had scheduled cancellation, remove it first (separate call)
+                # If user had scheduled cancellation, remove it first
                 if sub.get("cancel_at_period_end"):
                     stripe.Subscription.modify(sub["id"], cancel_at_period_end=False)
 
@@ -1315,7 +1371,16 @@ class ChangePlanView(APIView):
                 )
 
             except stripe_error.StripeError as e:
-                return Response({"detail": "Stripe rejected upgrade request.", "stripe_error": str(e)}, status=409)
+                return Response(
+                    {"detail": "Stripe rejected upgrade request.", "stripe_error": str(e)},
+                    status=409,
+                )
+
+            # 🔹 NEW: Generate fresh Ephemeral Key (important for PaymentSheet)
+            eph_key = stripe.EphemeralKey.create(
+                customer=billing.stripe_customer_id,
+                stripe_version=settings.STRIPE_API_VERSION,
+            )
 
             invoice = _get_invoice(updated)
             pay_cs, hosted_url = _get_client_secret_from_invoice(invoice)
@@ -1323,6 +1388,7 @@ class ChangePlanView(APIView):
 
             # mark locally as pending; webhook will finalize plan when Stripe confirms
             billing.pending_plan_id = new_plan
+
             billing.pending_change_at = timezone.now()
             billing.save(update_fields=["pending_plan_id", "pending_change_at", "updated_at"])
 
@@ -1332,7 +1398,12 @@ class ChangePlanView(APIView):
                 "requires_payment": bool(pay_cs or setup_cs),
                 "stripe_subscription_id": updated.get("id"),
                 "status": updated.get("status"),
+
+                # 🔹 NEW: Always return these for PaymentSheet
+                "customer_id": billing.stripe_customer_id,
+                "ephemeral_key_secret": eph_key["secret"],
             }
+
             if pay_cs:
                 resp["payment_intent_client_secret"] = pay_cs
             if setup_cs:
@@ -1341,6 +1412,7 @@ class ChangePlanView(APIView):
                 resp["hosted_invoice_url"] = hosted_url
 
             return Response(resp)
+
 
         # ==========================
         # DOWNGRADE (at period end)
