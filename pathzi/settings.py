@@ -47,7 +47,8 @@ INSTALLED_APPS = [
     'careers',
     "billing",
     "django_extensions",
-    "geo_search"
+    "geo_search",
+    "usage_limits"
 ]
 
 MIDDLEWARE = [
