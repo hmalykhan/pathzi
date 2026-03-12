@@ -8,9 +8,12 @@ class CareerPermission(permissions.BasePermission):
         action = getattr(view, "action", None)
 
         allowed = {
-            "save", "list", "my", "retrieve", "unsave",
-            "courses", "jobs", "apprenticeships",
+            "save", "my", "unsave",
             "report",  # ✅ add
+        }
+
+        guest = {
+            "courses", "jobs", "apprenticeships", "filter", "list", "retrieve"
         }
 
         # ✅ Avoid confusing 403 when action can't be resolved (wrong method etc.)
@@ -19,5 +22,8 @@ class CareerPermission(permissions.BasePermission):
 
         if action in allowed:
             return bool(request.user and request.user.is_authenticated)
+        
+        if action in guest:
+            return True
 
         return bool(request.user and request.user.is_staff)

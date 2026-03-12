@@ -306,6 +306,65 @@ class CareersView(viewsets.ModelViewSet):
         )
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+
+    
+    @action(detail=False, methods=["GET","POST"], url_path="filter")
+    def filter(self, request):
+        """
+        Filter careers using subcategories sent in request body.
+
+        Body example:
+        {
+            "subcategories": ["engineering", "healthcare"]
+        }
+        """
+
+        subcategories = (
+            request.data.get("subcategories")
+            or request.query_params.getlist("subcategories")
+        )
+
+        if not subcategories:
+            return Response(
+                {"detail": "subcategories are required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # normalize input
+        normalized = [
+            self._norm_key(s) for s in subcategories if s
+        ]
+
+        # normalize career.sub_type exactly like the main query
+        empty = Value("", output_field=TextField())
+
+        sub = Coalesce(
+            Cast("sub_type", output_field=TextField()),
+            empty,
+            output_field=TextField()
+        )
+
+        sub = Lower(Trim(sub))
+        sub = Replace(sub, Value(" ", output_field=TextField()), empty)
+        sub = Replace(sub, Value("_", output_field=TextField()), empty)
+        sub = Replace(sub, Value("-", output_field=TextField()), empty)
+        sub = Cast(sub, output_field=TextField())
+
+        qs = Career.objects.annotate(cat_l=sub).filter(cat_l__in=normalized)
+
+        qs = self._slice(qs)
+
+        careers = list(qs)
+
+        report_map = self._build_report_map([c.id for c in careers])
+
+        serializer = CareerListSerializer(
+            careers,
+            many=True,
+            context={"request": request, "report_map": report_map},
+        )
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
     def retrieve(self, request, *args, **kwargs):
         career = self.get_object()
         report_map = self._build_report_map([career.id])
@@ -374,14 +433,82 @@ class CareersView(viewsets.ModelViewSet):
     # -----------------------
     # ✅ NEW: Only match (profile.city + career.jobname/subcategory) and nothing else
     # -----------------------
-    def _only_city_and_subcategory_qs(self, Model, *, profile: UserProfile, jobname: str):
+    # def _only_city_and_subcategory_qs(self, Model, *, profile: UserProfile, jobname: str):
+    #     """
+    #     EXACT match (case-insensitive):
+    #       - subcategory == jobname
+    #       - city == profile.city
+    #     No category, no zip, no fuzzy, no geo.
+    #     """
+    #     city = (getattr(profile, "city", None) or "").strip()
+    #     sub = (jobname or "").strip()
+
+    #     if not city or not sub:
+    #         return Model.objects.none()
+
+    #     # Requires Model has fields: city, subcategory
+    #     return Model.objects.filter(subcategory__iexact=sub, city__iexact=city).order_by("-id")
+
+    # @action(detail=True, methods=["GET"])
+    # def jobs(self, request, pk=None):
+    #     career = self.get_object()
+    #     jobname = (career.jobname or "").strip()
+    #     if not jobname:
+    #         return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     profile = self._profile_cached
+    #     if not profile:
+    #         return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     qs = self._only_city_and_subcategory_qs(Job, profile=profile, jobname=jobname)
+    #     qs = self._slice(qs)
+
+    #     data = JobsSerializer(list(qs), many=True, context={"request": request}).data
+    #     return Response(data, status=status.HTTP_200_OK)
+
+    # @action(detail=True, methods=["GET"])
+    # def courses(self, request, pk=None):
+    #     career = self.get_object()
+    #     jobname = (career.jobname or "").strip()
+    #     if not jobname:
+    #         return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     profile = self._profile_cached
+    #     if not profile:
+    #         return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     qs = self._only_city_and_subcategory_qs(Course, profile=profile, jobname=jobname)
+    #     qs = self._slice(qs)
+
+    #     data = CoursesSerializer(list(qs), many=True, context={"request": request}).data
+    #     return Response(data, status=status.HTTP_200_OK)
+
+    # @action(detail=True, methods=["GET"])
+    # def apprenticeships(self, request, pk=None):
+    #     career = self.get_object()
+    #     jobname = (career.jobname or "").strip()
+    #     if not jobname:
+    #         return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     profile = self._profile_cached
+    #     if not profile:
+    #         return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
+
+    #     qs = self._only_city_and_subcategory_qs(Apprenticeship, profile=profile, jobname=jobname)
+    #     qs = self._slice(qs)
+
+    #     data = ApprenticeshipSerializer(list(qs), many=True, context={"request": request}).data
+    #     return Response(data, status=status.HTTP_200_OK)
+
+    def _only_city_and_subcategory_qs(self, Model, *, city: str, jobname: str):
         """
         EXACT match (case-insensitive):
           - subcategory == jobname
           - city == profile.city
         No category, no zip, no fuzzy, no geo.
         """
-        city = (getattr(profile, "city", None) or "").strip()
+        # city = (getattr(profile, "city", None) or "").strip()
+        city = (city or "").strip()
         sub = (jobname or "").strip()
 
         if not city or not sub:
@@ -390,52 +517,90 @@ class CareersView(viewsets.ModelViewSet):
         # Requires Model has fields: city, subcategory
         return Model.objects.filter(subcategory__iexact=sub, city__iexact=city).order_by("-id")
 
-    @action(detail=True, methods=["GET"])
+    # @action(detail=True, methods=["GET"])
+    @action(detail=True, methods=["GET","POST"])
     def jobs(self, request, pk=None):
-        career = self.get_object()
+        profile = self._profile_cached
+        if not profile:
+            # return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
+            city = (
+            request.data.get("city")
+            or request.query_params.get("city")
+            )
+            if not city:
+                return Response({"detail": "City is required."}, status=400)
+            career = get_object_or_404(Career.objects.all(), pk=pk)
+
+        else :
+            city = (getattr(profile, "city", None) or "").strip()
+            if not city:
+                return Response({"detail": "User city not set."}, status=400)
+            career = self.get_object()
+
         jobname = (career.jobname or "").strip()
         if not jobname:
             return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
-
-        profile = self._profile_cached
-        if not profile:
-            return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
-
-        qs = self._only_city_and_subcategory_qs(Job, profile=profile, jobname=jobname)
+        # qs = self._only_city_and_subcategory_qs(Job, profile=profile, jobname=jobname)
+        qs = self._only_city_and_subcategory_qs(Job, city=city, jobname=jobname)
         qs = self._slice(qs)
 
         data = JobsSerializer(list(qs), many=True, context={"request": request}).data
         return Response(data, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=["GET"])
+    # @action(detail=True, methods=["GET"])
+    @action(detail=True, methods=["GET","POST"])
     def courses(self, request, pk=None):
-        career = self.get_object()
+        profile = self._profile_cached
+        if not profile:
+            # return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
+            city = (
+            request.data.get("city")
+            or request.query_params.get("city")
+            )
+            if not city:
+                return Response({"detail": "City is required."}, status=400)
+            career = get_object_or_404(Career.objects.all(), pk=pk)
+        else:
+            city = (getattr(profile, "city", None) or "").strip()
+            if not city:
+                return Response({"detail": "User city not set."}, status=400)
+            career = self.get_object()
+
+
         jobname = (career.jobname or "").strip()
         if not jobname:
             return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
-
-        profile = self._profile_cached
-        if not profile:
-            return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
-
-        qs = self._only_city_and_subcategory_qs(Course, profile=profile, jobname=jobname)
+        # qs = self._only_city_and_subcategory_qs(Course, profile=profile, jobname=jobname)
+        qs = self._only_city_and_subcategory_qs(Course, city=city, jobname=jobname)
         qs = self._slice(qs)
 
         data = CoursesSerializer(list(qs), many=True, context={"request": request}).data
         return Response(data, status=status.HTTP_200_OK)
 
-    @action(detail=True, methods=["GET"])
+    # @action(detail=True, methods=["GET"])
+    @action(detail=True, methods=["GET","POST"])
     def apprenticeships(self, request, pk=None):
-        career = self.get_object()
+        profile = self._profile_cached
+        if not profile:
+            # return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
+            city = (
+            request.data.get("city")
+            or request.query_params.get("city")
+            )
+            if not city:
+                return Response({"detail": "City is required."}, status=400)
+            career = get_object_or_404(Career.objects.all(), pk=pk)
+        else:
+            city = (getattr(profile, "city", None) or "").strip()
+            if not city:
+                return Response({"detail": "User city not set."}, status=400)
+            career = self.get_object()
+
         jobname = (career.jobname or "").strip()
         if not jobname:
             return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
-
-        profile = self._profile_cached
-        if not profile:
-            return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
-
-        qs = self._only_city_and_subcategory_qs(Apprenticeship, profile=profile, jobname=jobname)
+        # qs = self._only_city_and_subcategory_qs(Apprenticeship, profile=profile, jobname=jobname)
+        qs = self._only_city_and_subcategory_qs(Apprenticeship, city=city, jobname=jobname)
         qs = self._slice(qs)
 
         data = ApprenticeshipSerializer(list(qs), many=True, context={"request": request}).data

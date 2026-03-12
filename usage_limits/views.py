@@ -47,6 +47,60 @@ class SwipeStatusView(APIView):
         return Response(serializer.data)
 
 
+# New
+# class SwipeCareerPathView(APIView):
+#     """
+#     Record swipe for a career card.
+
+#     Normal user:
+#         Uses request.user from JWT
+
+#     Admin:
+#         Can pass user_id to swipe on behalf of a user
+#     """
+
+#     permission_classes = [IsAuthenticated]
+
+#     def post(self, request):
+
+#         user = request.user
+
+#         # Admin can act on behalf of another user
+#         if request.user.is_staff and request.data.get("user_id"):
+#             try:
+#                 user = User.objects.get(id=request.data["user_id"])
+#             except User.DoesNotExist:
+#                 return Response(
+#                     {"detail": "User not found"},
+#                     status=status.HTTP_404_NOT_FOUND
+#                 )
+
+#         with transaction.atomic():
+
+#             usage = (
+#                 CareerSwipeUsage.objects
+#                 .select_for_update()
+#                 .get(user=user)
+#             )
+
+#             if usage.swipes_used >= usage.max_swipes:
+#                 return Response(
+#                     {"detail": "Swipe limit reached"},
+#                     status=status.HTTP_403_FORBIDDEN
+#                 )
+
+#             usage.swipes_used += 1
+#             usage.save(update_fields=["swipes_used"])
+
+#             remaining = usage.max_swipes - usage.swipes_used
+
+#         return Response({
+#             "message": "Swipe recorded",
+#             "remaining_swipes": remaining
+#         })
+
+
+# Org
 class SwipeCareerPathView(APIView):
     """
     Records swipe.
