@@ -375,32 +375,35 @@ class CareersView(viewsets.ModelViewSet):
         )
 
         if not subcategories:
-            return Response(
-                {"detail": "subcategories are required."},
-                status=status.HTTP_400_BAD_REQUEST
+            # return Response(
+            #     {"detail": "subcategories are required."},
+            #     status=status.HTTP_400_BAD_REQUEST
+            # )
+            qs = Career.objects.all().order_by("id")
+
+
+        else:
+            # normalize input
+            normalized = [
+                self._norm_key(s) for s in subcategories if s
+            ]
+
+            # normalize career.sub_type exactly like the main query
+            empty = Value("", output_field=TextField())
+
+            sub = Coalesce(
+                Cast("sub_type", output_field=TextField()),
+                empty,
+                output_field=TextField()
             )
 
-        # normalize input
-        normalized = [
-            self._norm_key(s) for s in subcategories if s
-        ]
+            sub = Lower(Trim(sub))
+            sub = Replace(sub, Value(" ", output_field=TextField()), empty)
+            sub = Replace(sub, Value("_", output_field=TextField()), empty)
+            sub = Replace(sub, Value("-", output_field=TextField()), empty)
+            sub = Cast(sub, output_field=TextField())
 
-        # normalize career.sub_type exactly like the main query
-        empty = Value("", output_field=TextField())
-
-        sub = Coalesce(
-            Cast("sub_type", output_field=TextField()),
-            empty,
-            output_field=TextField()
-        )
-
-        sub = Lower(Trim(sub))
-        sub = Replace(sub, Value(" ", output_field=TextField()), empty)
-        sub = Replace(sub, Value("_", output_field=TextField()), empty)
-        sub = Replace(sub, Value("-", output_field=TextField()), empty)
-        sub = Cast(sub, output_field=TextField())
-
-        qs = Career.objects.annotate(cat_l=sub).filter(cat_l__in=normalized)
+            qs = Career.objects.annotate(cat_l=sub).filter(cat_l__in=normalized)
 
         qs = self._slice(qs)
 
