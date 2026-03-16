@@ -114,3 +114,22 @@ class UserSavedCareer(models.Model):
             models.Index(fields=["user_profile"]),
             models.Index(fields=["career_id"]),
         ]
+
+class UserExploredCareer(models.Model):
+    user_profile = models.ForeignKey(
+        UserProfile,
+        on_delete=models.CASCADE,
+        related_name="explored_career_links"
+    )
+    career = models.ForeignKey(
+        Career,
+        on_delete=models.CASCADE,
+        related_name="explored_user_links"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("user_profile", "career")
+
+    def __str__(self):
+        return f"{self.user_profile_id} - {self.career_id}"

@@ -12,7 +12,7 @@ from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 
 from accounts.models import UserProfile
-from careers.models import Career, UserSavedCareer
+from careers.models import Career, UserSavedCareer, UserExploredCareer
 from careers.api.permissions import CareerPermission
 from careers.api.serializers import CareerListSerializer, CareerDetailSerializer
 
@@ -161,6 +161,56 @@ class CareersView(viewsets.ModelViewSet):
             qs = qs[:FREE_CAREER_LIMIT]
 
         return qs
+
+    def _build_saved_map(self, career_ids):
+        profile = self._profile_cached
+        if not profile:
+            return {}
+
+        ids = UserSavedCareer.objects.filter(
+            user_profile=profile,
+            career_id__in=career_ids
+        ).values_list("career_id", flat=True)
+
+        return {cid: True for cid in ids}
+
+
+    def _build_explored_map(self, career_ids):
+        profile = self._profile_cached
+        if not profile:
+            return {}
+
+        ids = UserExploredCareer.objects.filter(
+            user_profile=profile,
+            career_id__in=career_ids
+        ).values_list("career_id", flat=True)
+
+        return {cid: True for cid in ids}
+    
+    def _build_saved_map(self, career_ids):
+        profile = self._profile_cached
+        if not profile:
+            return {}
+
+        ids = UserSavedCareer.objects.filter(
+            user_profile=profile,
+            career_id__in=career_ids
+        ).values_list("career_id", flat=True)
+
+        return {cid: True for cid in ids}
+
+
+    def _build_explored_map(self, career_ids):
+        profile = self._profile_cached
+        if not profile:
+            return {}
+
+        ids = UserExploredCareer.objects.filter(
+            user_profile=profile,
+            career_id__in=career_ids
+        ).values_list("career_id", flat=True)
+
+        return {cid: True for cid in ids}
     
     # old
     # def get_object(self):
@@ -391,13 +441,33 @@ class CareersView(viewsets.ModelViewSet):
         if not self._is_subscribed():
             qs = qs.filter(id__in=Subquery(self._allowed_ids_subquery()))
 
+        # old
+        # careers = list(qs)
+        # report_map = self._build_report_map([c.id for c in careers])
+
+        # serializer = CareerListSerializer(
+        #     careers,
+        #     many=True,
+        #     context={"request": request, "report_map": report_map},
+        # )
+
+        # new
         careers = list(qs)
-        report_map = self._build_report_map([c.id for c in careers])
+        career_ids = [c.id for c in careers]
+
+        saved_map = self._build_saved_map(career_ids)
+        explored_map = self._build_explored_map(career_ids)
+        report_map = self._build_report_map(career_ids)
 
         serializer = CareerListSerializer(
             careers,
             many=True,
-            context={"request": request, "report_map": report_map},
+            context={
+                "request": request,
+                "saved_map": saved_map,
+                "explored_map": explored_map,
+                "report_map": report_map,
+            },
         )
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -411,9 +481,26 @@ class CareersView(viewsets.ModelViewSet):
             career_id=career.id,
         )
 
+        # old
+        # serializer = CareerDetailSerializer(
+        #     career,
+        #     context={"request": request, "report_map": {career.id: link}},
+        # )
+
+        # new
+        career_ids = [career.id]
+        saved_map = self._build_saved_map(career_ids)
+        explored_map = self._build_explored_map(career_ids)
+        report_map = {career.id: link}
+
         serializer = CareerDetailSerializer(
             career,
-            context={"request": request, "report_map": {career.id: link}},
+            context={
+                "request": request,
+                "saved_map": saved_map,
+                "explored_map": explored_map,
+                "report_map": report_map,
+            },
         )
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -606,7 +693,106 @@ class CareersView(viewsets.ModelViewSet):
         data = ApprenticeshipSerializer(list(qs), many=True, context={"request": request}).data
         return Response(data, status=status.HTTP_200_OK)
 
+
+    @action(detail=False, methods=["GET"], url_path="explore_mine")
+    def explore_mine(self, request):
+        profile = self._get_or_create_profile()
+
+        explored_ids = UserExploredCareer.objects.filter(
+            user_profile=profile
+        ).values_list("career_id", flat=True)
+
+        qs = self._filtered_base_queryset().filter(id__in=explored_ids).order_by("id")
+
+        if not self._is_subscribed():
+            qs = qs.filter(id__in=Subquery(self._allowed_ids_subquery()))
+        # old
+        # careers = list(qs)
+        # report_map = self._build_report_map([c.id for c in careers])
+
+        # serializer = CareerListSerializer(
+        #     careers,
+        #     many=True,
+        #     context={"request": request, "report_map": report_map},
+        # )
+
+        # new
+        careers = list(qs)
+        career_ids = [c.id for c in careers]
+
+        saved_map = self._build_saved_map(career_ids)
+        explored_map = self._build_explored_map(career_ids)
+        report_map = self._build_report_map(career_ids)
+
+        serializer = CareerListSerializer(
+            careers,
+            many=True,
+            context={
+                "request": request,
+                "saved_map": saved_map,
+                "explored_map": explored_map,
+                "report_map": report_map,
+            },
+        )
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+    @action(detail=True, methods=["POST", "GET"])
+    def explore(self, request, pk=None):
+        career = self.get_object()
+        profile = self._get_or_create_profile()
+
+        UserExploredCareer.objects.get_or_create(
+            user_profile=profile,
+            career_id=career.id,
+        )
+
+        # old
+        # report_map = self._build_report_map([career.id])
+
+        # serializer = CareerDetailSerializer(
+        #     career,
+        #     context={"request": request, "report_map": report_map},
+        # )
+
+        # new
+        career_ids = [career.id]
+        saved_map = self._build_saved_map(career_ids)
+        explored_map = self._build_explored_map(career_ids)
+        report_map = self._build_report_map(career_ids)
+
+        serializer = CareerDetailSerializer(
+            career,
+            context={
+                "request": request,
+                "saved_map": saved_map,
+                "explored_map": explored_map,
+                "report_map": report_map,
+            },
+        )
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+    @action(detail=True, methods=["POST", "GET"])
+    def unexplore(self, request, pk=None):
+        career = self.get_object()
+        profile = self._get_or_create_profile()
+
+        deleted, _ = UserExploredCareer.objects.filter(
+            user_profile=profile,
+            career_id=career.id
+        ).delete()
+
+        if deleted:
+            return Response({"message": "Career unexplored."}, status=status.HTTP_200_OK)
+
+        return Response(
+            {"error": "Career was not explored."},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+
     def get_serializer_class(self):
-        if self.action in ("list", "my"):
+        if self.action in ("list", "my", "explore_mine"):
             return CareerListSerializer
         return CareerDetailSerializer

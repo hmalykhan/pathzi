@@ -233,8 +233,8 @@ class CareerDetailSerializer(serializers.ModelSerializer):
         # "user_profile_id",  # if you still want this
     }
 
-    # existing admin feature
-    user_profile = serializers.SerializerMethodField(read_only=True)
+    # existing admin feature, this line will show the ids of all users who are having the career in their save list. it has also field in the fields. and also the moethod below named as get_user_profile.
+    # user_profile = serializers.SerializerMethodField(read_only=True) 
 
     user_profile_id = serializers.PrimaryKeyRelatedField(
         many=True,
@@ -243,15 +243,18 @@ class CareerDetailSerializer(serializers.ModelSerializer):
         queryset=UserProfile.objects.all(),
     )
 
+
     # ✅ user+career oriented report
     my_report = serializers.SerializerMethodField(read_only=True)
+    is_saved = serializers.SerializerMethodField()
+    is_explored = serializers.SerializerMethodField()
 
     class Meta:
         model = Career
         fields = (
             "id",
             "user_profile_id",
-            "user_profile",
+            # "user_profile",
             "career_type",
             "category",
             "image_url",
@@ -270,6 +273,8 @@ class CareerDetailSerializer(serializers.ModelSerializer):
             "apprenticeship",
             "scraped_at",
             "my_report",  # ✅ added
+            "is_saved",
+            "is_explored",
         )
 
     # new
@@ -414,6 +419,15 @@ class CareerDetailSerializer(serializers.ModelSerializer):
         if profiles is not None:
             self._sync_links(instance, profiles)
         return instance
+    
+    def get_is_saved(self, obj):
+        saved_map = self.context.get("saved_map") or {}
+        return obj.id in saved_map
+
+
+    def get_is_explored(self, obj):
+        explored_map = self.context.get("explored_map") or {}
+        return obj.id in explored_map
 
     # new
     # @transaction.atomic
