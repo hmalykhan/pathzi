@@ -44,27 +44,111 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 
-def send_email_async(subject, message, from_email, recipient_list):
-    """
-    Send email in a background thread to avoid blocking the request.
-    This provides the same performance benefit as async views without DRF compatibility issues.
-    """
-    def _send():
-        try:
-            send_mail(
-                subject=subject,
-                message=message,
-                from_email=from_email,
-                recipient_list=recipient_list,
-                fail_silently=False,
+import jwt
+import requests
+from django.conf import settings
+# from logging import logger
+import requests
+from rest_framework_simplejwt.tokens import RefreshToken
+from asgiref.sync import sync_to_async
+from django.utils.crypto import get_random_string
+from django.contrib.auth.models import User
+from rest_framework.views import APIView
+from rest_framework import status, permissions
+
+
+
+APPLE_KEYS_URL = "https://appleid.apple.com/auth/keys"
+
+
+def get_apple_public_key(kid):
+    keys = requests.get(APPLE_KEYS_URL).json()["keys"]
+    key = next((k for k in keys if k["kid"] == kid), None)
+    if not key:
+        raise Exception("Apple public key not found")
+    return jwt.algorithms.RSAAlgorithm.from_jwk(key)
+
+
+def verify_apple_token(identity_token):
+    header = jwt.get_unverified_header(identity_token)
+    public_key = get_apple_public_key(header["kid"])
+
+    decoded = jwt.decode(
+        identity_token,
+        public_key,
+        audience=settings.APPLE_CLIENT_ID,
+        algorithms=["RS256"],
+    )
+
+    return decoded
+
+class AppleMobileAuthAPI(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        identity_token = request.data.get("identity_token")
+
+        if not identity_token:
+            return Response(
+                {"status": False, "message": "Missing identity_token"},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-            logger.info(f"Email sent successfully to {recipient_list}")
+
+        try:
+            apple_data = verify_apple_token(identity_token)
         except Exception as e:
-            logger.exception(f"Failed to send email to {recipient_list}: {str(e)}")
-    
-    thread = threading.Thread(target=_send, daemon=True)
-    thread.start()
-    logger.info(f"Email sending started in background thread for {recipient_list}")
+            logger.exception("AppleAuth invalid token: %s", str(e))
+            return Response(
+                {"status": False, "message": "Invalid Apple token"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        apple_sub = apple_data.get("sub")
+        email = (apple_data.get("email") or "").strip().lower()
+
+        if not apple_sub:
+            return Response(
+                {"status": False, "message": "Invalid Apple token data"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not email:
+            email = f"{apple_sub}@apple.local"
+
+        username = email.split("@")[0]
+
+        user, created = User.objects.get_or_create(
+            email=email,
+            defaults={"username": username},
+        )
+
+        if created:
+            user.set_password(get_random_string(20))
+            user.save()
+
+        UserProfile.objects.get_or_create(appuser=user, defaults={"age": 0})
+
+        refresh = RefreshToken.for_user(user)
+
+        return Response(
+            {
+                "status": True,
+                "message": "Apple login successful",
+                "data": {
+                    "token": {
+                        "refresh": str(refresh),
+                        "access": str(refresh.access_token),
+                    },
+                    "user": {
+                        "id": user.id,
+                        "username": user.username,
+                        "email": user.email,
+                        "name": user.get_full_name(),
+                    },
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class HomeAPI(APIView):

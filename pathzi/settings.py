@@ -187,7 +187,7 @@ EMAIL_HOST_PASSWORD = config("SENDGRID_API_KEY")  # your API key
 DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL")
 EMAIL_TIMEOUT = 30  # Prevent indefinite hangs on SMTP connections
 
-
+APPLE_CLIENT_ID = config("APPLE_CLIENT_ID")
 
 
 

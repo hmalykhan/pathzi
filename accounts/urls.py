@@ -14,7 +14,8 @@ from accounts.views import (
                             SetPasswordConfirmationGoogleAuthOTP,
                             HomeAPI,
                             GoogleMobileAuthAPI,
-                            Otp_Checker
+                            Otp_Checker,
+                            AppleMobileAuthAPI,
                             )
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
@@ -44,6 +45,7 @@ path("coordinates/<int:pk>/", CurrentUserCoordinateDetailAPI.as_view(), name="my
 
 
 path("auth/google/", GoogleMobileAuthAPI.as_view(), name="google_mobile_auth"),
+path("auth/apple/", AppleMobileAuthAPI.as_view(), name="apple_mobile_auth"),
 
 # keep this if this app has browser app.
 path("google/auth/url/", GoogleAuthURLAPI.as_view(), name="google_auth_url"),

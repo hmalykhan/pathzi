@@ -26,6 +26,7 @@ from apprenticeship.models import Apprenticeship
 from apprenticeship.api.serializers import ApprenticeshipSerializer
 
 
+
 FREE_CAREER_LIMIT = 5
 
 class CareersView(viewsets.ModelViewSet):
@@ -133,7 +134,8 @@ class CareersView(viewsets.ModelViewSet):
             categories.append(k)
 
         if not categories:
-            return Career.objects.none()
+            # return Career.objects.none()
+            return Career.objects.all().order_by("id")
 
         # normalize Career.sub_type in DB the same way
         empty = Value("", output_field=TextField())
