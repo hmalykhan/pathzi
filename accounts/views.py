@@ -55,6 +55,22 @@ from django.utils.crypto import get_random_string
 from django.contrib.auth.models import User
 from rest_framework.views import APIView
 from rest_framework import status, permissions
+import threading
+from django.core.mail import send_mail
+
+
+def send_email_async(subject, message, from_email, recipient_list):
+    def send():
+        send_mail(
+            subject,
+            message,
+            from_email,
+            recipient_list,
+            fail_silently=False,
+        )
+
+    thread = threading.Thread(target=send)
+    thread.start()
 
 
 
