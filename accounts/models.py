@@ -24,6 +24,13 @@ class UserProfile(models.Model):
     city = models.CharField(max_length=200, blank=True, null=True)
     zip_code = models.CharField(max_length=200, blank=True)
     address = models.CharField(max_length=300, blank=True)
+    apple_sub = models.CharField(
+    max_length=255,
+    unique=True,
+    null=True,
+    blank=True,
+    db_index=True,
+    )
 
     category = models.JSONField(default=list, blank=True)  # list of strings
 

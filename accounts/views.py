@@ -8,6 +8,7 @@ from django.db import transaction
 from datetime import timedelta
 
 from django.conf import settings
+from django.core.cache import cache
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.core.mail import send_mail
@@ -75,28 +76,59 @@ def send_email_async(subject, message, from_email, recipient_list):
 
 
 APPLE_KEYS_URL = "https://appleid.apple.com/auth/keys"
+APPLE_ISSUER = "https://appleid.apple.com"
+CACHE_KEY = "apple_public_keys"
+CACHE_TIMEOUT = 60 * 60  # 1 hour
 
 
-def get_apple_public_key(kid):
-    keys = requests.get(APPLE_KEYS_URL).json()["keys"]
-    key = next((k for k in keys if k["kid"] == kid), None)
+# 🔐 Get Apple public keys (cached)
+def get_apple_keys():
+    keys = cache.get(CACHE_KEY)
+    if keys:
+        return keys
+
+    res = requests.get(APPLE_KEYS_URL, timeout=10)
+    res.raise_for_status()
+
+    keys = res.json().get("keys", [])
+    cache.set(CACHE_KEY, keys, CACHE_TIMEOUT)
+    return keys
+
+
+def get_public_key(kid):
+    keys = get_apple_keys()
+    key = next((k for k in keys if k.get("kid") == kid), None)
+
     if not key:
-        raise Exception("Apple public key not found")
+        cache.delete(CACHE_KEY)
+        keys = get_apple_keys()
+        key = next((k for k in keys if k.get("kid") == kid), None)
+
+    if not key:
+        raise ValueError("Apple public key not found")
+
     return jwt.algorithms.RSAAlgorithm.from_jwk(key)
 
 
+# 🔐 Verify Apple token
 def verify_apple_token(identity_token):
     header = jwt.get_unverified_header(identity_token)
-    public_key = get_apple_public_key(header["kid"])
+
+    if header.get("alg") != "RS256":
+        raise ValueError("Invalid algorithm")
+
+    public_key = get_public_key(header.get("kid"))
 
     decoded = jwt.decode(
         identity_token,
         public_key,
-        audience=settings.APPLE_CLIENT_ID,
         algorithms=["RS256"],
+        audience=settings.APPLE_CLIENT_ID,
+        issuer=APPLE_ISSUER,
     )
 
     return decoded
+
 
 class AppleMobileAuthAPI(APIView):
     permission_classes = [permissions.AllowAny]
@@ -111,7 +143,7 @@ class AppleMobileAuthAPI(APIView):
             )
 
         try:
-            apple_data = verify_apple_token(identity_token)
+            data = verify_apple_token(identity_token)
         except Exception as e:
             logger.exception("AppleAuth invalid token: %s", str(e))
             return Response(
@@ -119,8 +151,8 @@ class AppleMobileAuthAPI(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        apple_sub = apple_data.get("sub")
-        email = (apple_data.get("email") or "").strip().lower()
+        apple_sub = (data.get("sub") or "").strip()
+        email = (data.get("email") or "").strip().lower()
 
         if not apple_sub:
             return Response(
@@ -128,23 +160,62 @@ class AppleMobileAuthAPI(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not email:
-            email = f"{apple_sub}@apple.local"
-
+        # fallback email
+        email = email or f"{apple_sub}@apple.local"
         username = email.split("@")[0]
 
-        user, created = User.objects.get_or_create(
-            email=email,
-            defaults={"username": username},
+        try:
+            with transaction.atomic():
+
+                # ✅ 1. Find by apple_sub
+                profile = UserProfile.objects.select_related("appuser").filter(
+                    apple_sub=apple_sub
+                ).first()
+
+                if profile:
+                    user = profile.appuser
+                    created = False
+
+                else:
+                    # ✅ 2. Fallback by email
+                    user = User.objects.filter(email=email).first()
+
+                    if not user:
+                        user = User.objects.create(
+                            username=username,
+                            email=email,
+                        )
+                        user.set_password(get_random_string(20))
+                        user.save(update_fields=["password"])
+                        created = True
+                    else:
+                        created = False
+
+                    # ✅ 3. Attach apple_sub
+                    profile, _ = UserProfile.objects.get_or_create(appuser=user)
+
+                    if not profile.apple_sub:
+                        profile.apple_sub = apple_sub
+                        profile.save(update_fields=["apple_sub"])
+
+                # ensure profile exists
+                UserProfile.objects.get_or_create(appuser=user)
+
+                refresh = RefreshToken.for_user(user)
+
+        except Exception as e:
+            logger.exception("AppleAuth DB error: %s", str(e))
+            return Response(
+                {"status": False, "message": "Login failed, please try again"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        logger.info(
+            "AppleAuth success: user_id=%s email=%s created=%s",
+            user.id,
+            user.email,
+            created,
         )
-
-        if created:
-            user.set_password(get_random_string(20))
-            user.save()
-
-        UserProfile.objects.get_or_create(appuser=user, defaults={"age": 0})
-
-        refresh = RefreshToken.for_user(user)
 
         return Response(
             {
@@ -837,148 +908,366 @@ class ForgotPasswordConfirmationOTP(APIView):
         return Response({"status": True, "message": "Password reset successful"}, status=status.HTTP_200_OK)
 
 
-class GoogleAuthURLAPI(APIView):
-    """
-    GET /auth/google/url/
-    Redirect user to Google login page.
-    """
 
+class GoogleAuthURLAPI(APIView):
     def get(self, request):
         google_auth_base = "https://accounts.google.com/o/oauth2/v2/auth"
+
         params = {
-            "client_id": settings.GOOGLE_CLIENT_ID,
+            "client_id": settings.GOOGLE_WEB_CLIENT_ID,  # ✅ use web client
             "redirect_uri": settings.GOOGLE_REDIRECT_URI,
             "response_type": "code",
             "scope": "openid email profile",
             "access_type": "offline",
             "prompt": "consent",
         }
+
         auth_url = f"{google_auth_base}?{urllib.parse.urlencode(params)}"
-        logger.info("GoogleAuthURL redirect generated")
         return redirect(auth_url)
 
 
 class GoogleCallbackAPI(APIView):
-    """
-    GET /auth/google/callback/?code=XXXX
-    Exchange code -> verify id_token -> create/fetch user -> return tokens
-    """
-
-    async def get(self, request):
+    def get(self, request):
         code = request.GET.get("code")
+
         if not code:
             return Response(
-                {"status": False, "message": "Missing 'code' in callback URL."},
+                {"status": False, "message": "Missing 'code'"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         token_url = "https://oauth2.googleapis.com/token"
+
         payload = {
             "code": code,
-            "client_id": settings.GOOGLE_CLIENT_ID,
+            "client_id": settings.GOOGLE_WEB_CLIENT_ID,
             "client_secret": settings.GOOGLE_CLIENT_SECRET,
             "redirect_uri": settings.GOOGLE_REDIRECT_URI,
             "grant_type": "authorization_code",
         }
 
         try:
-            token_res = await sync_to_async(requests.post)(token_url, data=payload)
+            token_res = requests.post(token_url, data=payload)
             token_json = token_res.json()
         except Exception as e:
-            logger.exception("GoogleCallback token exchange failed: %s", str(e))
             return Response(
-                {"status": False, "message": "Failed to exchange code for tokens."},
+                {"status": False, "message": "Token exchange failed"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         id_token_str = token_json.get("id_token")
-        print("ID TOKEN:", id_token_str)
+
         if not id_token_str:
-            logger.warning("GoogleCallback: missing id_token in response")
             return Response(
-                {"status": False, "message": "Failed to exchange code for tokens."},
+                {"status": False, "message": "No id_token received"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ✅ Print for terminal testing
+        print("\n===== GOOGLE ID TOKEN =====")
+        print(id_token_str)
+        print("===== END TOKEN =====\n")
+
+        # ✅ Optional: decode without strict client check
+        try:
+            idinfo = google_id_token.verify_oauth2_token(
+                id_token_str,
+                google_requests.Request(),
+            )
+        except Exception:
+            idinfo = {}
+
+        # ✅ Return token in response for easy copy (TEST ONLY)
+        return Response(
+            {
+                "status": True,
+                "id_token": id_token_str,
+                "decoded": {
+                    "email": idinfo.get("email"),
+                    "aud": idinfo.get("aud"),
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    
+class GoogleMobileAuthAPI(APIView):
+    """
+    Flutter flow:
+    - Flutter gets Google idToken using Google Sign-In SDK
+    - Flutter sends it here
+    - Backend verifies it and returns SimpleJWT tokens
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        id_token_str = request.data.get("id_token")
+        if not id_token_str:
+            return Response(
+                {"status": False, "message": "Missing 'id_token'"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
-            idinfo = await sync_to_async(google_id_token.verify_oauth2_token)(
+            idinfo = google_id_token.verify_oauth2_token(
                 id_token_str,
                 google_requests.Request(),
-                settings.GOOGLE_CLIENT_ID,
             )
+
+            client_ids = {
+                settings.GOOGLE_WEB_CLIENT_ID,
+                settings.GOOGLE_ANDROID_CLIENT_ID,
+                settings.GOOGLE_IOS_CLIENT_ID,
+            }
+            client_ids = {cid for cid in client_ids if cid}
+
+            if idinfo.get("aud") not in client_ids:
+                raise ValueError("Invalid audience")
+
         except Exception as e:
-            logger.exception("GoogleCallback: invalid ID token: %s", str(e))
+            logger.exception("GoogleMobileAuth invalid token: %s", str(e))
             return Response(
-                {"status": False, "message": "Invalid ID token."},
+                {"status": False, "message": "Invalid Google token"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         email = (idinfo.get("email") or "").strip().lower()
         if not email:
             return Response(
-                {"status": False, "message": "Google token missing email."},
+                {"status": False, "message": "Google token missing email"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        first_name = idinfo.get("given_name", "") or ""
-        last_name = idinfo.get("family_name", "") or ""
+        if idinfo.get("email_verified") is False:
+            return Response(
+                {"status": False, "message": "Google email is not verified"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        first_name = (idinfo.get("given_name") or "").strip()
+        last_name = (idinfo.get("family_name") or "").strip()
         username = email.split("@")[0]
 
-        user, created = await sync_to_async(User.objects.get_or_create, thread_sensitive=True)(
-            email=email,
-            defaults={
-                "username": username,
-                "first_name": first_name,
-                "last_name": last_name,
-            },
-        )
+        try:
+            with transaction.atomic():
+                user, created = User.objects.get_or_create(
+                    email=email,
+                    defaults={
+                        "username": username,
+                        "first_name": first_name,
+                        "last_name": last_name,
+                    },
+                )
 
-        if created:
-            # set random password for Django auth
-            random_password = get_random_string(length=12)
-            user.set_password(random_password)
-            await sync_to_async(user.save, thread_sensitive=True)()
-            await sync_to_async(UserProfile.objects.get_or_create, thread_sensitive=True)(appuser=user, defaults={"age": 0})
+                update_fields = []
 
-        refresh = RefreshToken.for_user(user)
+                # Keep existing behavior, but safely fill missing fields
+                if not user.username:
+                    user.username = username
+                    update_fields.append("username")
 
-        response_data = {
-            "status": True,
-            "message": "Google login successful.",
-            "token": {
-                "refresh": str(refresh),
-                "access": str(refresh.access_token),
-            },
-            "user": {
-                "id": user.id,
-                "username": user.username,
-                "email": user.email,
-                "name": user.get_full_name(),
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-            },
-        }
+                # Safe sync with Google profile without changing response behavior
+                if user.first_name != first_name:
+                    user.first_name = first_name
+                    update_fields.append("first_name")
 
-        # keep your serializer if you want, but don’t raise default error format
-        serializer = GoogleLoginResponseSerializer(data=response_data)
-        if not serializer.is_valid():
-            errors = serializer.errors
-            first_key = next(iter(errors), None)
-            if first_key:
-                val = errors[first_key]
-                msg = val[0] if isinstance(val, list) and val else str(val)
-            else:
-                msg = "Invalid data."
-            logger.warning("GoogleCallback response serialization failed: %s", str(msg))
+                if user.last_name != last_name:
+                    user.last_name = last_name
+                    update_fields.append("last_name")
+
+                if created:
+                    user.set_password(get_random_string(20))
+                    update_fields.append("password")
+
+                if update_fields:
+                    user.save(update_fields=update_fields)
+
+                UserProfile.objects.get_or_create(
+                    appuser=user,
+                    defaults={"age": 0},
+                )
+
+                refresh = RefreshToken.for_user(user)
+
+        except Exception as e:
+            logger.exception("GoogleMobileAuth database error: %s", str(e))
             return Response(
-                {"status": False, "message": "Google login failed."},
-                status=status.HTTP_400_BAD_REQUEST,
+                {"status": False, "message": "Login failed, please try again"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        logger.info("GoogleCallback success: user_id=%s email=%s", user.id, user.email)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        logger.info(
+            "GoogleMobileAuth success: user_id=%s email=%s",
+            user.id,
+            user.email,
+        )
+
+        return Response(
+            {
+                "status": True,
+                "message": "Google login successful",
+                "data": {
+                    "token": {
+                        "refresh": str(refresh),
+                        "access": str(refresh.access_token),
+                    },
+                    "user": {
+                        "id": user.id,
+                        "username": user.username,
+                        "email": user.email,
+                        "name": user.get_full_name(),
+                        "first_name": user.first_name,
+                        "last_name": user.last_name,
+                    },
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
+# Old
+# class GoogleAuthURLAPI(APIView):
+#     """
+#     GET /auth/google/url/
+#     Redirect user to Google login page.
+#     """
+
+#     def get(self, request):
+#         google_auth_base = "https://accounts.google.com/o/oauth2/v2/auth"
+#         params = {
+#             "client_id": settings.GOOGLE_CLIENT_ID,
+#             "redirect_uri": settings.GOOGLE_REDIRECT_URI,
+#             "response_type": "code",
+#             "scope": "openid email profile",
+#             "access_type": "offline",
+#             "prompt": "consent",
+#         }
+#         auth_url = f"{google_auth_base}?{urllib.parse.urlencode(params)}"
+#         logger.info("GoogleAuthURL redirect generated")
+#         return redirect(auth_url)
+
+
+# class GoogleCallbackAPI(APIView):
+#     """
+#     GET /auth/google/callback/?code=XXXX
+#     Exchange code -> verify id_token -> create/fetch user -> return tokens
+#     """
+
+#     async def get(self, request):
+#         code = request.GET.get("code")
+#         if not code:
+#             return Response(
+#                 {"status": False, "message": "Missing 'code' in callback URL."},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         token_url = "https://oauth2.googleapis.com/token"
+#         payload = {
+#             "code": code,
+#             "client_id": settings.GOOGLE_CLIENT_ID,
+#             "client_secret": settings.GOOGLE_CLIENT_SECRET,
+#             "redirect_uri": settings.GOOGLE_REDIRECT_URI,
+#             "grant_type": "authorization_code",
+#         }
+
+#         try:
+#             token_res = await sync_to_async(requests.post)(token_url, data=payload)
+#             token_json = token_res.json()
+#         except Exception as e:
+#             logger.exception("GoogleCallback token exchange failed: %s", str(e))
+#             return Response(
+#                 {"status": False, "message": "Failed to exchange code for tokens."},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         id_token_str = token_json.get("id_token")
+#         print("ID TOKEN:", id_token_str)
+#         if not id_token_str:
+#             logger.warning("GoogleCallback: missing id_token in response")
+#             return Response(
+#                 {"status": False, "message": "Failed to exchange code for tokens."},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         try:
+#             idinfo = await sync_to_async(google_id_token.verify_oauth2_token)(
+#                 id_token_str,
+#                 google_requests.Request(),
+#                 settings.GOOGLE_CLIENT_ID,
+#             )
+#         except Exception as e:
+#             logger.exception("GoogleCallback: invalid ID token: %s", str(e))
+#             return Response(
+#                 {"status": False, "message": "Invalid ID token."},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         email = (idinfo.get("email") or "").strip().lower()
+#         if not email:
+#             return Response(
+#                 {"status": False, "message": "Google token missing email."},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         first_name = idinfo.get("given_name", "") or ""
+#         last_name = idinfo.get("family_name", "") or ""
+#         username = email.split("@")[0]
+
+#         user, created = await sync_to_async(User.objects.get_or_create, thread_sensitive=True)(
+#             email=email,
+#             defaults={
+#                 "username": username,
+#                 "first_name": first_name,
+#                 "last_name": last_name,
+#             },
+#         )
+
+#         if created:
+#             # set random password for Django auth
+#             random_password = get_random_string(length=12)
+#             user.set_password(random_password)
+#             await sync_to_async(user.save, thread_sensitive=True)()
+#             await sync_to_async(UserProfile.objects.get_or_create, thread_sensitive=True)(appuser=user, defaults={"age": 0})
+
+#         refresh = RefreshToken.for_user(user)
+
+#         response_data = {
+#             "status": True,
+#             "message": "Google login successful.",
+#             "token": {
+#                 "refresh": str(refresh),
+#                 "access": str(refresh.access_token),
+#             },
+#             "user": {
+#                 "id": user.id,
+#                 "username": user.username,
+#                 "email": user.email,
+#                 "name": user.get_full_name(),
+#                 "first_name": user.first_name,
+#                 "last_name": user.last_name,
+#             },
+#         }
+
+#         # keep your serializer if you want, but don’t raise default error format
+#         serializer = GoogleLoginResponseSerializer(data=response_data)
+#         if not serializer.is_valid():
+#             errors = serializer.errors
+#             first_key = next(iter(errors), None)
+#             if first_key:
+#                 val = errors[first_key]
+#                 msg = val[0] if isinstance(val, list) and val else str(val)
+#             else:
+#                 msg = "Invalid data."
+#             logger.warning("GoogleCallback response serialization failed: %s", str(msg))
+#             return Response(
+#                 {"status": False, "message": "Google login failed."},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         logger.info("GoogleCallback success: user_id=%s email=%s", user.id, user.email)
+#         return Response(serializer.data, status=status.HTTP_200_OK)
+
+# Old
 # class GoogleMobileAuthAPI(APIView):
 #     """
 #     Flutter flow:
@@ -1065,106 +1354,3 @@ class GoogleCallbackAPI(APIView):
 #             },
 #             status=status.HTTP_200_OK,
 #         )
-
-
-class GoogleMobileAuthAPI(APIView):
-    """
-    Flutter flow:
-    - Flutter gets Google idToken using Google Sign-In SDK
-    - Flutter sends it here
-    - Backend verifies it and returns SimpleJWT tokens
-    """
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request):
-        id_token_str = request.data.get("id_token")
-        if not id_token_str:
-            return Response(
-                {"status": False, "message": "Missing 'id_token'"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            # ✅ Sync call (removed async)
-            idinfo = google_id_token.verify_oauth2_token(
-                id_token_str,
-                google_requests.Request(),
-            )
-
-            # ✅ Multiple client IDs check (same as before)
-            CLIENT_IDS = [
-                settings.GOOGLE_WEB_CLIENT_ID,
-                settings.GOOGLE_ANDROID_CLIENT_ID,
-                settings.GOOGLE_IOS_CLIENT_ID,
-            ]
-
-            if idinfo.get("aud") not in CLIENT_IDS:
-                raise ValueError("Invalid audience")
-
-        except Exception as e:
-            logger.exception("GoogleMobileAuth invalid token: %s", str(e))
-            return Response(
-                {"status": False, "message": "Invalid Google token"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        email = (idinfo.get("email") or "").strip().lower()
-        if not email:
-            return Response(
-                {"status": False, "message": "Google token missing email"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if idinfo.get("email_verified") is False:
-            return Response(
-                {"status": False, "message": "Google email is not verified"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        first_name = idinfo.get("given_name", "") or ""
-        last_name = idinfo.get("family_name", "") or ""
-        username = email.split("@")[0]
-
-        # ✅ Sync ORM calls
-        user, created = User.objects.get_or_create(
-            email=email,
-            defaults={
-                "username": username,
-                "first_name": first_name,
-                "last_name": last_name,
-            },
-        )
-
-        if created:
-            user.set_password(get_random_string(20))
-            user.save()
-
-        UserProfile.objects.get_or_create(
-            appuser=user,
-            defaults={"age": 0},
-        )
-
-        refresh = RefreshToken.for_user(user)
-
-        logger.info("GoogleMobileAuth success: user_id=%s email=%s", user.id, user.email)
-        return Response(
-            {
-                "status": True,
-                "message": "Google login successful",
-                "data": {
-                    "token": {
-                        "refresh": str(refresh),
-                        "access": str(refresh.access_token),
-                    },
-                    "user": {
-                        "id": user.id,
-                        "username": user.username,
-                        "email": user.email,
-                        "name": user.get_full_name(),
-                        "first_name": user.first_name,
-                        "last_name": user.last_name,
-                    },
-                },
-            },
-            status=status.HTTP_200_OK,
-        )
