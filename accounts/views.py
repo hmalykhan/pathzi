@@ -892,6 +892,7 @@ class GoogleCallbackAPI(APIView):
             )
 
         id_token_str = token_json.get("id_token")
+        print("ID TOKEN:", id_token_str)
         if not id_token_str:
             logger.warning("GoogleCallback: missing id_token in response")
             return Response(
@@ -978,6 +979,94 @@ class GoogleCallbackAPI(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+# class GoogleMobileAuthAPI(APIView):
+#     """
+#     Flutter flow:
+#     - Flutter gets Google idToken using Google Sign-In SDK
+#     - Flutter sends it here
+#     - Backend verifies it and returns SimpleJWT tokens
+#     """
+#     permission_classes = [permissions.AllowAny]
+
+#     async def post(self, request):
+#         id_token_str = request.data.get("id_token")
+#         if not id_token_str:
+#             return Response(
+#                 {"status": False, "message": "Missing 'id_token'"},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         try:
+#             idinfo = await sync_to_async(google_id_token.verify_oauth2_token)(
+#                 id_token_str,
+#                 google_requests.Request(),
+#                 settings.GOOGLE_CLIENT_ID,
+#             )
+#         except Exception as e:
+#             logger.exception("GoogleMobileAuth invalid token: %s", str(e))
+#             return Response(
+#                 {"status": False, "message": "Invalid Google token"},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         email = (idinfo.get("email") or "").strip().lower()
+#         if not email:
+#             return Response(
+#                 {"status": False, "message": "Google token missing email"},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         if idinfo.get("email_verified") is False:
+#             return Response(
+#                 {"status": False, "message": "Google email is not verified"},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         first_name = idinfo.get("given_name", "") or ""
+#         last_name = idinfo.get("family_name", "") or ""
+#         username = email.split("@")[0]
+
+#         user, created = await sync_to_async(User.objects.get_or_create, thread_sensitive=True)(
+#             email=email,
+#             defaults={
+#                 "username": username,
+#                 "first_name": first_name,
+#                 "last_name": last_name,
+#             },
+#         )
+
+#         if created:
+#             user.set_password(get_random_string(20))
+#             await sync_to_async(user.save, thread_sensitive=True)()
+
+#         await sync_to_async(UserProfile.objects.get_or_create, thread_sensitive=True)(appuser=user, defaults={"age": 0})
+
+#         refresh = RefreshToken.for_user(user)
+
+#         logger.info("GoogleMobileAuth success: user_id=%s email=%s", user.id, user.email)
+#         return Response(
+#             {
+#                 "status": True,
+#                 "message": "Google login successful",
+#                 "data": {
+#                     "token": {
+#                         "refresh": str(refresh),
+#                         "access": str(refresh.access_token),
+#                     },
+#                     "user": {
+#                         "id": user.id,
+#                         "username": user.username,
+#                         "email": user.email,
+#                         "name": user.get_full_name(),
+#                         "first_name": user.first_name,
+#                         "last_name": user.last_name,
+#                     },
+#                 },
+#             },
+#             status=status.HTTP_200_OK,
+#         )
+
+
 class GoogleMobileAuthAPI(APIView):
     """
     Flutter flow:
@@ -987,7 +1076,7 @@ class GoogleMobileAuthAPI(APIView):
     """
     permission_classes = [permissions.AllowAny]
 
-    async def post(self, request):
+    def post(self, request):
         id_token_str = request.data.get("id_token")
         if not id_token_str:
             return Response(
@@ -996,11 +1085,22 @@ class GoogleMobileAuthAPI(APIView):
             )
 
         try:
-            idinfo = await sync_to_async(google_id_token.verify_oauth2_token)(
+            # ✅ Sync call (removed async)
+            idinfo = google_id_token.verify_oauth2_token(
                 id_token_str,
                 google_requests.Request(),
-                settings.GOOGLE_CLIENT_ID,
             )
+
+            # ✅ Multiple client IDs check (same as before)
+            CLIENT_IDS = [
+                settings.GOOGLE_WEB_CLIENT_ID,
+                settings.GOOGLE_ANDROID_CLIENT_ID,
+                settings.GOOGLE_IOS_CLIENT_ID,
+            ]
+
+            if idinfo.get("aud") not in CLIENT_IDS:
+                raise ValueError("Invalid audience")
+
         except Exception as e:
             logger.exception("GoogleMobileAuth invalid token: %s", str(e))
             return Response(
@@ -1025,7 +1125,8 @@ class GoogleMobileAuthAPI(APIView):
         last_name = idinfo.get("family_name", "") or ""
         username = email.split("@")[0]
 
-        user, created = await sync_to_async(User.objects.get_or_create, thread_sensitive=True)(
+        # ✅ Sync ORM calls
+        user, created = User.objects.get_or_create(
             email=email,
             defaults={
                 "username": username,
@@ -1036,9 +1137,12 @@ class GoogleMobileAuthAPI(APIView):
 
         if created:
             user.set_password(get_random_string(20))
-            await sync_to_async(user.save, thread_sensitive=True)()
+            user.save()
 
-        await sync_to_async(UserProfile.objects.get_or_create, thread_sensitive=True)(appuser=user, defaults={"age": 0})
+        UserProfile.objects.get_or_create(
+            appuser=user,
+            defaults={"age": 0},
+        )
 
         refresh = RefreshToken.for_user(user)
 

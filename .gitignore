@@ -1,20 +1,44 @@
 # Environment variables
 .env
+.env.*
 
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 
 # Virtual environment
 venv/
 env/
+.venv/
 
 # Django stuff
 *.log
+db.sqlite3
+db.sqlite3-journal
 staticfiles/
 media/
+
+# Migrations (optional – depends on team)
+# */migrations/*
+# !*/migrations/__init__.py
 
 # IDE
 .vscode/
 .idea/
 .DS_Store
+
+# OS
+Thumbs.db
+
+# Backup files
+neon_backups/
+*.dump
+
+# Coverage / testing
+.coverage
+htmlcov/
+
+# Build
+dist/
+build/

@@ -49,7 +49,8 @@ path("auth/apple/", AppleMobileAuthAPI.as_view(), name="apple_mobile_auth"),
 
 # keep this if this app has browser app.
 path("google/auth/url/", GoogleAuthURLAPI.as_view(), name="google_auth_url"),
-path("apigoogle/callback/", GoogleCallbackAPI.as_view(), name="google_auth_callback"),
+# path("apigoogle/callback/", GoogleCallbackAPI.as_view(), name="google_auth_callback"),
+path("auth/google/callback/", GoogleCallbackAPI.as_view(), name="google_auth_callback"),
 
 
 path("auth/password/set/request-otp/", SetPasswordGoogleAuthAPI.as_view(), name="google_auth_set_password"),
