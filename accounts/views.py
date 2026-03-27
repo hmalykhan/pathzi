@@ -60,6 +60,35 @@ import threading
 from django.core.mail import send_mail
 
 
+
+class AppleAuthURLAPI(APIView):
+    def get(self, request):
+        params = {
+            "client_id": settings.APPLE_CLIENT_ID,
+            "redirect_uri": settings.APPLE_REDIRECT_URI,
+            "response_type": "code id_token",
+            "scope": "name email",
+            "response_mode": "form_post",
+        }
+
+        url = "https://appleid.apple.com/auth/authorize?" + urllib.parse.urlencode(params)
+        return redirect(url)
+    
+class AppleCallbackAPI(APIView):
+    def post(self, request):
+        identity_token = request.data.get("id_token")
+
+        if not identity_token:
+            return Response({"error": "No id_token received"})
+
+        logger.info("APPLE TEST TOKEN: %s", identity_token)
+
+        return Response({
+            "message": "Token received successfully",
+            "id_token": identity_token   # ⚠️ ONLY FOR TESTING
+        })
+
+
 def send_email_async(subject, message, from_email, recipient_list):
     def send():
         send_mail(

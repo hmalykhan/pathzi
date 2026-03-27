@@ -16,6 +16,8 @@ from accounts.views import (
                             GoogleMobileAuthAPI,
                             Otp_Checker,
                             AppleMobileAuthAPI,
+                            AppleAuthURLAPI,
+                            AppleCallbackAPI
                             )
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
@@ -51,7 +53,8 @@ path("auth/apple/", AppleMobileAuthAPI.as_view(), name="apple_mobile_auth"),
 path("google/auth/url/", GoogleAuthURLAPI.as_view(), name="google_auth_url"),
 # path("apigoogle/callback/", GoogleCallbackAPI.as_view(), name="google_auth_callback"),
 path("auth/google/callback/", GoogleCallbackAPI.as_view(), name="google_auth_callback"),
-
+path("apple/auth/url/", AppleAuthURLAPI.as_view()),
+path("auth/apple/callback/", AppleCallbackAPI.as_view()),
 
 path("auth/password/set/request-otp/", SetPasswordGoogleAuthAPI.as_view(), name="google_auth_set_password"),
 path("auth/password/set/confirm/", SetPasswordConfirmationGoogleAuthOTP.as_view()),
