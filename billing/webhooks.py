@@ -21,11 +21,20 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 _MISSING = object()
 
 
+# def _json_safe(obj):
+#     try:
+#         return json.loads(json.dumps(obj, default=str))
+#     except Exception:
+#         return {"raw": str(obj)}
+
 def _json_safe(obj):
     try:
+        if hasattr(obj, "to_dict"):
+            obj = obj.to_dict()
+
         return json.loads(json.dumps(obj, default=str))
     except Exception:
-        return {"raw": str(obj)}
+        return {"raw": repr(obj)}
 
 
 def _subscription_price_id(sub_obj):
@@ -131,6 +140,7 @@ def stripe_webhook(request):
         _, created = StripeEvent.objects.get_or_create(
             event_id=event["id"],
             defaults={"event_type": event["type"], "payload": _json_safe(event)},
+
         )
     except IntegrityError:
         return HttpResponse(status=200)
