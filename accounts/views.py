@@ -58,7 +58,7 @@ from rest_framework.views import APIView
 from rest_framework import status, permissions
 import threading
 from django.core.mail import send_mail
-
+from jwt import PyJWKClient
 
 
 class AppleAuthURLAPI(APIView):
@@ -80,8 +80,9 @@ class AppleCallbackAPI(APIView):
 
         if not identity_token:
             return Response({"error": "No id_token received"})
-
-        logger.info("APPLE TEST TOKEN: %s", identity_token)
+        
+        # while debuggin time uncomment it.
+        # logger.info("APPLE TEST TOKEN: %s", identity_token)
 
         return Response({
             "message": "Token received successfully",
@@ -111,53 +112,66 @@ CACHE_TIMEOUT = 60 * 60  # 1 hour
 
 
 # 🔐 Get Apple public keys (cached)
-def get_apple_keys():
-    keys = cache.get(CACHE_KEY)
-    if keys:
-        return keys
+# def get_apple_keys():
+#     keys = cache.get(CACHE_KEY)
+#     if keys:
+#         return keys
 
-    res = requests.get(APPLE_KEYS_URL, timeout=10)
-    res.raise_for_status()
+#     res = requests.get(APPLE_KEYS_URL, timeout=10)
+#     res.raise_for_status()
 
-    keys = res.json().get("keys", [])
-    cache.set(CACHE_KEY, keys, CACHE_TIMEOUT)
-    return keys
+#     keys = res.json().get("keys", [])
+#     cache.set(CACHE_KEY, keys, CACHE_TIMEOUT)
+#     return keys
 
 
-def get_public_key(kid):
-    keys = get_apple_keys()
-    key = next((k for k in keys if k.get("kid") == kid), None)
+# def get_public_key(kid):
+#     keys = get_apple_keys()
+#     key = next((k for k in keys if k.get("kid") == kid), None)
 
-    if not key:
-        cache.delete(CACHE_KEY)
-        keys = get_apple_keys()
-        key = next((k for k in keys if k.get("kid") == kid), None)
+#     if not key:
+#         cache.delete(CACHE_KEY)
+#         keys = get_apple_keys()
+#         key = next((k for k in keys if k.get("kid") == kid), None)
 
-    if not key:
-        raise ValueError("Apple public key not found")
+#     if not key:
+#         raise ValueError("Apple public key not found")
 
-    return jwt.algorithms.RSAAlgorithm.from_jwk(key)
+#     return jwt.algorithms.RSAAlgorithm.from_jwk(key)
 
 
 # 🔐 Verify Apple token
+# def verify_apple_token(identity_token):
+#     header = jwt.get_unverified_header(identity_token)
+
+#     if header.get("alg") != "RS256":
+#         raise ValueError("Invalid algorithm")
+
+#     public_key = get_public_key(header.get("kid"))
+
+#     decoded = jwt.decode(
+#         identity_token,
+#         public_key,
+#         algorithms=["RS256"],
+#         audience=settings.APPLE_CLIENT_ID,
+#         issuer=APPLE_ISSUER,
+#     )
+
+#     return decoded
+
 def verify_apple_token(identity_token):
-    header = jwt.get_unverified_header(identity_token)
-
-    if header.get("alg") != "RS256":
-        raise ValueError("Invalid algorithm")
-
-    public_key = get_public_key(header.get("kid"))
+    jwks_client = PyJWKClient("https://appleid.apple.com/auth/keys")
+    signing_key = jwks_client.get_signing_key_from_jwt(identity_token)
 
     decoded = jwt.decode(
         identity_token,
-        public_key,
+        signing_key.key,
         algorithms=["RS256"],
         audience=settings.APPLE_CLIENT_ID,
-        issuer=APPLE_ISSUER,
+        issuer="https://appleid.apple.com",
     )
 
     return decoded
-
 
 class AppleMobileAuthAPI(APIView):
     permission_classes = [permissions.AllowAny]
@@ -170,18 +184,30 @@ class AppleMobileAuthAPI(APIView):
                 {"status": False, "message": "Missing identity_token"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        payload = jwt.decode(identity_token, options={"verify_signature": False})
+        print("APPLE TOKEN PAYLOAD:", payload)
 
         try:
             data = verify_apple_token(identity_token)
         except Exception as e:
-            logger.exception("AppleAuth invalid token: %s", str(e))
+            # uncomment while debuggin.
+            # logger.exception("AppleAuth invalid token: %s", str(e))
+            logger.exception("AppleAuth invalid token.")
             return Response(
-                {"status": False, "message": "Invalid Apple token"},
+                            {
+                "status": False,
+                "code": "APPLE_TOKEN_INVALID",
+                "message": "Invalid Apple token"
+            },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         apple_sub = (data.get("sub") or "").strip()
         email = (data.get("email") or "").strip().lower()
+
+        if not data.get("email_verified", False):
+            return Response(
+                {"status": False, "message": "Apple email not verified"},)
 
         if not apple_sub:
             return Response(
@@ -191,7 +217,9 @@ class AppleMobileAuthAPI(APIView):
 
         # fallback email
         email = email or f"{apple_sub}@apple.local"
-        username = email.split("@")[0]
+        is_private_email = email.endswith("@privaterelay.appleid.com")
+        # username = email.split("@")[0]
+        username = f"apple_{apple_sub[:10]}"
 
         try:
             with transaction.atomic():
@@ -224,6 +252,8 @@ class AppleMobileAuthAPI(APIView):
                     profile, _ = UserProfile.objects.get_or_create(appuser=user)
 
                     if not profile.apple_sub:
+                        # profile.is_apple_private_email = is_private_email
+                        # profile.save(update_fields=["apple_sub", "is_apple_private_email"])
                         profile.apple_sub = apple_sub
                         profile.save(update_fields=["apple_sub"])
 
