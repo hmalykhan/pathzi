@@ -29,12 +29,13 @@ _MISSING = object()
 
 def _json_safe(obj):
     try:
-        if hasattr(obj, "to_dict"):
-            obj = obj.to_dict()
+        # 👇 only add this small guard
+        if hasattr(obj, "_to_dict_recursive"):
+            obj = obj._to_dict_recursive()
 
         return json.loads(json.dumps(obj, default=str))
     except Exception:
-        return {"raw": repr(obj)}
+        return {"raw": str(obj)}
 
 
 def _subscription_price_id(sub_obj):
