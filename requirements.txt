@@ -19,7 +19,7 @@ djangorestframework-simplejwt
 dj_database_url
 psycopg
 argon2-cffi
-stripe
+stripe==14.1.0
 django-environ
 python-dotenv
 django-extensions
