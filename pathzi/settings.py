@@ -198,6 +198,7 @@ DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL")
 EMAIL_TIMEOUT = 30  # Prevent indefinite hangs on SMTP connections
 
 APPLE_CLIENT_ID = config("APPLE_CLIENT_ID")
+APPLE_CLIENT_ID_FLUTTER = config("APPLE_CLEINT_ID_FLUTTER")
 
 
 

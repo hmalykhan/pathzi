@@ -167,7 +167,7 @@ def verify_apple_token(identity_token):
         identity_token,
         signing_key.key,
         algorithms=["RS256"],
-        audience=settings.APPLE_CLIENT_ID,
+        audience=[settings.APPLE_CLIENT_ID,settings.APPLE_CLIENT_ID_FLUTTER],
         issuer="https://appleid.apple.com",
     )
 
