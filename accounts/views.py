@@ -219,6 +219,7 @@ class AppleMobileAuthAPI(APIView):
         # fallback email
         email = email or f"{apple_sub}@apple.local"
         is_private_email = email.endswith("@privaterelay.appleid.com")
+        # old
         # username = email.split("@")[0]
         username = f"apple_{apple_sub[:10]}"
 
@@ -253,10 +254,11 @@ class AppleMobileAuthAPI(APIView):
                     profile, _ = UserProfile.objects.get_or_create(appuser=user)
 
                     if not profile.apple_sub:
-                        # profile.is_apple_private_email = is_private_email
-                        # profile.save(update_fields=["apple_sub", "is_apple_private_email"])
                         profile.apple_sub = apple_sub
-                        profile.save(update_fields=["apple_sub"])
+                        profile.is_apple_private_email = is_private_email
+                        profile.save(update_fields=["apple_sub", "is_apple_private_email"])
+                        # uncomment it if you dont use the is_apple_private_email
+                        # profile.save(update_fields=["apple_sub"])
 
                 # ensure profile exists
                 UserProfile.objects.get_or_create(appuser=user)

@@ -31,6 +31,7 @@ class UserProfile(models.Model):
     blank=True,
     db_index=True,
     )
+    is_apple_private_email = models.BooleanField(default=False)
 
     category = models.JSONField(default=list, blank=True)  # list of strings
 
