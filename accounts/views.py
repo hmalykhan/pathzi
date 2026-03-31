@@ -175,6 +175,7 @@ def verify_apple_token(identity_token):
 
 class AppleMobileAuthAPI(APIView):
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     def post(self, request):
         identity_token = request.data.get("identity_token")
