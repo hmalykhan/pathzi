@@ -23,3 +23,4 @@ stripe==14.1.0
 django-environ
 python-dotenv
 django-extensions
+cryptography==46.0.5
