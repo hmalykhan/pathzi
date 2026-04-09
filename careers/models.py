@@ -2,6 +2,8 @@
 import uuid
 from django.db import models
 from accounts.models import UserProfile
+from pgvector.django import VectorField
+
 
 SCRAPED_CAREERJOB_TABLE = "fetch_careerjob"
 SCRAPED_SCRAPELOG_TABLE = "fetch_jobscrapelog"
@@ -133,3 +135,22 @@ class UserExploredCareer(models.Model):
 
     def __str__(self):
         return f"{self.user_profile_id} - {self.career_id}"
+    
+
+class CareerEmbedding(models.Model):
+    career = models.OneToOneField(
+        CareerJob,
+        on_delete=models.CASCADE,
+        related_name="embedding_record",
+    )
+    embedding = VectorField(dimensions=384)
+    source_text = models.TextField(blank=True, default="")
+    model_name = models.CharField(max_length=100, blank=True, default="all-MiniLM-L6-v2")
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = "fetch_careerembedding"
+
+    def __str__(self):
+        return f"Embedding<{self.career_id}>"

@@ -25,6 +25,7 @@ from jobs.api.serializers import JobsSerializer
 from apprenticeship.models import Apprenticeship
 from apprenticeship.api.serializers import ApprenticeshipSerializer
 
+from accounts.services.career_recommender import recommend_careers_for_user
 
 
 FREE_CAREER_LIMIT = 5
@@ -345,16 +346,77 @@ class CareersView(viewsets.ModelViewSet):
     # -----------------------
     # list/retrieve unchanged
     # -----------------------
-    def list(self, request, *args, **kwargs):
-        qs = self.get_queryset()
-        careers = list(qs)
 
-        report_map = self._build_report_map([c.id for c in careers])
+    # original
+    # def list(self, request, *args, **kwargs):
+    #     qs = self.get_queryset()
+    #     careers = list(qs)
+
+    #     report_map = self._build_report_map([c.id for c in careers])
+
+    #     serializer = CareerListSerializer(
+    #         careers,
+    #         many=True,
+    #         context={"request": request, "report_map": report_map},
+    #     )
+    #     return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+    def list(self, request, *args, **kwargs):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response([], status=status.HTTP_200_OK)
+
+        profile = self._profile_cached
+        if not profile:
+            return Response([], status=status.HTTP_200_OK)
+
+        saved_ids = UserSavedCareer.objects.filter(
+            user_profile=profile
+        ).values_list("career_id", flat=True)
+
+        saved_careers = list(
+            Career.objects.filter(id__in=saved_ids).distinct()
+        )
+
+        explored_careers = list(
+            Career.objects.filter(
+                explored_user_links__user_profile=profile
+            ).distinct()
+        )
+
+        rec_result = recommend_careers_for_user(
+            user=user,
+            saved_careers=saved_careers,
+            explored_careers=explored_careers,
+            top_k=10,
+        )
+
+        recommended_ids = [item["career_id"] for item in rec_result["recommendations"]]
+
+        careers_qs = Career.objects.filter(id__in=recommended_ids)
+        careers_by_id = {career.id: career for career in careers_qs}
+
+        careers = [
+            careers_by_id[cid]
+            for cid in recommended_ids
+            if cid in careers_by_id
+        ]
+
+        career_ids = [c.id for c in careers]
+        report_map = self._build_report_map(career_ids)
+        saved_map = self._build_saved_map(career_ids)
+        explored_map = self._build_explored_map(career_ids)
 
         serializer = CareerListSerializer(
             careers,
             many=True,
-            context={"request": request, "report_map": report_map},
+            context={
+                "request": request,
+                "report_map": report_map,
+                "saved_map": saved_map,
+                "explored_map": explored_map,
+            },
         )
         return Response(serializer.data, status=status.HTTP_200_OK)
 

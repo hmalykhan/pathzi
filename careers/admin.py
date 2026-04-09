@@ -1,13 +1,9 @@
-# careers/admin.py
-
 from django.contrib import admin
 from django.utils.html import format_html
-from accounts.models import UserProfile
 
-from .models import CareerJob, CareerScrapeLog, Career
+from .models import CareerJob, CareerScrapeLog, Career, CareerEmbedding
 
 
-# --- Make admin read-only (no add/change/delete) ---
 class ReadOnlyAdminMixin:
     def has_add_permission(self, request):
         return False
@@ -18,10 +14,9 @@ class ReadOnlyAdminMixin:
     def has_delete_permission(self, request, obj=None):
         return False
 
-    actions = None  # optional: disables bulk delete action
+    actions = None
 
 
-# --- Scrape log admin (same as project 1 style) ---
 @admin.register(CareerScrapeLog)
 class CareerScrapeLogAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = ("created_at", "run_id", "status", "route", "sub_type", "job_slug")
@@ -31,7 +26,6 @@ class CareerScrapeLogAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     readonly_fields = ("created_at",)
 
 
-# --- Career job admin (read-only + image previews prefer dg_image_url) ---
 @admin.register(CareerJob)
 class CareerJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = (
@@ -40,6 +34,7 @@ class CareerJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
         "jobname",
         "salary",
         "hours",
+        "has_embedding",
         "image_open_link",
         "image_preview_thumb",
         "scraped_at",
@@ -61,7 +56,6 @@ class CareerJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
 
     fieldsets = (
         ("Identity", {"fields": ("career_type", "sub_type", "job_slug", "job_url")}),
-        # show both urls, but previews/open prefer dg_image_url
         ("Image", {"fields": ("image_url", "dg_image_url", "image_preview_large")}),
         ("Profile", {"fields": ("jobname", "job_description", "salary", "hours", "timings")}),
         (
@@ -90,12 +84,17 @@ class CareerJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
         ),
     )
 
-    # ---- helpers (display only; keeps image_url unchanged) ----
     def _preferred_image_url(self, obj: CareerJob) -> str:
         dg = (getattr(obj, "dg_image_url", "") or "").strip()
         if dg:
             return dg
         return (getattr(obj, "image_url", "") or "").strip()
+
+    def has_embedding(self, obj: CareerJob):
+        return hasattr(obj, "embedding_record")
+
+    has_embedding.boolean = True
+    has_embedding.short_description = "embedded"
 
     def image_open_link(self, obj: CareerJob):
         url = self._preferred_image_url(obj)
@@ -131,7 +130,53 @@ class CareerJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     image_preview_large.short_description = "Preview"
 
 
-# --- Hide proxy so you don't see both Career and CareerJob ---
+@admin.register(CareerEmbedding)
+class CareerEmbeddingAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
+    list_display = (
+        "career",
+        "career_type",
+        "sub_type",
+        "model_name",
+        "updated_at",
+        "embedding_dimension",
+        "source_text_preview",
+    )
+    search_fields = (
+        "career__jobname",
+        "career__job_slug",
+        "career__sub_type",
+        "model_name",
+        "source_text",
+    )
+    list_filter = ("model_name", "career__career_type", "career__sub_type")
+    readonly_fields = ("updated_at", "source_text", "embedding_dimension")
+    exclude = ("embedding",)
+    ordering = ("-updated_at",)
+
+    def career_type(self, obj: CareerEmbedding):
+        return obj.career.career_type
+
+    career_type.short_description = "career type"
+
+    def sub_type(self, obj: CareerEmbedding):
+        return obj.career.sub_type
+
+    sub_type.short_description = "sub type"
+
+    def embedding_dimension(self, obj: CareerEmbedding):
+        return len(obj.embedding) if obj.embedding is not None else 0
+
+    embedding_dimension.short_description = "dim"
+
+    def source_text_preview(self, obj: CareerEmbedding):
+        if not obj.source_text:
+            return "-"
+        text = obj.source_text.strip()
+        return text[:120] + "..." if len(text) > 120 else text
+
+    source_text_preview.short_description = "source text"
+
+
 try:
     admin.site.unregister(Career)
 except admin.sites.NotRegistered:
