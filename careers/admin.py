@@ -148,6 +148,7 @@ class CareerEmbeddingAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
         "model_name",
         "source_text",
     )
+
     list_filter = ("model_name", "career__career_type", "career__sub_type")
     readonly_fields = ("updated_at", "source_text", "embedding_dimension")
     exclude = ("embedding",)
