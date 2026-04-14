@@ -46,6 +46,7 @@ def recommend_careers_for_user(user, category:str, saved_careers=None, explored_
         saved_careers=saved_careers,
         explored_careers=explored_careers,
     )
+    print(f"this is user result : {user_result}")
 
     results = retrieve_similar_careers(
         user_embedding=user_result["embedding"],
