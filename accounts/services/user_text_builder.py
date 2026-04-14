@@ -89,7 +89,7 @@ def career_label(career) -> str:
     return " ".join(parts).strip()
 
 
-def build_user_profile_text(user: User) -> str:
+def build_user_profile_text(user: User, category: str) -> str:
     """
     Build semantic profile text from UserProfile.
 
@@ -106,39 +106,42 @@ def build_user_profile_text(user: User) -> str:
     sections = []
 
     education_level = normalize_profile_value(profile.education_level, max_chars=80)
-    discipline = normalize_profile_value(profile.discipline, max_chars=100)
+    # discipline = normalize_profile_value(profile.discipline, max_chars=100)
     age = normalize_profile_value(profile.age, max_chars=40)
-    city = normalize_profile_value(profile.city, max_chars=80)
+    # city = normalize_profile_value(profile.city, max_chars=80)
 
     categories = unique_nonempty(profile.category or [], max_items=8)
-    report_items = unique_nonempty(profile.report or [], max_items=4)
+    # report_items = unique_nonempty(profile.report or [], max_items=4)
 
     summary_lines = []
 
     if education_level:
         summary_lines.append(f"Education level: {education_level}.")
-    if discipline:
-        summary_lines.append(f"Discipline or field of interest: {discipline}.")
+    # if discipline:
+    #     summary_lines.append(f"Discipline or field of interest: {discipline}.")
     if age:
         summary_lines.append(f"Age group or stage: {age}.")
-    if city:
-        summary_lines.append(f"City: {city}.")
+    # if city:
+    #     summary_lines.append(f"City: {city}.")
 
     if summary_lines:
         sections.append("Profile:\n" + "\n".join(summary_lines))
 
-    if categories:
-        sections.append(
-            "Interest categories:\n" +
-            "\n".join(f"- {item}" for item in categories)
-        )
+    if category:
+        sections.append(f"Interest categoriy : {category}")
 
-    if report_items:
-        cleaned_report_items = [clean_text(item, max_chars=220) for item in report_items]
-        sections.append(
-            "Additional user preference signals:\n" +
-            "\n".join(f"- {item}" for item in cleaned_report_items)
-        )
+    # if categories:
+    #     sections.append(
+    #         "Interest categories:\n" +
+    #         "\n".join(f"- {item}" for item in categories)
+    #     )
+
+    # if report_items:
+    #     cleaned_report_items = [clean_text(item, max_chars=220) for item in report_items]
+    #     sections.append(
+    #         "Additional user preference signals:\n" +
+    #         "\n".join(f"- {item}" for item in cleaned_report_items)
+    #     )
 
     return "\n\n".join(section for section in sections if section.strip())
 
@@ -179,6 +182,7 @@ def build_user_behavior_text(
 
 def build_user_career_text(
     user: User,
+    category:str,
     saved_careers: Optional[Iterable] = None,
     explored_careers: Optional[Iterable] = None,
 ) -> str:
@@ -186,7 +190,7 @@ def build_user_career_text(
 
     profile = get_user_profile(user)
 
-    profile_text = build_user_profile_text(user)
+    profile_text = build_user_profile_text(user, category)
     behavior_text = build_user_behavior_text(
         saved_careers=saved_careers,
         explored_careers=explored_careers,

@@ -370,6 +370,8 @@ class CareersView(viewsets.ModelViewSet):
         profile = self._profile_cached
         if not profile:
             return Response([], status=status.HTTP_200_OK)
+        
+        categories = list(profile.category)
 
         saved_ids = UserSavedCareer.objects.filter(
             user_profile=profile
@@ -384,13 +386,26 @@ class CareersView(viewsets.ModelViewSet):
                 explored_user_links__user_profile=profile
             ).distinct()
         )
+        bool = True
+        for category in categories:
+            if bool:
+                rec_result = recommend_careers_for_user(
+                    user=user,
+                    category=category,
+                    saved_careers=saved_careers,
+                    explored_careers=explored_careers,
+                    top_k=10,
+                )
+                bool = False
 
-        rec_result = recommend_careers_for_user(
-            user=user,
-            saved_careers=saved_careers,
-            explored_careers=explored_careers,
-            top_k=10,
-        )
+            rec_result["recommendations"] += recommend_careers_for_user(
+                    user=user,
+                    category=category,
+                    saved_careers=saved_careers,
+                    explored_careers=explored_careers,
+                    top_k=10,
+                )["recommendations"]
+        print(f"this is the len of all recomendations : {len(rec_result["recommendations"])}")
 
         recommended_ids = [item["career_id"] for item in rec_result["recommendations"]]
 

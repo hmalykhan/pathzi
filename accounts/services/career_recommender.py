@@ -39,9 +39,10 @@ def retrieve_similar_careers(user_embedding, top_k=12):
     return results
 
 
-def recommend_careers_for_user(user, saved_careers=None, explored_careers=None, top_k=10):
+def recommend_careers_for_user(user, category:str, saved_careers=None, explored_careers=None, top_k=10):
     user_result = generate_user_embedding(
         user=user,
+        category=category,
         saved_careers=saved_careers,
         explored_careers=explored_careers,
     )
