@@ -5,7 +5,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 # adjust this import to your installed pgvector Django API
 from pgvector.django import CosineDistance
 
-def is_too_similar(vec1, vec2, threshold=0.88):
+def is_too_similar(vec1, vec2, threshold=0.95):
     sim = cosine_similarity([vec1], [vec2])[0][0]
     return sim > threshold
 
@@ -50,7 +50,7 @@ def recommend_careers_for_user(user, category:str, saved_careers=None, explored_
 
     results = retrieve_similar_careers(
         user_embedding=user_result["embedding"],
-        top_k=top_k * 5,
+        top_k=top_k,
     )
 
     recommendations = []
@@ -71,6 +71,9 @@ def recommend_careers_for_user(user, category:str, saved_careers=None, explored_
         recommendations,
         top_k=top_k
     )
+
+    for row in diversified:
+        print("this is the distance : ",row['distance'])
 
     print("FINAL:", len(diversified))
 

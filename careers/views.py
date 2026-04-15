@@ -348,96 +348,109 @@ class CareersView(viewsets.ModelViewSet):
     # -----------------------
 
     # original
-    def list(self, request, *args, **kwargs):
-        qs = self.get_queryset()
-        careers = list(qs)
-
-        report_map = self._build_report_map([c.id for c in careers])
-
-        serializer = CareerListSerializer(
-            careers,
-            many=True,
-            context={"request": request, "report_map": report_map},
-        )
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-
     # def list(self, request, *args, **kwargs):
-    #     user = request.user
-    #     if not user or not user.is_authenticated:
-    #         return Response([], status=status.HTTP_200_OK)
+    #     qs = self.get_queryset()
+    #     careers = list(qs)
 
-    #     profile = self._profile_cached
-    #     if not profile:
-    #         return Response([], status=status.HTTP_200_OK)
-        
-    #     categories = list(profile.category)
-
-    #     saved_ids = UserSavedCareer.objects.filter(
-    #         user_profile=profile
-    #     ).values_list("career_id", flat=True)
-
-    #     saved_careers = list(
-    #         Career.objects.filter(id__in=saved_ids).distinct()
-    #     )
-
-    #     explored_careers = list(
-    #         Career.objects.filter(
-    #             explored_user_links__user_profile=profile
-    #         ).distinct()
-    #     )
-    #     bool = True
-    #     for category in categories:
-    #         print(f"this is the categories : {category} \n ")
-    #         if bool == True:
-    #             print("inside\n")
-    #             rec_result = recommend_careers_for_user(
-    #                 user=user,
-    #                 category=category,
-    #                 saved_careers=saved_careers,
-    #                 explored_careers=explored_careers,
-    #                 top_k=10,
-    #             )
-    #             bool = False
-    #         if bool == False:
-    #             print("outside\n")
-    #             rec_result["recommendations"] += recommend_careers_for_user(
-    #                     user=user,
-    #                     category=category,
-    #                     saved_careers=saved_careers,
-    #                     explored_careers=explored_careers,
-    #                     top_k=10,
-    #                 )["recommendations"]
-            
-    #     print(f"this is the len of all recomendations : {len(rec_result["recommendations"])}")
-
-    #     recommended_ids = [item["career_id"] for item in rec_result["recommendations"]]
-
-    #     careers_qs = Career.objects.filter(id__in=recommended_ids)
-    #     careers_by_id = {career.id: career for career in careers_qs}
-
-    #     careers = [
-    #         careers_by_id[cid]
-    #         for cid in recommended_ids
-    #         if cid in careers_by_id
-    #     ]
-
-    #     career_ids = [c.id for c in careers]
-    #     report_map = self._build_report_map(career_ids)
-    #     saved_map = self._build_saved_map(career_ids)
-    #     explored_map = self._build_explored_map(career_ids)
+    #     report_map = self._build_report_map([c.id for c in careers])
 
     #     serializer = CareerListSerializer(
     #         careers,
     #         many=True,
-    #         context={
-    #             "request": request,
-    #             "report_map": report_map,
-    #             "saved_map": saved_map,
-    #             "explored_map": explored_map,
-    #         },
+    #         context={"request": request, "report_map": report_map},
     #     )
     #     return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+    def list(self, request, *args, **kwargs):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response([], status=status.HTTP_200_OK)
+
+        profile = self._profile_cached
+        if not profile:
+            return Response([], status=status.HTTP_200_OK)
+        # print("this is the profile name : ",profile.name)
+        
+        categories = list(profile.category)
+
+        saved_ids = UserSavedCareer.objects.filter(
+            user_profile=profile
+        ).values_list("career_id", flat=True)
+
+        # saved_careers = list(
+        #     Career.objects.filter(id__in=saved_ids).distinct()
+        # )
+
+        saved_careers = list(self._filtered_base_queryset().filter(id__in=saved_ids).order_by("id"))
+
+        # explored_careers = list(
+        #     Career.objects.filter(
+        #         explored_user_links__user_profile=profile
+        #     ).distinct()
+        # )
+
+        explored_ids = UserExploredCareer.objects.filter(
+            user_profile=profile
+        ).values_list("career_id", flat=True)
+
+        explored_careers = list(self._filtered_base_queryset().filter(id__in=explored_ids).order_by("id"))
+
+
+        print("these are the saved careers of this user : ",saved_careers)
+        print("thesea are the explored careers of this user : ", explored_careers)
+        bool = True
+        for category in categories:
+            print(f"this is the categories : {category} \n ")
+            if bool == True:
+                print("inside\n")
+                rec_result = recommend_careers_for_user(
+                    user=user,
+                    category=category,
+                    saved_careers=saved_careers,
+                    explored_careers=explored_careers,
+                    top_k=10,
+                )
+                bool = False
+            elif bool == False:
+                print("outside\n")
+                rec_result["recommendations"] += recommend_careers_for_user(
+                        user=user,
+                        category=category,
+                        saved_careers=saved_careers,
+                        explored_careers=explored_careers,
+                        top_k=30,
+                    )["recommendations"]
+            
+        print(f"this is the len of all recomendations : {len(rec_result["recommendations"])}")
+
+        recommended_ids = [item["career_id"] for item in rec_result["recommendations"]]
+
+        careers_qs = Career.objects.filter(id__in=recommended_ids)
+        careers_by_id = {career.id: career for career in careers_qs}
+
+        careers = [
+            careers_by_id[cid]
+            for cid in recommended_ids
+            if cid in careers_by_id
+        ]
+
+        career_ids = [c.id for c in careers]
+        report_map = self._build_report_map(career_ids)
+        saved_map = self._build_saved_map(career_ids)
+        explored_map = self._build_explored_map(career_ids)
+
+        serializer = CareerListSerializer(
+            careers,
+            many=True,
+            context={
+                "request": request,
+                "report_map": report_map,
+                "saved_map": saved_map,
+                "explored_map": explored_map,
+            },
+        )
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
     

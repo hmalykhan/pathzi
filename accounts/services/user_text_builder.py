@@ -211,8 +211,8 @@ def build_user_career_text(
 
         if education_level:
             summary_fragments.append(f"education level {education_level}")
-        if discipline:
-            summary_fragments.append(f"background in {discipline}")
+        # if discipline:
+        #     summary_fragments.append(f"background in {discipline}")
         if categories:
             summary_fragments.append("interest in " + ", ".join(categories))
 
