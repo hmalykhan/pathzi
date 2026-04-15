@@ -541,7 +541,7 @@ class CareersView(viewsets.ModelViewSet):
             user_profile=profile
         ).values_list("career_id", flat=True)
 
-        qs = self._filtered_base_queryset().filter(id__in=saved_ids).order_by("id")
+        qs = Career.objects.filter(id__in=saved_ids).order_by("id")
 
         if not self._is_subscribed():
             qs = qs.filter(id__in=Subquery(self._allowed_ids_subquery()))
@@ -807,10 +807,11 @@ class CareersView(viewsets.ModelViewSet):
             user_profile=profile
         ).values_list("career_id", flat=True)
 
-        qs = self._filtered_base_queryset().filter(id__in=explored_ids).order_by("id")
+        # qs = self._filtered_base_queryset().filter(id__in=explored_ids).order_by("id")
+        qs = Career.objects.filter(id__in=explored_ids).order_by("id")
 
-        if not self._is_subscribed():
-            qs = qs.filter(id__in=Subquery(self._allowed_ids_subquery()))
+        # if not self._is_subscribed():
+        #     qs = qs.filter(id__in=Subquery(self._allowed_ids_subquery()))
         # old
         # careers = list(qs)
         # report_map = self._build_report_map([c.id for c in careers])
