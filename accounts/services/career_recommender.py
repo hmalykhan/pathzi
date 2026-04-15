@@ -23,8 +23,8 @@ def diversify_recommendations(recommendations, top_k=10):
         if not is_duplicate:
             selected.append(candidate)
 
-        if len(selected) >= top_k:
-            break
+        # if len(selected) >= top_k:
+            # break
 
     return selected
 
@@ -35,7 +35,8 @@ def retrieve_similar_careers(user_embedding, queryset, top_k=10):
         .filter(career__in=queryset)
         .select_related("career")
         .annotate(distance=CosineDistance("embedding", user_embedding))
-        .order_by("distance")[:top_k]
+        # .order_by("distance")[:top_k]
+        .order_by("distance")[:]
     )
     return results
 
