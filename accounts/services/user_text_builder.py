@@ -89,7 +89,7 @@ def career_label(career) -> str:
     return " ".join(parts).strip()
 
 
-def build_user_profile_text(user: User, category: str) -> str:
+def build_user_profile_text(user: User,) -> str:
     """
     Build semantic profile text from UserProfile.
 
@@ -127,14 +127,14 @@ def build_user_profile_text(user: User, category: str) -> str:
     if summary_lines:
         sections.append("Profile:\n" + "\n".join(summary_lines))
 
-    if category:
-        sections.append(f"Interest categoriy : {category}")
+    # if categor:
+    #     sections.append(f"Interest categoriy : {category}")
 
-    # if categories:
-    #     sections.append(
-    #         "Interest categories:\n" +
-    #         "\n".join(f"- {item}" for item in categories)
-    #     )
+    if categories:
+        sections.append(
+            "Interest categories:\n" +
+            "\n".join(f"- {item}" for item in categories)
+        )
 
     # if report_items:
     #     cleaned_report_items = [clean_text(item, max_chars=220) for item in report_items]
@@ -182,7 +182,6 @@ def build_user_behavior_text(
 
 def build_user_career_text(
     user: User,
-    category:str,
     saved_careers: Optional[Iterable] = None,
     explored_careers: Optional[Iterable] = None,
 ) -> str:
@@ -190,7 +189,7 @@ def build_user_career_text(
 
     profile = get_user_profile(user)
 
-    profile_text = build_user_profile_text(user, category)
+    profile_text = build_user_profile_text(user)
     behavior_text = build_user_behavior_text(
         saved_careers=saved_careers,
         explored_careers=explored_careers,
@@ -205,7 +204,7 @@ def build_user_career_text(
     summary_fragments = []
 
     if profile:
-        discipline = normalize_profile_value(profile.discipline, max_chars=80)
+        # discipline = normalize_profile_value(profile.discipline, max_chars=80)
         education_level = normalize_profile_value(profile.education_level, max_chars=80)
         categories = unique_nonempty(profile.category or [], max_items=4)
 

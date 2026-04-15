@@ -5,7 +5,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 # adjust this import to your installed pgvector Django API
 from pgvector.django import CosineDistance
 
-def is_too_similar(vec1, vec2, threshold=0.95):
+def is_too_similar(vec1, vec2, threshold=0.88):
     sim = cosine_similarity([vec1], [vec2])[0][0]
     return sim > threshold
 
@@ -29,9 +29,10 @@ def diversify_recommendations(recommendations, top_k=10):
     return selected
 
 
-def retrieve_similar_careers(user_embedding, top_k=12):
+def retrieve_similar_careers(user_embedding, queryset, top_k=10):
     results = (
         CareerEmbedding.objects
+        .filter(career__in=queryset)
         .select_related("career")
         .annotate(distance=CosineDistance("embedding", user_embedding))
         .order_by("distance")[:top_k]
@@ -39,10 +40,9 @@ def retrieve_similar_careers(user_embedding, top_k=12):
     return results
 
 
-def recommend_careers_for_user(user, category:str, saved_careers=None, explored_careers=None, top_k=10):
+def recommend_careers_for_user(user, queryset, saved_careers=None, explored_careers=None, top_k=10):
     user_result = generate_user_embedding(
         user=user,
-        category=category,
         saved_careers=saved_careers,
         explored_careers=explored_careers,
     )
@@ -50,7 +50,8 @@ def recommend_careers_for_user(user, category:str, saved_careers=None, explored_
 
     results = retrieve_similar_careers(
         user_embedding=user_result["embedding"],
-        top_k=top_k,
+        queryset=queryset,
+        top_k=top_k*5,
     )
 
     recommendations = []

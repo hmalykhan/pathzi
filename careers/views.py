@@ -363,6 +363,9 @@ class CareersView(viewsets.ModelViewSet):
 
 
     def list(self, request, *args, **kwargs):
+        qs = self.get_queryset()
+        qss = list(qs)
+        print("this is the length of the qss",len(qss))
         user = request.user
         if not user or not user.is_authenticated:
             return Response([], status=status.HTTP_200_OK)
@@ -399,35 +402,38 @@ class CareersView(viewsets.ModelViewSet):
 
         print("these are the saved careers of this user : ",saved_careers)
         print("thesea are the explored careers of this user : ", explored_careers)
-        bool = True
-        for category in categories:
-            print(f"this is the categories : {category} \n ")
-            if bool == True:
-                print("inside\n")
-                rec_result = recommend_careers_for_user(
+        # bool = True
+        # for category in categories:
+        #     print(f"this is the categories : {category} \n ")
+        #     if bool == True:
+        #         print("inside\n")
+        rec_result = recommend_careers_for_user(
                     user=user,
-                    category=category,
+                    queryset=qss,
                     saved_careers=saved_careers,
                     explored_careers=explored_careers,
-                    top_k=10,
+                    top_k=50,
                 )
-                bool = False
-            elif bool == False:
-                print("outside\n")
-                rec_result["recommendations"] += recommend_careers_for_user(
-                        user=user,
-                        category=category,
-                        saved_careers=saved_careers,
-                        explored_careers=explored_careers,
-                        top_k=30,
-                    )["recommendations"]
+                # bool = False
+            # elif bool == False:
+            #     print("outside\n")
+            #     rec_result["recommendations"] += recommend_careers_for_user(
+            #             user=user,
+            #             category=category,
+            #             saved_careers=saved_careers,
+            #             explored_careers=explored_careers,
+            #             top_k=30,
+            #         )["recommendations"]
             
         print(f"this is the len of all recomendations : {len(rec_result["recommendations"])}")
 
         recommended_ids = [item["career_id"] for item in rec_result["recommendations"]]
 
-        careers_qs = Career.objects.filter(id__in=recommended_ids)
-        careers_by_id = {career.id: career for career in careers_qs}
+        # careers_qs = Career.objects.filter(id__in=recommended_ids)
+        # careers_by_id = {career.id: career for career in careers_qs}
+        careers_by_id = {
+            c.id:c for c in qss if c.id in recommended_ids
+        }
 
         careers = [
             careers_by_id[cid]

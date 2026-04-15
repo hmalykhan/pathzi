@@ -37,7 +37,6 @@ def embed_text(text: str) -> List[float]:
 
 def generate_user_embedding(
     user,
-    category:str,
     saved_careers: Optional[Iterable] = None,
     explored_careers: Optional[Iterable] = None,
 ) -> dict:
@@ -49,7 +48,6 @@ def generate_user_embedding(
     """
     source_text = build_user_career_text(
         user=user,
-        category=category,
         saved_careers=saved_careers,
         explored_careers=explored_careers,
     )
