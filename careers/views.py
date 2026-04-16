@@ -611,7 +611,8 @@ class CareersView(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["POST", "GET"])
     def unsave(self, request, pk=None):
-        career = self.get_object()
+        # career = self.get_object()
+        career = get_object_or_404(Career.objects.all(), pk=pk)
         profile = self._get_or_create_profile()
         deleted, _ = UserSavedCareer.objects.filter(
             user_profile=profile,
@@ -845,7 +846,8 @@ class CareersView(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["POST", "GET"])
     def explore(self, request, pk=None):
-        career = self.get_object()
+        # career = self.get_object()
+        career = get_object_or_404(Career.objects.all(), pk=pk)
         profile = self._get_or_create_profile()
 
         UserExploredCareer.objects.get_or_create(
