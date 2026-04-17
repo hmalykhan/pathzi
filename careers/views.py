@@ -1,7 +1,8 @@
 # For payment method limited careers for unsubsctibed uncomment 160, 211
 import re
-from django.db.models import Subquery, TextField, Value
-from django.db.models.functions import Cast, Coalesce, Lower, Replace, Trim
+# from django.db.models import Subquery, TextField, Value
+# from django.db.models.functions import Cast, Coalesce, Lower, Replace, Trim
+from django.db.models import Subquery
 from django.utils import timezone
 from django.utils.functional import cached_property
 from django.shortcuts import get_object_or_404
@@ -104,6 +105,14 @@ class CareersView(viewsets.ModelViewSet):
     # -----------------------
     # Careers base queryset + strict hiding of premium careers
     # -----------------------
+
+    def normalize_sub_type(value: str) -> str:
+        value = value or ""
+        value = value.strip().lower()
+        value = re.sub(r"[ _-]+", "", value)
+        return value
+
+
     def _norm_key(self, s: str) -> str:
         # lowercase + trim + remove spaces/_/-
         s = (s or "").strip().lower()
@@ -138,16 +147,18 @@ class CareersView(viewsets.ModelViewSet):
             # return Career.objects.none()
             return Career.objects.all().order_by("id")
 
+        # commnt them since we have made a field with the name of the normalized_sub_type.
         # normalize Career.sub_type in DB the same way
-        empty = Value("", output_field=TextField())
-        sub = Coalesce(Cast("sub_type", output_field=TextField()), empty, output_field=TextField())
-        sub = Lower(Trim(sub))
-        sub = Replace(sub, Value(" ", output_field=TextField()), empty, output_field=TextField())
-        sub = Replace(sub, Value("_", output_field=TextField()), empty, output_field=TextField())
-        sub = Replace(sub, Value("-", output_field=TextField()), empty, output_field=TextField())
-        sub = Cast(sub, output_field=TextField())
+        # empty = Value("", output_field=TextField())
+        # sub = Coalesce(Cast("sub_type", output_field=TextField()), empty, output_field=TextField())
+        # sub = Lower(Trim(sub))
+        # sub = Replace(sub, Value(" ", output_field=TextField()), empty, output_field=TextField())
+        # sub = Replace(sub, Value("_", output_field=TextField()), empty, output_field=TextField())
+        # sub = Replace(sub, Value("-", output_field=TextField()), empty, output_field=TextField())
+        # sub = Cast(sub, output_field=TextField())
+        # return Career.objects.annotate(cat_l=sub).filter(cat_l__in=categories)
 
-        return Career.objects.annotate(cat_l=sub).filter(cat_l__in=categories)
+        return Career.objects.filter(normalized_sub_type__in=categories).order_by("id")
 
     def _allowed_ids_subquery(self):
         return (
@@ -157,38 +168,39 @@ class CareersView(viewsets.ModelViewSet):
         )
 
     def get_queryset(self):
-        qs = self._filtered_base_queryset().order_by("id")
-
+        # qs = self._filtered_base_queryset().order_by("id")
+        
+        qs = self._filtered_base_queryset()
         # list must show only 5 for free users
         if getattr(self, "action", None) == "list" and not self._is_subscribed():
             qs = qs[:FREE_CAREER_LIMIT]
 
         return qs
 
-    def _build_saved_map(self, career_ids):
-        profile = self._profile_cached
-        if not profile:
-            return {}
+    # def _build_saved_map(self, career_ids):
+    #     profile = self._profile_cached
+    #     if not profile:
+    #         return {}
 
-        ids = UserSavedCareer.objects.filter(
-            user_profile=profile,
-            career_id__in=career_ids
-        ).values_list("career_id", flat=True)
+    #     ids = UserSavedCareer.objects.filter(
+    #         user_profile=profile,
+    #         career_id__in=career_ids
+    #     ).values_list("career_id", flat=True)
 
-        return {cid: True for cid in ids}
+    #     return {cid: True for cid in ids}
 
 
-    def _build_explored_map(self, career_ids):
-        profile = self._profile_cached
-        if not profile:
-            return {}
+    # def _build_explored_map(self, career_ids):
+    #     profile = self._profile_cached
+    #     if not profile:
+    #         return {}
 
-        ids = UserExploredCareer.objects.filter(
-            user_profile=profile,
-            career_id__in=career_ids
-        ).values_list("career_id", flat=True)
+    #     ids = UserExploredCareer.objects.filter(
+    #         user_profile=profile,
+    #         career_id__in=career_ids
+    #     ).values_list("career_id", flat=True)
 
-        return {cid: True for cid in ids}
+    #     return {cid: True for cid in ids}
     
     def _build_saved_map(self, career_ids):
         profile = self._profile_cached
@@ -363,8 +375,8 @@ class CareersView(viewsets.ModelViewSet):
 
 
     def list(self, request, *args, **kwargs):
-        qs = self.get_queryset()
-        qss = list(qs)
+        qss = self.get_queryset()
+        # qss = list(qs)
         print("this is the length of the qss",len(qss))
         user = request.user
         if not user or not user.is_authenticated:
@@ -435,26 +447,27 @@ class CareersView(viewsets.ModelViewSet):
             c.id:c for c in qss if c.id in recommended_ids
         }
 
-        careers = [
-            careers_by_id[cid]
-            for cid in recommended_ids
-            if cid in careers_by_id
-        ]
+        # careers = [
+        #     careers_by_id[cid]
+        #     for cid in recommended_ids
+        #     if cid in careers_by_id
+        # ]
 
-        career_ids = [c.id for c in careers]
-        report_map = self._build_report_map(career_ids)
-        saved_map = self._build_saved_map(career_ids)
-        explored_map = self._build_explored_map(career_ids)
+        # career_ids = [c.id for c in careers]
+        # report_map = self._build_report_map(career_ids)
+        # saved_map = self._build_saved_map(career_ids)
+        # explored_map = self._build_explored_map(career_ids)
+        careers = Career.objects.filter(id__in=recommended_ids)
 
         serializer = CareerListSerializer(
             careers,
             many=True,
-            context={
-                "request": request,
-                "report_map": report_map,
-                "saved_map": saved_map,
-                "explored_map": explored_map,
-            },
+            # context={
+            #     "request": request,
+            #     # "report_map": {},
+            #     # "saved_map": {},
+            #     # "explored_map": {},
+            # },
         )
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -490,33 +503,35 @@ class CareersView(viewsets.ModelViewSet):
                 self._norm_key(s) for s in subcategories if s
             ]
 
+            # same reason we had done with filtered_base_queryset above since we add the field normalized_sub_category for each career.
             # normalize career.sub_type exactly like the main query
-            empty = Value("", output_field=TextField())
+            # empty = Value("", output_field=TextField())
 
-            sub = Coalesce(
-                Cast("sub_type", output_field=TextField()),
-                empty,
-                output_field=TextField()
-            )
+            # sub = Coalesce(
+            #     Cast("sub_type", output_field=TextField()),
+            #     empty,
+            #     output_field=TextField()
+            # )
 
-            sub = Lower(Trim(sub))
-            sub = Replace(sub, Value(" ", output_field=TextField()), empty)
-            sub = Replace(sub, Value("_", output_field=TextField()), empty)
-            sub = Replace(sub, Value("-", output_field=TextField()), empty)
-            sub = Cast(sub, output_field=TextField())
+            # sub = Lower(Trim(sub))
+            # sub = Replace(sub, Value(" ", output_field=TextField()), empty)
+            # sub = Replace(sub, Value("_", output_field=TextField()), empty)
+            # sub = Replace(sub, Value("-", output_field=TextField()), empty)
+            # sub = Cast(sub, output_field=TextField())
 
-            qs = Career.objects.annotate(cat_l=sub).filter(cat_l__in=normalized)
+            # qs = Career.objects.annotate(cat_l=sub).filter(cat_l__in=normalized)
+            qs = Career.objects.filter(normalized_sub_type__in=normalized).order_by("id")
 
         qs = self._slice(qs)
 
-        careers = list(qs)
+        # careers = list(qs)
 
-        report_map = self._build_report_map([c.id for c in careers])
+        # report_map = self._build_report_map([c.id for c in careers])
 
         serializer = CareerListSerializer(
-            careers,
+            qs,
             many=True,
-            context={"request": request, "report_map": report_map},
+            # context={"request": request, "report_map": report_map},
         )
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -543,8 +558,8 @@ class CareersView(viewsets.ModelViewSet):
 
         qs = Career.objects.filter(id__in=saved_ids).order_by("id")
 
-        if not self._is_subscribed():
-            qs = qs.filter(id__in=Subquery(self._allowed_ids_subquery()))
+        # if not self._is_subscribed():
+        #     qs = qs.filter(id__in=Subquery(self._allowed_ids_subquery()))
 
         # old
         # careers = list(qs)
@@ -557,15 +572,15 @@ class CareersView(viewsets.ModelViewSet):
         # )
 
         # new
-        careers = list(qs)
-        career_ids = [c.id for c in careers]
+        # careers = list(qs)
+        career_ids = [c.id for c in qs]
 
         saved_map = self._build_saved_map(career_ids)
         explored_map = self._build_explored_map(career_ids)
         report_map = self._build_report_map(career_ids)
 
         serializer = CareerListSerializer(
-            careers,
+            qs,
             many=True,
             context={
                 "request": request,
@@ -593,19 +608,19 @@ class CareersView(viewsets.ModelViewSet):
         # )
 
         # new
-        career_ids = [career.id]
-        saved_map = self._build_saved_map(career_ids)
-        explored_map = self._build_explored_map(career_ids)
-        report_map = {career.id: link}
+        # career_ids = [career.id]
+        # saved_map = self._build_saved_map(career_ids)
+        # explored_map = self._build_explored_map(career_ids)
+        # report_map = {career.id: link}
 
         serializer = CareerDetailSerializer(
             career,
-            context={
-                "request": request,
-                "saved_map": saved_map,
-                "explored_map": explored_map,
-                "report_map": report_map,
-            },
+            # context={
+            #     "request": request,
+            #     "saved_map": saved_map,
+            #     "explored_map": explored_map,
+            #     "report_map": report_map,
+            # },
         )
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -824,22 +839,22 @@ class CareersView(viewsets.ModelViewSet):
         # )
 
         # new
-        careers = list(qs)
-        career_ids = [c.id for c in careers]
+        # careers = list(qs)
+        # career_ids = [c.id for c in careers]
 
-        saved_map = self._build_saved_map(career_ids)
-        explored_map = self._build_explored_map(career_ids)
-        report_map = self._build_report_map(career_ids)
+        # saved_map = self._build_saved_map(career_ids)
+        # explored_map = self._build_explored_map(career_ids)
+        # report_map = self._build_report_map(career_ids)
 
         serializer = CareerListSerializer(
-            careers,
+            qs,
             many=True,
-            context={
-                "request": request,
-                "saved_map": saved_map,
-                "explored_map": explored_map,
-                "report_map": report_map,
-            },
+            # context={
+            #     "request": request,
+            #     "saved_map": saved_map,
+            #     "explored_map": explored_map,
+            #     "report_map": report_map,
+            # },
         )
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -864,26 +879,27 @@ class CareersView(viewsets.ModelViewSet):
         # )
 
         # new
-        career_ids = [career.id]
-        saved_map = self._build_saved_map(career_ids)
-        explored_map = self._build_explored_map(career_ids)
-        report_map = self._build_report_map(career_ids)
+        # career_ids = [career.id]
+        # saved_map = self._build_saved_map(career_ids)
+        # explored_map = self._build_explored_map(career_ids)
+        # report_map = self._build_report_map(career_ids)
 
         serializer = CareerDetailSerializer(
             career,
-            context={
-                "request": request,
-                "saved_map": saved_map,
-                "explored_map": explored_map,
-                "report_map": report_map,
-            },
+            # context={
+            #     "request": request,
+            #     "saved_map": saved_map,
+            #     "explored_map": explored_map,
+            #     "report_map": report_map,
+            # },
         )
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-    @action(detail=True, methods=["POST", "GET"])
+    @action(detail=True, methods=["POST"])
     def unexplore(self, request, pk=None):
-        career = self.get_object()
+        # career = self.get_object()
+        career = get_object_or_404(Career.objects.all(), pk=pk)
         profile = self._get_or_create_profile()
 
         deleted, _ = UserExploredCareer.objects.filter(

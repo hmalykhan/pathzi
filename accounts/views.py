@@ -170,7 +170,6 @@ def verify_apple_token(identity_token):
         audience=[settings.APPLE_CLIENT_ID,settings.APPLE_CLIENT_ID_FLUTTER],
         issuer="https://appleid.apple.com",
     )
-
     return decoded
 
 class AppleMobileAuthAPI(APIView):
@@ -467,7 +466,8 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
         return profile
 
     def patch(self, request, *args, **kwargs):
-        profile, _ = UserProfile.objects.get_or_create(appuser=request.user)
+        # profile, _ = UserProfile.objects.get_or_create(appuser=request.user)
+        profile = self.get_object()
         serializer = self.get_serializer(profile, data=request.data, partial=True)
 
         if serializer.is_valid():

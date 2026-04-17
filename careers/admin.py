@@ -31,6 +31,7 @@ class CareerJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     list_display = (
         "career_type",
         "sub_type",
+        "normalized_sub_type",
         "jobname",
         "salary",
         "hours",
@@ -41,12 +42,13 @@ class CareerJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
         "last_scrape_status",
         "last_checked_at",
     )
-    search_fields = ("jobname", "sub_type", "job_slug", "job_url", "image_url", "dg_image_url")
-    list_filter = ("career_type", "sub_type", "last_scrape_status")
+    search_fields = ("jobname", "sub_type", "normalized_sub_type", "job_slug", "job_url", "image_url", "dg_image_url")
+    list_filter = ("career_type", "sub_type", "normalized_sub_type","last_scrape_status")
     ordering = ("-scraped_at",)
 
     readonly_fields = (
         "scraped_at",
+        "normalized_sub_type",
         "last_checked_at",
         "last_scrape_status",
         "last_scrape_message",
@@ -55,7 +57,7 @@ class CareerJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
     )
 
     fieldsets = (
-        ("Identity", {"fields": ("career_type", "sub_type", "job_slug", "job_url")}),
+        ("Identity", {"fields": ("career_type", "sub_type", "normalized_sub_type","job_slug", "job_url")}),
         ("Image", {"fields": ("image_url", "dg_image_url", "image_preview_large")}),
         ("Profile", {"fields": ("jobname", "job_description", "salary", "hours", "timings")}),
         (

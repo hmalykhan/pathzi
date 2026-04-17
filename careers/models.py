@@ -1,5 +1,5 @@
 # careers/models.py (Recommendation project)
-import uuid
+import uuid, re
 from django.db import models
 from accounts.models import UserProfile
 from pgvector.django import VectorField
@@ -7,6 +7,12 @@ from pgvector.django import VectorField
 
 SCRAPED_CAREERJOB_TABLE = "fetch_careerjob"
 SCRAPED_SCRAPELOG_TABLE = "fetch_jobscrapelog"
+
+def normalize_sub_type(value: str) -> str:
+    value = value or ""
+    value = value.strip().lower()
+    value = re.sub(r"[ _-]+", "", value)
+    return value
 
 
 class CareerScrapeLog(models.Model):
@@ -47,6 +53,12 @@ class CareerJob(models.Model):
 
     career_type = models.CharField(max_length=20, choices=CareerType.choices)
     sub_type = models.CharField(max_length=255)
+    normalized_sub_type = models.CharField(
+        max_length=255,
+        db_index=True,   # VERY IMPORTANT
+        blank=True,
+        default=""
+    )
 
     job_slug = models.SlugField(max_length=255)
     job_url = models.URLField()  # default max_length=200
@@ -79,6 +91,10 @@ class CareerJob(models.Model):
         db_table = SCRAPED_CAREERJOB_TABLE
         # Uniqueness is enforced in Postgres by the unique index:
         # (career_type, sub_type, job_slug)
+
+    def save(self, *args, **kwargs):
+        self.normalized_sub_type = normalize_sub_type(self.sub_type)
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"{self.career_type}:{self.sub_type} - {self.jobname}"
