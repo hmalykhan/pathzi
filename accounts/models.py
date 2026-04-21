@@ -3,6 +3,7 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from datetime import timedelta
 from django.core.exceptions import ValidationError
+from pgvector.django import VectorField
 
 
 class PasswordResetOTP(models.Model):
@@ -75,3 +76,27 @@ class Coordinates(models.Model):
 
     def __str__(self):
         return f"{self.title or 'Location'} - {self.city or ''} ({self.latitude}, {self.longitude})"
+    
+
+
+class UserEmbedding(models.Model):
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="embedding_record",
+    )
+
+    embedding = VectorField(dimensions=384)
+
+    source_text = models.TextField(blank=True, default="")
+
+    model_name = models.CharField(
+        max_length=100,
+        blank=True,
+        default="all-MiniLM-L6-v2"
+    )
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Embedding for user {self.user.id}"

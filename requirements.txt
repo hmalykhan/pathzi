@@ -24,6 +24,8 @@ django-environ
 python-dotenv
 django-extensions
 cryptography==46.0.5
-sentence-transformers
 pgvector
 psycopg2-binary
+# celery==5.6.3
+# redis==7.4.0
+# sentance-transformers

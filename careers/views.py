@@ -27,7 +27,7 @@ from apprenticeship.models import Apprenticeship
 from apprenticeship.api.serializers import ApprenticeshipSerializer
 
 from accounts.services.career_recommender import recommend_careers_for_user
-
+from accounts.services.user_embeddings import update_embedding_async
 
 FREE_CAREER_LIMIT = 5
 
@@ -172,8 +172,8 @@ class CareersView(viewsets.ModelViewSet):
         
         qs = self._filtered_base_queryset()
         # list must show only 5 for free users
-        if getattr(self, "action", None) == "list" and not self._is_subscribed():
-            qs = qs[:FREE_CAREER_LIMIT]
+        # if getattr(self, "action", None) == "list" and not self._is_subscribed():
+        #     qs = qs[:FREE_CAREER_LIMIT]
 
         return qs
 
@@ -422,8 +422,8 @@ class CareersView(viewsets.ModelViewSet):
         rec_result = recommend_careers_for_user(
                     user=user,
                     queryset=qss,
-                    saved_careers=saved_careers,
-                    explored_careers=explored_careers,
+                    # saved_careers=saved_careers,
+                    # explored_careers=explored_careers,
                     top_k=50,
                 )
                 # bool = False
@@ -612,7 +612,7 @@ class CareersView(viewsets.ModelViewSet):
         # saved_map = self._build_saved_map(career_ids)
         # explored_map = self._build_explored_map(career_ids)
         # report_map = {career.id: link}
-
+        update_embedding_async(request.user)
         serializer = CareerDetailSerializer(
             career,
             # context={
@@ -883,7 +883,7 @@ class CareersView(viewsets.ModelViewSet):
         # saved_map = self._build_saved_map(career_ids)
         # explored_map = self._build_explored_map(career_ids)
         # report_map = self._build_report_map(career_ids)
-
+        update_embedding_async(request.user)
         serializer = CareerDetailSerializer(
             career,
             # context={

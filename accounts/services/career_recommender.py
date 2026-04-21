@@ -1,6 +1,7 @@
-from accounts.services.user_embeddings import generate_user_embedding
+# from accounts.services.user_embeddings import generate_user_embedding
 from careers.models import CareerEmbedding
 from sklearn.metrics.pairwise import cosine_similarity
+from accounts.models import UserEmbedding
 
 # adjust this import to your installed pgvector Django API
 from pgvector.django import CosineDistance
@@ -41,18 +42,76 @@ def retrieve_similar_careers(user_embedding, queryset, top_k=10):
     return results
 
 
-def recommend_careers_for_user(user, queryset, saved_careers=None, explored_careers=None, top_k=10):
-    user_result = generate_user_embedding(
-        user=user,
-        saved_careers=saved_careers,
-        explored_careers=explored_careers,
-    )
-    print(f"this is user result : {user_result}")
+# def recommend_careers_for_user(user, queryset, saved_careers=None, explored_careers=None, top_k=10):
+#     user_result = generate_user_embedding(
+#         user=user,
+#         saved_careers=saved_careers,
+#         explored_careers=explored_careers,
+#     )
+#     print(f"this is user result : {user_result}")
+
+#     results = retrieve_similar_careers(
+#         user_embedding=user_result["embedding"],
+#         queryset=queryset,
+#         top_k=top_k*5,
+#     )
+
+#     recommendations = []
+#     for row in results:
+#         recommendations.append({
+#             "career_id": row.career.id,
+#             "jobname": row.career.jobname,
+#             "career_type": row.career.career_type,
+#             "sub_type": row.career.sub_type,
+#             "distance": float(row.distance),
+#             "source_text": row.source_text,
+#             "embedding": row.embedding,
+#         })
+
+#     print("RAW:", len(recommendations))
+
+#     diversified = diversify_recommendations(
+#         recommendations,
+#         top_k=top_k
+#     )
+
+#     for row in diversified:
+#         print("this is the distance : ",row['distance'])
+
+#     print("FINAL:", len(diversified))
+
+#     for r in diversified:
+#         r.pop("embedding", None)
+
+#     return {
+#         "user_text": user_result["source_text"],
+#         "model_name": user_result["model_name"],
+#         "dimension": user_result["dimension"],
+#         "recommendations": diversified,
+#     }
+
+
+
+def recommend_careers_for_user(user, queryset, top_k=10):
+    try:
+        user_embedding = user.embedding_record.embedding
+        user_text = user.embedding_record.source_text
+        model_name = user.embedding_record.model_name
+        dimension = len(user_embedding)
+
+    except UserEmbedding.DoesNotExist:
+        # fallback (optional)
+        return {
+            "user_text": "",
+            "model_name": "",
+            "dimension": 0,
+            "recommendations": [],
+        }
 
     results = retrieve_similar_careers(
-        user_embedding=user_result["embedding"],
+        user_embedding=user_embedding,
         queryset=queryset,
-        top_k=top_k*5,
+        top_k=top_k * 5,
     )
 
     recommendations = []
@@ -67,24 +126,17 @@ def recommend_careers_for_user(user, queryset, saved_careers=None, explored_care
             "embedding": row.embedding,
         })
 
-    print("RAW:", len(recommendations))
-
     diversified = diversify_recommendations(
         recommendations,
         top_k=top_k
     )
 
-    for row in diversified:
-        print("this is the distance : ",row['distance'])
-
-    print("FINAL:", len(diversified))
-
     for r in diversified:
         r.pop("embedding", None)
 
     return {
-        "user_text": user_result["source_text"],
-        "model_name": user_result["model_name"],
-        "dimension": user_result["dimension"],
+        "user_text": user_text,
+        "model_name": model_name,
+        "dimension": dimension,
         "recommendations": diversified,
     }

@@ -59,6 +59,7 @@ from rest_framework import status, permissions
 import threading
 from django.core.mail import send_mail
 from jwt import PyJWKClient
+from accounts.services.user_embeddings import update_embedding_async
 
 
 class AppleAuthURLAPI(APIView):
@@ -489,6 +490,7 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
             else:
                 msg = "Invalid data."
 
+        update_embedding_async(request.user)
         logger.warning("Profile update validation failed: user_id=%s msg=%s", request.user.id, str(msg))
         return Response({"status": False, "message": str(msg)}, status=status.HTTP_400_BAD_REQUEST)
 
