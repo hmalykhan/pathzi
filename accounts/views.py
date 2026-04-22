@@ -60,6 +60,8 @@ import threading
 from django.core.mail import send_mail
 from jwt import PyJWKClient
 from accounts.services.user_embeddings import update_embedding_async
+from accounts.services.recommendation_cache import get_list_cache_key
+from accounts.services.career_recommender import precompute_recommendations_async
 
 
 class AppleAuthURLAPI(APIView):
@@ -473,6 +475,10 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
 
         if serializer.is_valid():
             serializer.save()
+            cache.delete(f"embedding_schedule:{user.id}")
+            update_embedding_async(request.user)
+            cache.delete(get_list_cache_key(request.user.id))
+            precompute_recommendations_async(request.user.id)
             logger.info("Profile updated: user_id=%s", request.user.id)
             return Response(
                 {"status": True, "message": "Profile updated successfully.", "data": serializer.data},
@@ -490,7 +496,6 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
             else:
                 msg = "Invalid data."
 
-        update_embedding_async(request.user)
         logger.warning("Profile update validation failed: user_id=%s msg=%s", request.user.id, str(msg))
         return Response({"status": False, "message": str(msg)}, status=status.HTTP_400_BAD_REQUEST)
 

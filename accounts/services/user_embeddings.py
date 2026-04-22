@@ -11,6 +11,13 @@ from accounts.services.user_text_builder import build_user_career_text
 # from typing import List
 from accounts.models import UserEmbedding
 import threading
+import logging
+from django.core.cache import cache
+import threading
+import time
+
+logger = logging.getLogger(__name__)
+ML_API_URL = "http://206.189.18.64:8000/ml/embed/"
 
 
 # 🔹 Load model ONCE (global singleton)
@@ -42,16 +49,23 @@ import threading
 import requests
 
 def call_ml_api(text: str):
-    res = requests.post(
-        "http://206.189.18.64:8000/ml/embed/",
-        json={"text": text},
-        timeout=5
-    )
+    for attempt in range(2):  # 1 retry
+        try:
+            response = requests.post(
+                ML_API_URL,
+                json={"text": text},
+                timeout=(2, 5)
+            )
+            response.raise_for_status()
+            return response.json().get("embedding")
 
-    if res.status_code != 200:
-        raise Exception(f"ML API failed: {res.text}")
+        except requests.Timeout:
+            logger.warning(f"Timeout attempt {attempt+1}")
+        except requests.RequestException as e:
+            logger.error(f"ML API error: {e}")
+            break
 
-    return res.json()["embedding"]
+    return None
 
 def generate_user_embedding(
     user,
@@ -111,11 +125,48 @@ def generate_and_store_user_embedding(
 
     return obj
 
-def update_embedding_async(user):
+def update_embedding_async(user, ex, sv):
+    # 🔒 Prevent multiple threads for same user
+    if getattr(user, "_embedding_running", False):
+        return
+
+    user._embedding_running = True
+
     def task():
         try:
-            generate_and_store_user_embedding(user)
+            generate_and_store_user_embedding(user,explored_careers=ex, saved_careers=sv)
         except Exception as e:
             print(f"Embedding failed: {e}")
+        finally:
+            user._embedding_running = False
 
-    threading.Thread(target=task).start()
+    thread = threading.Thread(target=task)
+    thread.daemon = True   # 🔥 important (prevents hanging threads)
+    thread.start()
+
+def schedule_embedding_update(user,ex, sv, delay=5):
+    key = f"embedding_schedule:{user.id}"
+
+    # Each call updates timestamp
+    now = time.time()
+    cache.set(key, now, timeout=delay + 10)
+
+    def task(start_time):
+        time.sleep(delay)
+
+        latest_time = cache.get(key)
+
+        # Only run if this is the latest trigger
+        if latest_time != start_time:
+            return  # ❌ newer event happened → skip
+
+        try:
+            generate_and_store_user_embedding(user, explored_careers=ex, saved_careers=sv)
+        finally:
+            cache.delete(key)
+
+    threading.Thread(
+        target=task,
+        args=(now,),
+        daemon=True
+    ).start()

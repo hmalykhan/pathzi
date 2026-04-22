@@ -2,9 +2,11 @@
 from careers.models import CareerEmbedding
 from sklearn.metrics.pairwise import cosine_similarity
 from accounts.models import UserEmbedding
-
+from accounts.services.user_embeddings import schedule_embedding_update
+from django.core.cache import cache
 # adjust this import to your installed pgvector Django API
 from pgvector.django import CosineDistance
+import threading
 
 def is_too_similar(vec1, vec2, threshold=0.88):
     sim = cosine_similarity([vec1], [vec2])[0][0]
@@ -100,12 +102,12 @@ def recommend_careers_for_user(user, queryset, top_k=10):
         dimension = len(user_embedding)
 
     except UserEmbedding.DoesNotExist:
-        # fallback (optional)
+        schedule_embedding_update(user)
         return {
-            "user_text": "",
-            "model_name": "",
-            "dimension": 0,
-            "recommendations": [],
+            "user_text": None,
+            "model_name": None,
+            "dimension": None,
+            "recommendations": None,
         }
 
     results = retrieve_similar_careers(
@@ -140,3 +142,27 @@ def recommend_careers_for_user(user, queryset, top_k=10):
         "dimension": dimension,
         "recommendations": diversified,
     }
+
+def precompute_recommendations_async(user, queryset):
+    lock_key = f"recs_lock:{user.id}"
+
+    # 🔒 prevent multiple threads
+    if not cache.add(lock_key, True, timeout=20):
+        return
+
+    def task():
+        try:
+            recs = recommend_careers_for_user(
+                user=user,
+                queryset=queryset,
+                top_k=100,
+            )
+
+            ids = [r["career_id"] for r in recs["recommendations"]]
+
+            cache.set(f"user_recs:{user.id}", ids, timeout=60 * 60)
+
+        finally:
+            cache.delete(lock_key)
+
+    threading.Thread(target=task, daemon=True).start()

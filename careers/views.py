@@ -2,6 +2,7 @@
 import re
 # from django.db.models import Subquery, TextField, Value
 # from django.db.models.functions import Cast, Coalesce, Lower, Replace, Trim
+from django.core.cache import cache
 from django.db.models import Subquery
 from django.utils import timezone
 from django.utils.functional import cached_property
@@ -26,8 +27,10 @@ from jobs.api.serializers import JobsSerializer
 from apprenticeship.models import Apprenticeship
 from apprenticeship.api.serializers import ApprenticeshipSerializer
 
-from accounts.services.career_recommender import recommend_careers_for_user
-from accounts.services.user_embeddings import update_embedding_async
+from accounts.services.career_recommender import recommend_careers_for_user,precompute_recommendations_async
+from accounts.services.user_embeddings import schedule_embedding_update
+from accounts.services.recommendation_cache import get_explored_cache_key, get_saved_cache_key, get_list_cache_key
+from accounts.services.user_service import get_explored_careers, get_saved_careers
 
 FREE_CAREER_LIMIT = 5
 
@@ -144,20 +147,7 @@ class CareersView(viewsets.ModelViewSet):
             categories.append(k)
 
         if not categories:
-            # return Career.objects.none()
             return Career.objects.all().order_by("id")
-
-        # commnt them since we have made a field with the name of the normalized_sub_type.
-        # normalize Career.sub_type in DB the same way
-        # empty = Value("", output_field=TextField())
-        # sub = Coalesce(Cast("sub_type", output_field=TextField()), empty, output_field=TextField())
-        # sub = Lower(Trim(sub))
-        # sub = Replace(sub, Value(" ", output_field=TextField()), empty, output_field=TextField())
-        # sub = Replace(sub, Value("_", output_field=TextField()), empty, output_field=TextField())
-        # sub = Replace(sub, Value("-", output_field=TextField()), empty, output_field=TextField())
-        # sub = Cast(sub, output_field=TextField())
-        # return Career.objects.annotate(cat_l=sub).filter(cat_l__in=categories)
-
         return Career.objects.filter(normalized_sub_type__in=categories).order_by("id")
 
     def _allowed_ids_subquery(self):
@@ -176,31 +166,6 @@ class CareersView(viewsets.ModelViewSet):
         #     qs = qs[:FREE_CAREER_LIMIT]
 
         return qs
-
-    # def _build_saved_map(self, career_ids):
-    #     profile = self._profile_cached
-    #     if not profile:
-    #         return {}
-
-    #     ids = UserSavedCareer.objects.filter(
-    #         user_profile=profile,
-    #         career_id__in=career_ids
-    #     ).values_list("career_id", flat=True)
-
-    #     return {cid: True for cid in ids}
-
-
-    # def _build_explored_map(self, career_ids):
-    #     profile = self._profile_cached
-    #     if not profile:
-    #         return {}
-
-    #     ids = UserExploredCareer.objects.filter(
-    #         user_profile=profile,
-    #         career_id__in=career_ids
-    #     ).values_list("career_id", flat=True)
-
-    #     return {cid: True for cid in ids}
     
     def _build_saved_map(self, career_ids):
         profile = self._profile_cached
@@ -345,7 +310,7 @@ class CareersView(viewsets.ModelViewSet):
                 {"detail": "Career is not saved. Save career first."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
+        cache.delete(get_saved_cache_key(request.user.id))
         return Response(
             {
                 "report_status": True,
@@ -387,7 +352,7 @@ class CareersView(viewsets.ModelViewSet):
             return Response([], status=status.HTTP_200_OK)
         # print("this is the profile name : ",profile.name)
         
-        categories = list(profile.category)
+        # categories = list(profile.category)
 
         saved_ids = UserSavedCareer.objects.filter(
             user_profile=profile
@@ -419,45 +384,60 @@ class CareersView(viewsets.ModelViewSet):
         #     print(f"this is the categories : {category} \n ")
         #     if bool == True:
         #         print("inside\n")
-        rec_result = recommend_careers_for_user(
-                    user=user,
-                    queryset=qss,
-                    # saved_careers=saved_careers,
-                    # explored_careers=explored_careers,
-                    top_k=50,
-                )
-                # bool = False
-            # elif bool == False:
-            #     print("outside\n")
-            #     rec_result["recommendations"] += recommend_careers_for_user(
-            #             user=user,
-            #             category=category,
-            #             saved_careers=saved_careers,
-            #             explored_careers=explored_careers,
-            #             top_k=30,
-            #         )["recommendations"]
-            
-        print(f"this is the len of all recomendations : {len(rec_result["recommendations"])}")
 
-        recommended_ids = [item["career_id"] for item in rec_result["recommendations"]]
+        cache_key = get_list_cache_key(user.id)
+        cached_ids = cache.get(cache_key)
+        if cached_ids is None:
+            print("CACHE MISS ❌")
+            rec_result = recommend_careers_for_user(
+                        user=user,
+                        queryset=qss,
+                        # saved_careers=saved_careers,
+                        # explored_careers=explored_careers,
+                        top_k=50,
+                    )
+            if rec_result["recommendations"] == None:
+                print("fallback is running from the list function.")
+                careers = qss
+                    # bool = False
+                # elif bool == False:
+                #     print("outside\n")
+                #     rec_result["recommendations"] += recommend_careers_for_user(
+                #             user=user,
+                #             category=category,
+                #             saved_careers=saved_careers,
+                #             explored_careers=explored_careers,
+                #             top_k=30,
+                #         )["recommendations"]
 
-        # careers_qs = Career.objects.filter(id__in=recommended_ids)
-        # careers_by_id = {career.id: career for career in careers_qs}
-        careers_by_id = {
-            c.id:c for c in qss if c.id in recommended_ids
-        }
+            else:   
+                print(f"this is the len of all recomendations : {len(rec_result["recommendations"])}")
 
-        # careers = [
-        #     careers_by_id[cid]
-        #     for cid in recommended_ids
-        #     if cid in careers_by_id
-        # ]
+                recommended_ids = [item["career_id"] for item in rec_result["recommendations"]]
+                cache.set(cache_key, recommended_ids, timeout=60 * 60)
 
-        # career_ids = [c.id for c in careers]
-        # report_map = self._build_report_map(career_ids)
-        # saved_map = self._build_saved_map(career_ids)
-        # explored_map = self._build_explored_map(career_ids)
-        careers = Career.objects.filter(id__in=recommended_ids)
+                # careers_qs = Career.objects.filter(id__in=recommended_ids)
+                # careers_by_id = {career.id: career for career in careers_qs}
+                # careers_by_id = {
+                #     c.id:c for c in qss if c.id in recommended_ids
+                # }
+
+                # careers = [
+                #     careers_by_id[cid]
+                #     for cid in recommended_ids
+                #     if cid in careers_by_id
+                # ]
+
+                # career_ids = [c.id for c in careers]
+                # report_map = self._build_report_map(career_ids)
+                # saved_map = self._build_saved_map(career_ids)
+                # explored_map = self._build_explored_map(career_ids)
+                careers = Career.objects.filter(id__in=recommended_ids)
+
+        else:
+            print("CACHE HIT ✅")
+            recommended_ids = cached_ids
+            careers = Career.objects.filter(id__in=recommended_ids)
 
         serializer = CareerListSerializer(
             careers,
@@ -551,6 +531,13 @@ class CareersView(viewsets.ModelViewSet):
     @action(detail=False, methods=["GET"])
     def my(self, request):
         profile = self._get_or_create_profile()
+        cache_key = get_saved_cache_key(request.user.id)
+        cached = cache.get(cache_key)
+        if cached:
+            print("SAVED CACHE HIT ✅")
+            return Response(cached, status=status.HTTP_200_OK)
+        
+        print("SAVED CACHE MISS ❌")
 
         saved_ids = UserSavedCareer.objects.filter(
             user_profile=profile
@@ -589,17 +576,26 @@ class CareersView(viewsets.ModelViewSet):
                 "report_map": report_map,
             },
         )
+        cache.set(cache_key, serializer.data, timeout=60 * 60)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["POST", "GET"])
     def save(self, request, pk=None):
-        career = self.get_object()
+        # career = self.get_object()
+        career = get_object_or_404(Career.objects.all(), pk=pk)
         profile = self._get_or_create_profile()
 
         link, _ = UserSavedCareer.objects.get_or_create(
             user_profile=profile,
             career_id=career.id,
         )
+        schedule_embedding_update(request.user)
+        ex=get_explored_careers(profile)
+        sv=get_saved_careers(profile)
+        qss = list(self.get_queryset())
+        cache.delete(get_saved_cache_key(request.user.id))
+        cache.delete(get_list_cache_key(request.user.id))
+        precompute_recommendations_async(request.user, qss)
 
         # old
         # serializer = CareerDetailSerializer(
@@ -612,7 +608,6 @@ class CareersView(viewsets.ModelViewSet):
         # saved_map = self._build_saved_map(career_ids)
         # explored_map = self._build_explored_map(career_ids)
         # report_map = {career.id: link}
-        update_embedding_async(request.user)
         serializer = CareerDetailSerializer(
             career,
             # context={
@@ -635,6 +630,13 @@ class CareersView(viewsets.ModelViewSet):
         ).delete()
 
         if deleted:
+            schedule_embedding_update(request.user)
+            ex=get_explored_careers(profile)
+            sv=get_saved_careers(profile)
+            qss = list(self.get_queryset())
+            cache.delete(get_saved_cache_key(request.user.id))
+            cache.delete(get_list_cache_key(request.user.id))
+            precompute_recommendations_async(request.user, qss)
             return Response({"message": "Career unsaved."}, status=status.HTTP_200_OK)
         return Response({"error": "Career was not saved."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -818,6 +820,13 @@ class CareersView(viewsets.ModelViewSet):
     @action(detail=False, methods=["GET"], url_path="explore_mine")
     def explore_mine(self, request):
         profile = self._get_or_create_profile()
+        cache_key = get_explored_cache_key(request.user.id)
+        cached = cache.get(cache_key)
+        if cached:
+            print("SAVED CACHE HIT ✅")
+            return Response(cached, status=status.HTTP_200_OK)
+
+        print("SAVED CACHE MISS ❌")
 
         explored_ids = UserExploredCareer.objects.filter(
             user_profile=profile
@@ -856,6 +865,7 @@ class CareersView(viewsets.ModelViewSet):
             #     "report_map": report_map,
             # },
         )
+        cache.set(cache_key, serializer.data, timeout=60 * 60)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -869,6 +879,13 @@ class CareersView(viewsets.ModelViewSet):
             user_profile=profile,
             career_id=career.id,
         )
+        schedule_embedding_update(request.user)
+        ex=get_explored_careers(profile)
+        sv=get_saved_careers(profile)
+        qss = list(self.get_queryset())
+        cache.delete(get_explored_cache_key(request.user.id))
+        cache.delete(get_list_cache_key(request.user.id))
+        precompute_recommendations_async(request.user, qss)
 
         # old
         # report_map = self._build_report_map([career.id])
@@ -883,7 +900,6 @@ class CareersView(viewsets.ModelViewSet):
         # saved_map = self._build_saved_map(career_ids)
         # explored_map = self._build_explored_map(career_ids)
         # report_map = self._build_report_map(career_ids)
-        update_embedding_async(request.user)
         serializer = CareerDetailSerializer(
             career,
             # context={
@@ -896,7 +912,7 @@ class CareersView(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-    @action(detail=True, methods=["POST"])
+    @action(detail=True, methods=["GET","POST"])
     def unexplore(self, request, pk=None):
         # career = self.get_object()
         career = get_object_or_404(Career.objects.all(), pk=pk)
@@ -906,8 +922,14 @@ class CareersView(viewsets.ModelViewSet):
             user_profile=profile,
             career_id=career.id
         ).delete()
-
         if deleted:
+            schedule_embedding_update(request.user)
+            ex=get_explored_careers(profile)
+            sv=get_saved_careers(profile)
+            qss = list(self.get_queryset())
+            cache.delete(get_explored_cache_key(request.user.id))
+            cache.delete(get_list_cache_key(request.user.id))
+            precompute_recommendations_async(request.user, qss)
             return Response({"message": "Career unexplored."}, status=status.HTTP_200_OK)
 
         return Response(
