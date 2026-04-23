@@ -152,6 +152,7 @@ def precompute_recommendations_async(user, queryset):
 
     def task():
         try:
+            print("alhamdulillah we are in precomputation.")
             recs = recommend_careers_for_user(
                 user=user,
                 queryset=queryset,
@@ -161,6 +162,7 @@ def precompute_recommendations_async(user, queryset):
             ids = [r["career_id"] for r in recs["recommendations"]]
 
             cache.set(f"user_recs:{user.id}", ids, timeout=60 * 60)
+            print("alhamdulillah we are in precomputation and .")
 
         finally:
             cache.delete(lock_key)

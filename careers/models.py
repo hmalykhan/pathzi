@@ -116,7 +116,13 @@ class UserSavedCareer(models.Model):
     user_profile = models.ForeignKey(
         UserProfile, on_delete=models.CASCADE, related_name="career_links"
     )
-    career_id = models.BigIntegerField(db_index=True)  # stores Career.id
+    
+    career = models.ForeignKey(
+    Career,
+    on_delete=models.CASCADE,
+    null=False,
+    related_name="saved_user_links"
+    )
 
     # ✅ report fields (do NOT break old functionality)
     report_status = models.BooleanField(default=False)
@@ -127,10 +133,10 @@ class UserSavedCareer(models.Model):
 
     class Meta:
         db_table = "pathzi_user_saved_career"
-        unique_together = ("user_profile", "career_id")
+        unique_together = ("user_profile", "career")
         indexes = [
             models.Index(fields=["user_profile"]),
-            models.Index(fields=["career_id"]),
+            models.Index(fields=["career"]),
         ]
 
 class UserExploredCareer(models.Model):

@@ -62,6 +62,7 @@ from jwt import PyJWKClient
 from accounts.services.user_embeddings import update_embedding_async
 from accounts.services.recommendation_cache import get_list_cache_key
 from accounts.services.career_recommender import precompute_recommendations_async
+from accounts.services.user_service import get_explored_careers, get_saved_careers, get_career_queryset
 
 
 class AppleAuthURLAPI(APIView):
@@ -475,10 +476,13 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
 
         if serializer.is_valid():
             serializer.save()
+            ex=get_explored_careers(profile)
+            sv=get_saved_careers(profile)
+            qss=get_career_queryset(request.user, profile)
             cache.delete(f"embedding_schedule:{user.id}")
-            update_embedding_async(request.user)
+            update_embedding_async(request.user, ex=ex, sv=sv)
             cache.delete(get_list_cache_key(request.user.id))
-            precompute_recommendations_async(request.user.id)
+            precompute_recommendations_async(request.user.id, qss)
             logger.info("Profile updated: user_id=%s", request.user.id)
             return Response(
                 {"status": True, "message": "Profile updated successfully.", "data": serializer.data},

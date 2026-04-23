@@ -354,15 +354,15 @@ class CareersView(viewsets.ModelViewSet):
         
         # categories = list(profile.category)
 
-        saved_ids = UserSavedCareer.objects.filter(
-            user_profile=profile
-        ).values_list("career_id", flat=True)
+        # saved_ids = UserSavedCareer.objects.filter(
+        #     user_profile=profile
+        # ).values_list("career_id", flat=True)
 
         # saved_careers = list(
         #     Career.objects.filter(id__in=saved_ids).distinct()
         # )
 
-        saved_careers = list(self._filtered_base_queryset().filter(id__in=saved_ids).order_by("id"))
+        # saved_careers = list(self._filtered_base_queryset().filter(id__in=saved_ids).order_by("id"))
 
         # explored_careers = list(
         #     Career.objects.filter(
@@ -370,15 +370,18 @@ class CareersView(viewsets.ModelViewSet):
         #     ).distinct()
         # )
 
-        explored_ids = UserExploredCareer.objects.filter(
-            user_profile=profile
-        ).values_list("career_id", flat=True)
+        # explored_ids = UserExploredCareer.objects.filter(
+        #     user_profile=profile
+        # ).values_list("career_id", flat=True)
 
-        explored_careers = list(self._filtered_base_queryset().filter(id__in=explored_ids).order_by("id"))
+        # explored_careers = list(self._filtered_base_queryset().filter(id__in=explored_ids).order_by("id"))
+
+        ex=get_explored_careers(profile)
+        sv=get_saved_careers(profile)
 
 
-        print("these are the saved careers of this user : ",saved_careers)
-        print("thesea are the explored careers of this user : ", explored_careers)
+        print("these are the saved careers of this user : ",sv)
+        print("thesea are the explored careers of this user : ", ex)
         # bool = True
         # for category in categories:
         #     print(f"this is the categories : {category} \n ")
@@ -589,9 +592,9 @@ class CareersView(viewsets.ModelViewSet):
             user_profile=profile,
             career_id=career.id,
         )
-        schedule_embedding_update(request.user)
         ex=get_explored_careers(profile)
         sv=get_saved_careers(profile)
+        schedule_embedding_update(request.user, ex=ex, sv=sv)
         qss = list(self.get_queryset())
         cache.delete(get_saved_cache_key(request.user.id))
         cache.delete(get_list_cache_key(request.user.id))
@@ -630,9 +633,9 @@ class CareersView(viewsets.ModelViewSet):
         ).delete()
 
         if deleted:
-            schedule_embedding_update(request.user)
             ex=get_explored_careers(profile)
             sv=get_saved_careers(profile)
+            schedule_embedding_update(request.user, ex=ex, sv=sv)
             qss = list(self.get_queryset())
             cache.delete(get_saved_cache_key(request.user.id))
             cache.delete(get_list_cache_key(request.user.id))
@@ -879,9 +882,9 @@ class CareersView(viewsets.ModelViewSet):
             user_profile=profile,
             career_id=career.id,
         )
-        schedule_embedding_update(request.user)
         ex=get_explored_careers(profile)
         sv=get_saved_careers(profile)
+        schedule_embedding_update(request.user, ex=ex, sv=sv)
         qss = list(self.get_queryset())
         cache.delete(get_explored_cache_key(request.user.id))
         cache.delete(get_list_cache_key(request.user.id))
@@ -923,9 +926,9 @@ class CareersView(viewsets.ModelViewSet):
             career_id=career.id
         ).delete()
         if deleted:
-            schedule_embedding_update(request.user)
             ex=get_explored_careers(profile)
             sv=get_saved_careers(profile)
+            schedule_embedding_update(request.user, ex=ex, sv=sv)
             qss = list(self.get_queryset())
             cache.delete(get_explored_cache_key(request.user.id))
             cache.delete(get_list_cache_key(request.user.id))

@@ -1,6 +1,5 @@
 import re
-from careers.models import Career
-from accounts.models import UserSavedCareer, UserExploredCareer
+from careers.models import Career, UserSavedCareer, UserExploredCareer
 
 
 # ============================
@@ -35,7 +34,7 @@ def get_saved_careers(profile):
     if not profile:
         return Career.objects.none()
     return Career.objects.filter(
-        usersavedcareer__user_profile=profile
+        saved_user_links__user_profile=profile
     ).order_by("id")
 
 
@@ -43,7 +42,7 @@ def get_explored_careers(profile):
     if not profile:
         return Career.objects.none()
     return Career.objects.filter(
-        userexploredcareer__user_profile=profile
+        explored_user_links__user_profile=profile
     ).order_by("id")
 
 
