@@ -401,7 +401,9 @@ class CareersView(viewsets.ModelViewSet):
                     )
             if rec_result["recommendations"] == None:
                 print("fallback is running from the list function.")
+                schedule_embedding_update(request.user, ex=ex, sv=sv)
                 careers = qss
+                precompute_recommendations_async(request.user, qss)
                     # bool = False
                 # elif bool == False:
                 #     print("outside\n")

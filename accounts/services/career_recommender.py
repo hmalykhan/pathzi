@@ -102,7 +102,7 @@ def recommend_careers_for_user(user, queryset, top_k=10):
         dimension = len(user_embedding)
 
     except UserEmbedding.DoesNotExist:
-        schedule_embedding_update(user)
+        # schedule_embedding_update(user)
         return {
             "user_text": None,
             "model_name": None,
