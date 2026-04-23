@@ -3,7 +3,7 @@ from careers.models import Career, UserSavedCareer, UserExploredCareer
 
 
 # ============================
-# USER IDS (FAST FOR RECOMMENDER)
+# IDS (FAST FOR RECOMMENDER)
 # ============================
 
 def get_saved_ids(profile):
@@ -27,23 +27,25 @@ def get_explored_ids(profile):
 
 
 # ============================
-# QUERYSET (OPTIMIZED)
+# CAREER QUERYSETS (USER CONTEXT)
 # ============================
 
 def get_saved_careers(profile):
     if not profile:
         return Career.objects.none()
+
     return Career.objects.filter(
         saved_user_links__user_profile=profile
-    ).order_by("id")
+    ).order_by("-saved_user_links__created_at").distinct()
 
 
 def get_explored_careers(profile):
     if not profile:
         return Career.objects.none()
+
     return Career.objects.filter(
         explored_user_links__user_profile=profile
-    ).order_by("id")
+    ).order_by("-explored_user_links__created_at").distinct()
 
 
 # ============================
@@ -62,7 +64,7 @@ def norm_key(s: str) -> str:
 
 
 # ============================
-# MAIN QUERYSET LOGIC
+# BASE FILTERING LOGIC
 # ============================
 
 def get_filtered_base_queryset(user, profile):
@@ -98,3 +100,4 @@ def get_filtered_base_queryset(user, profile):
 
 def get_career_queryset(user, profile):
     return get_filtered_base_queryset(user, profile)
+

@@ -34,8 +34,16 @@ ALLOWED_HOSTS = ["*"]
 
 CACHES = {
     "default": {
-        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-        "LOCATION": "recs-cache",
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": config("REDIS_URL"),
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+
+            # 🔥 REQUIRED for external TLS Redis
+            "CONNECTION_POOL_KWARGS": {
+                "ssl_cert_reqs": None
+            }
+        }
     }
 }
 

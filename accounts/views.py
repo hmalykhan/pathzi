@@ -479,7 +479,7 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
             ex=get_explored_careers(profile)
             sv=get_saved_careers(profile)
             qss=get_career_queryset(request.user, profile)
-            cache.delete(f"embedding_schedule:{user.id}")
+            cache.delete(f"embedding_schedule:{request.user.id}")
             update_embedding_async(request.user, ex=ex, sv=sv)
             cache.delete(get_list_cache_key(request.user.id))
             precompute_recommendations_async(request.user.id, qss)
