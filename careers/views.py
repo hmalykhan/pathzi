@@ -442,7 +442,7 @@ class CareersView(viewsets.ModelViewSet):
 
     from django.shortcuts import get_object_or_404
 
-    @action(detail=True, methods=["GET", "PATCH"], url_path="report")
+    @action(detail=True, methods=["GET", "PUT"], url_path="report")
     def report(self, request, pk=None):
 
         try:
