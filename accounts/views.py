@@ -482,7 +482,7 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
             cache.delete(f"embedding_schedule:{request.user.id}")
             update_embedding_async(request.user, ex=ex, sv=sv)
             cache.delete(get_list_cache_key(request.user.id))
-            precompute_recommendations_async(request.user.id, qss)
+            precompute_recommendations_async(request.user, qss)
             logger.info("Profile updated: user_id=%s", request.user.id)
             return Response(
                 {"status": True, "message": "Profile updated successfully.", "data": serializer.data},
