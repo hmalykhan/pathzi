@@ -654,7 +654,8 @@ class CareersView(viewsets.ModelViewSet):
                 "id",
                 "sub_type",
                 "jobname",
-                "job_description"
+                "job_description",
+                "dg_image_url"
             ).order_by(preserved_order)
 
         # 🔥 Use fast serializer
@@ -732,11 +733,12 @@ class CareersView(viewsets.ModelViewSet):
             "id",
             "sub_type",          # ✔ maps to category
             "jobname",           # ✔ maps to subcategory
-            "job_description"
+            "job_description",
+            "dg_image_url"
         )
 
         # 🔥 Apply slicing / pagination
-        qs = self._slice(qs)
+        # qs = self._slice(qs)
         # qs = qs[:50]
 
         print("Query build time:", time.time() - build_start)
