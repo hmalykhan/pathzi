@@ -637,7 +637,7 @@ class CareersView(viewsets.ModelViewSet):
             # 🔒 Trigger async ONLY ONCE
             if cache.add(f"recs_triggered:{user.id}", True, timeout=60):
                 print("Triggering async 🚀")
-                precompute_recommendations_async(user.id)
+                update_embedding_and_recs_async(user.id)
 
             # return base queryset (full data, no limit)
 

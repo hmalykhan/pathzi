@@ -180,6 +180,7 @@ class CareerFilterSerializer(serializers.ModelSerializer):
                 "category",
                 "subcategory",
                 "job_description",
+                "dg_image_url",
             ]
 
 
