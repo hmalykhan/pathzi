@@ -1,15 +1,16 @@
 # from accounts.services.user_embeddings import generate_user_embedding
 from careers.models import CareerEmbedding
 from sklearn.metrics.pairwise import cosine_similarity
-from accounts.models import UserEmbedding
+from accounts.models import UserEmbedding, User
 from accounts.services.user_embeddings import schedule_embedding_update
 from django.core.cache import cache
 # adjust this import to your installed pgvector Django API
 from pgvector.django import CosineDistance
 import threading
-from accounts.services.user_service import get_career_queryset
+from accounts.services.user_service import get_career_queryset, get_explored_careers, get_saved_careers
 from accounts.models import UserProfile
 from accounts.services.recommendation_cache import get_list_cache_key, get_recs_lock_key
+from accounts.services.user_embeddings import generate_and_store_user_embedding
 
 def is_too_similar(vec1, vec2, threshold=0.95):
     sim = cosine_similarity([vec1], [vec2])[0][0]
@@ -174,5 +175,52 @@ def precompute_recommendations_async(user):
 
         finally:
             cache.delete(get_recs_lock_key(user.id))
+
+    threading.Thread(target=task, daemon=True).start()
+
+def update_embedding_and_recs_async(user_id):
+
+    lock_key = f"pipeline_lock:{user_id}"
+
+    # 🔒 prevent multiple pipelines
+    if not cache.add(lock_key, True, timeout=300):
+        return
+
+    def task():
+        try:
+            print("STEP 1: embedding")
+
+            user = User.objects.get(id=user_id)
+            profile, _ = UserProfile.objects.get_or_create(appuser=user)
+
+            ex = get_explored_careers(profile)
+            sv = get_saved_careers(profile)
+
+            # STEP 1
+            generate_and_store_user_embedding(
+                user,
+                explored_careers=ex,
+                saved_careers=sv
+            )
+
+            print("STEP 2: recommendations")
+
+            # STEP 2
+            recs = recommend_careers_for_user(
+                user=user,
+                queryset=get_career_queryset(user, profile),
+                top_k=50,
+            )
+
+            if recs and recs.get("recommendations"):
+                ids = [r["career_id"] for r in recs["recommendations"]]
+                cache.set(get_list_cache_key(user_id), ids, timeout=60 * 60 * 6)
+
+        except Exception as e:
+            print(f"Pipeline failed: {e}")
+
+        finally:
+            # 🔓 ALWAYS release lock
+            cache.delete(lock_key)
 
     threading.Thread(target=task, daemon=True).start()

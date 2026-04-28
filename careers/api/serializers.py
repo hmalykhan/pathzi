@@ -170,6 +170,18 @@ class UserProfileNestedSerializer(serializers.ModelSerializer):
         model = UserProfile
         fields = "__all__"
 
+class CareerFilterSerializer(serializers.ModelSerializer):
+        category = serializers.CharField(source="sub_type", read_only=True)
+        subcategory = serializers.CharField(source="jobname", read_only=True)
+        class Meta:
+            model = Career
+            fields = [
+                "id",
+                "category",
+                "subcategory",
+                "job_description",
+            ]
+
 
 def _empty_my_report():
     return {"report_status": False, "report": {}, "generated_at": None}
@@ -446,3 +458,7 @@ class CareerDetailSerializer(serializers.ModelSerializer):
     #         self._sync_links(instance, profiles)
 
     #     return instance
+
+
+
+    

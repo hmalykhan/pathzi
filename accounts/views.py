@@ -62,7 +62,7 @@ from django.core.mail import send_mail
 from jwt import PyJWKClient
 from accounts.services.user_embeddings import update_embedding_async
 from accounts.services.recommendation_cache import get_list_cache_key
-from accounts.services.career_recommender import precompute_recommendations_async
+from accounts.services.career_recommender import precompute_recommendations_async, update_embedding_and_recs_async
 from accounts.services.recommendation_cache import get_embedding_schedule_lock_key
 
 
@@ -487,14 +487,8 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
         if serializer.is_valid():
             serializer.save()
             cache.delete(get_list_cache_key(request.user.id))
-            # ex=get_explored_careers(profile)
-            # sv=get_saved_careers(profile)
-            # qss=get_career_queryset(request.user, profile)
             cache.delete(get_embedding_schedule_lock_key(request.user.id))
-            update_embedding_async(request.user)
-            # update_embedding_async(request.user, ex=ex, sv=sv)
-            precompute_recommendations_async(request.user)
-            # precompute_recommendations_async(request.user, qss)
+            update_embedding_and_recs_async(request.user.id)
             logger.info("Profile updated: user_id=%s", request.user.id)
             return Response(
                 {"status": True, "message": "Profile updated successfully.", "data": serializer.data},

@@ -1,5 +1,5 @@
 # For payment method limited careers for unsubsctibed uncomment 160, 211
-import re
+import re, time
 from django.core.cache import cache
 from django.db.models import Case, When
 from django.db.models import Subquery
@@ -15,7 +15,7 @@ from rest_framework.response import Response
 from accounts.models import UserProfile
 from careers.models import Career, UserSavedCareer, UserExploredCareer
 from careers.api.permissions import CareerPermission
-from careers.api.serializers import CareerListSerializer, CareerDetailSerializer
+from careers.api.serializers import CareerListSerializer, CareerDetailSerializer, CareerFilterSerializer
 
 from courses.models import Course
 from courses.api.serializer import CoursesSerializer
@@ -26,7 +26,7 @@ from jobs.api.serializers import JobsSerializer
 from apprenticeship.models import Apprenticeship
 from apprenticeship.api.serializers import ApprenticeshipSerializer
 
-from accounts.services.career_recommender import recommend_careers_for_user,precompute_recommendations_async
+from accounts.services.career_recommender import recommend_careers_for_user,precompute_recommendations_async, update_embedding_and_recs_async
 from accounts.services.user_embeddings import schedule_embedding_update, update_embedding_async
 from accounts.services.recommendation_cache import get_explored_cache_key, get_saved_cache_key, get_list_cache_key, get_recs_lock_key, get_embedding_schedule_lock_key
 from accounts.services.user_service import get_explored_careers, get_saved_careers, get_career_queryset, norm_key
@@ -525,6 +525,89 @@ class CareersView(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
+    # def list(self, request, *args, **kwargs):
+    #     user = request.user
+
+    #     if not user or not user.is_authenticated:
+    #         return Response([], status=status.HTTP_200_OK)
+
+    #     profile = self._profile_cached
+    #     if not profile:
+    #         return Response([], status=status.HTTP_200_OK)
+
+    #     qss = get_career_queryset(user, profile)
+
+    #     cache_key = get_list_cache_key(user.id)
+    #     cached_ids = cache.get(cache_key)
+
+    #     # 🔥 Default fallback (always defined)
+    #     careers = qss
+    #     print("this is the length of the qss : ", len(qss))
+
+    #     if cached_ids is None:
+    #         print("CACHE MISS ❌")
+
+    #         # rec_result = recommend_careers_for_user(
+    #         #     user=user,
+    #         #     queryset=qss,
+    #         #     top_k=50,
+    #         # )
+
+    #         # # ✅ If recommendations exist
+    #         # if rec_result and rec_result.get("recommendations"):
+
+    #         #     recommended_ids = [
+    #         #         item["career_id"] for item in rec_result["recommendations"]
+    #         #     ]
+
+    #         #     # 🔥 cache only IDs
+    #         #     cache.set(cache_key, recommended_ids, timeout=60 * 60)
+
+    #         #     # 🔥 preserve ranking order
+    #         #     preserved_order = Case(
+    #         #         *[When(id=pk, then=pos) for pos, pk in enumerate(recommended_ids)]
+    #         #     )
+
+    #         #     careers = Career.objects.filter(
+    #         #         id__in=recommended_ids
+    #         #     ).order_by(preserved_order)
+
+    #         # else:
+    #         #     print("Fallback running ❗")
+
+    #         #     # 🔥 trigger embedding update (async)
+    #         #     # ex = get_explored_careers(profile)
+    #         #     # sv = get_saved_careers(profile)
+
+    #         #     # 🔥 prevent duplicate heavy jobs
+    #         #     if not cache.get(get_recs_lock_key(user.id)):
+    #         #         cache.set(get_recs_lock_key(user.id), True, timeout=60)
+    #         if cache.add(f"recs_triggered:{user.id}", True, timeout=60):
+    #             print("Triggering async 🚀")
+    #             precompute_recommendations_async(user.id)
+    #         # cached_ids = cache.get(cache_key)
+
+    #     else:
+    #         print("CACHE HIT ✅")
+
+    #         recommended_ids = cached_ids
+
+    #             # 🔥 preserve ranking order
+    #         preserved_order = Case(
+    #             *[When(id=pk, then=pos) for pos, pk in enumerate(recommended_ids)]
+    #         )
+
+    #         careers = Career.objects.filter(
+    #                 id__in=recommended_ids
+    #             ).order_by(preserved_order)
+
+    #     serializer = CareerListSerializer(
+    #         careers,
+    #         many=True,
+    #     )
+
+    #     return Response(serializer.data, status=status.HTTP_200_OK)
+
     def list(self, request, *args, **kwargs):
         user = request.user
 
@@ -540,67 +623,42 @@ class CareersView(viewsets.ModelViewSet):
         cache_key = get_list_cache_key(user.id)
         cached_ids = cache.get(cache_key)
 
-        # 🔥 Default fallback (always defined)
-        careers = qss
-        print("this is the length of the qss : ", len(qss))
+        # 🔥 DEFAULT: full dataset but optimized fields
+        careers = qss.only(
+            "id",
+            "sub_type",
+            "jobname",
+            "job_description"
+        )
 
         if cached_ids is None:
             print("CACHE MISS ❌")
 
-            # rec_result = recommend_careers_for_user(
-            #     user=user,
-            #     queryset=qss,
-            #     top_k=50,
-            # )
+            # 🔒 Trigger async ONLY ONCE
+            if cache.add(f"recs_triggered:{user.id}", True, timeout=60):
+                print("Triggering async 🚀")
+                precompute_recommendations_async(user.id)
 
-            # # ✅ If recommendations exist
-            # if rec_result and rec_result.get("recommendations"):
-
-            #     recommended_ids = [
-            #         item["career_id"] for item in rec_result["recommendations"]
-            #     ]
-
-            #     # 🔥 cache only IDs
-            #     cache.set(cache_key, recommended_ids, timeout=60 * 60)
-
-            #     # 🔥 preserve ranking order
-            #     preserved_order = Case(
-            #         *[When(id=pk, then=pos) for pos, pk in enumerate(recommended_ids)]
-            #     )
-
-            #     careers = Career.objects.filter(
-            #         id__in=recommended_ids
-            #     ).order_by(preserved_order)
-
-            # else:
-            #     print("Fallback running ❗")
-
-            #     # 🔥 trigger embedding update (async)
-            #     # ex = get_explored_careers(profile)
-            #     # sv = get_saved_careers(profile)
-
-            #     # 🔥 prevent duplicate heavy jobs
-            #     if not cache.get(get_recs_lock_key(user.id)):
-            #         cache.set(get_recs_lock_key(user.id), True, timeout=60)
-            update_embedding_async(request.user)
-            precompute_recommendations_async(request.user)
-            # cached_ids = cache.get(cache_key)
+            # return base queryset (full data, no limit)
 
         else:
             print("CACHE HIT ✅")
 
-            recommended_ids = cached_ids
-
-                # 🔥 preserve ranking order
             preserved_order = Case(
-                *[When(id=pk, then=pos) for pos, pk in enumerate(recommended_ids)]
+                *[When(id=pk, then=pos) for pos, pk in enumerate(cached_ids)]
             )
 
             careers = Career.objects.filter(
-                    id__in=recommended_ids
-                ).order_by(preserved_order)
+                id__in=cached_ids
+            ).only(
+                "id",
+                "sub_type",
+                "jobname",
+                "job_description"
+            ).order_by(preserved_order)
 
-        serializer = CareerListSerializer(
+        # 🔥 Use fast serializer
+        serializer = CareerFilterSerializer(
             careers,
             many=True,
         )
@@ -608,26 +666,60 @@ class CareersView(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+    # @action(detail=False, methods=["GET", "POST"], url_path="filter")
+    # def filter(self, request):
+    #     """
+    #     Filter careers using subcategories sent in request body or query params.
+    #     """
+
+    #     # 🔥 Avoid calling both unnecessarily
+    #     subcategories = request.data.get("subcategories")
+    #     if not subcategories:
+    #         subcategories = request.query_params.getlist("subcategories")
+
+    #     # 🔥 Base queryset (lazy, not evaluated)
+    #     if not subcategories:
+    #         qs = Career.objects.all().order_by("id")
+
+    #     else:
+    #         # 🔥 Normalize efficiently (no extra loops, no None issues)
+    #         normalized = [norm_key(s) for s in subcategories if s]
+
+    #         # 🔥 If normalization results empty → fallback to all (same behavior)
+    #         if not normalized:
+    #             qs = Career.objects.all().order_by("id")
+    #         else:
+    #             qs = Career.objects.filter(
+    #                 normalized_sub_type__in=normalized
+    #             ).order_by("id")
+
+    #     # 🔥 Pagination (kept same)
+    #     qs = self._slice(qs)
+
+    #     # 🔥 Avoid re-evaluating queryset twice
+    #     serializer = CareerFilterSerializer(qs, many=True)
+
+    #     return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+
     @action(detail=False, methods=["GET", "POST"], url_path="filter")
     def filter(self, request):
-        """
-        Filter careers using subcategories sent in request body or query params.
-        """
+        total_start = time.time()
 
-        # 🔥 Avoid calling both unnecessarily
+        # 🔥 Get subcategories safely (GET + POST)
         subcategories = request.data.get("subcategories")
         if not subcategories:
             subcategories = request.query_params.getlist("subcategories")
 
-        # 🔥 Base queryset (lazy, not evaluated)
+        build_start = time.time()
+
+        # 🔥 Build queryset
         if not subcategories:
             qs = Career.objects.all().order_by("id")
-
         else:
-            # 🔥 Normalize efficiently (no extra loops, no None issues)
             normalized = [norm_key(s) for s in subcategories if s]
 
-            # 🔥 If normalization results empty → fallback to all (same behavior)
             if not normalized:
                 qs = Career.objects.all().order_by("id")
             else:
@@ -635,11 +727,33 @@ class CareersView(viewsets.ModelViewSet):
                     normalized_sub_type__in=normalized
                 ).order_by("id")
 
-        # 🔥 Pagination (kept same)
-        qs = self._slice(qs)
+        # ✅ FIX: use MODEL fields (not serializer names)
+        qs = qs.only(
+            "id",
+            "sub_type",          # ✔ maps to category
+            "jobname",           # ✔ maps to subcategory
+            "job_description"
+        )
 
-        # 🔥 Avoid re-evaluating queryset twice
-        serializer = CareerListSerializer(qs, many=True)
+        # 🔥 Apply slicing / pagination
+        qs = self._slice(qs)
+        # qs = qs[:50]
+
+        print("Query build time:", time.time() - build_start)
+
+        # 🔥 FORCE DB HIT
+        db_start = time.time()
+        data = list(qs)
+        print("DB fetch time:", time.time() - db_start)
+
+        print("Rows fetched:", len(data))
+
+        # 🔥 Serialization
+        ser_start = time.time()
+        serializer = CareerFilterSerializer(data, many=True)
+        print("Serialization time:", time.time() - ser_start)
+
+        print("TOTAL TIME:", time.time() - total_start)
 
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -816,14 +930,7 @@ class CareersView(viewsets.ModelViewSet):
         cache.delete(get_saved_cache_key(request.user.id))
         cache.delete(get_list_cache_key(request.user.id))
 
-        # 🔥 update embedding context
-        # ex = get_explored_careers(profile)
-        # sv = get_saved_careers(profile)
-        schedule_embedding_update(request.user)
-
-        # 🔥 async recommendation update
-        # qss = get_career_queryset(request.user, profile)
-        precompute_recommendations_async(request.user)
+        update_embedding_and_recs_async(request.user.id)
 
         serializer = CareerDetailSerializer(career)
 
@@ -846,14 +953,7 @@ class CareersView(viewsets.ModelViewSet):
             cache.delete(get_saved_cache_key(request.user.id))
             cache.delete(get_list_cache_key(request.user.id))
 
-            # 🔥 update embedding context
-            # ex = get_explored_careers(profile)
-            # sv = get_saved_careers(profile)
-            schedule_embedding_update(request.user)
-
-            # 🔥 async recommendation update
-            # qss = get_career_queryset(request.user, profile)
-            precompute_recommendations_async(request.user)
+            update_embedding_and_recs_async(request.user.id)
 
             return Response({"message": "Career unsaved."}, status=200)
 
@@ -902,14 +1002,7 @@ class CareersView(viewsets.ModelViewSet):
         cache.delete(get_explored_cache_key(request.user.id))
         cache.delete(get_list_cache_key(request.user.id))
 
-        # 🔥 update embedding context
-        # ex = get_explored_careers(profile)
-        # sv = get_saved_careers(profile)
-        schedule_embedding_update(request.user)
-
-        # 🔥 async recommendation update
-        # qss = get_career_queryset(request.user, profile)
-        precompute_recommendations_async(request.user)
+        update_embedding_and_recs_async(request.user.id)
 
         serializer = CareerDetailSerializer(career)
 
@@ -931,14 +1024,7 @@ class CareersView(viewsets.ModelViewSet):
             cache.delete(get_explored_cache_key(request.user.id))
             cache.delete(get_list_cache_key(request.user.id))
 
-            # 🔥 update embedding context
-            # ex = get_explored_careers(profile)
-            # sv = get_saved_careers(profile)
-            schedule_embedding_update(request.user)
-
-            # 🔥 async recommendation update
-            # qss = get_career_queryset(request.user, profile)
-            precompute_recommendations_async(request.user)
+            update_embedding_and_recs_async(request.user.id)
 
             return Response(
                 {"message": "Career unexplored."},
