@@ -7,8 +7,11 @@ from django.core.cache import cache
 # adjust this import to your installed pgvector Django API
 from pgvector.django import CosineDistance
 import threading
+from accounts.services.user_service import get_career_queryset
+from accounts.models import UserProfile
+from accounts.services.recommendation_cache import get_list_cache_key, get_recs_lock_key
 
-def is_too_similar(vec1, vec2, threshold=0.88):
+def is_too_similar(vec1, vec2, threshold=0.95):
     sim = cosine_similarity([vec1], [vec2])[0][0]
     return sim > threshold
 
@@ -26,8 +29,8 @@ def diversify_recommendations(recommendations, top_k=10):
         if not is_duplicate:
             selected.append(candidate)
 
-        # if len(selected) >= top_k:
-            # break
+        if len(selected) >= top_k:
+            break
 
     return selected
 
@@ -38,8 +41,8 @@ def retrieve_similar_careers(user_embedding, queryset, top_k=10):
         .filter(career__in=queryset)
         .select_related("career")
         .annotate(distance=CosineDistance("embedding", user_embedding))
-        # .order_by("distance")[:top_k]
-        .order_by("distance")[:]
+        .order_by("distance")[:top_k]
+        # .order_by("distance")[:]
     )
     return results
 
@@ -143,28 +146,33 @@ def recommend_careers_for_user(user, queryset, top_k=10):
         "recommendations": diversified,
     }
 
-def precompute_recommendations_async(user, queryset):
-    lock_key = f"recs_lock:{user.id}"
+def precompute_recommendations_async(user):
+    
 
     # 🔒 prevent multiple threads
-    if not cache.add(lock_key, True, timeout=20):
+    if not cache.add(get_recs_lock_key(user.id), True, timeout=300):
         return
 
     def task():
         try:
             print("alhamdulillah we are in precomputation.")
+            profile, _ = UserProfile.objects.get_or_create(appuser=user)
             recs = recommend_careers_for_user(
                 user=user,
-                queryset=queryset,
-                top_k=100,
+                queryset=get_career_queryset(user, profile),
+                top_k=50,
             )
+
+            if not recs or not recs.get("recommendations"):
+                print("recomendations is empty in precompute_recommendatins_async.")
+                return
 
             ids = [r["career_id"] for r in recs["recommendations"]]
 
-            cache.set(f"user_recs:{user.id}", ids, timeout=60 * 60)
+            cache.set(get_list_cache_key(user.id), ids, timeout=60 * 60 * 6)
             print("alhamdulillah we are in precomputation and .")
 
         finally:
-            cache.delete(lock_key)
+            cache.delete(get_recs_lock_key(user.id))
 
     threading.Thread(target=task, daemon=True).start()

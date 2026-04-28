@@ -4,6 +4,18 @@ from django.apps import apps
 
 from .models import UserProfile, Coordinates
 
+class UserProfileLightSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source="appuser.username")
+
+    class Meta:
+        model = UserProfile
+        fields = [
+            "id",
+            "name",
+            "age",
+            "discipline",
+            "education_level",
+        ]
 
 class FlexibleStringListField(serializers.ListField):
     """

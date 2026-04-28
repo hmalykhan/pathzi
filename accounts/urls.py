@@ -17,7 +17,8 @@ from accounts.views import (
                             Otp_Checker,
                             AppleMobileAuthAPI,
                             AppleAuthURLAPI,
-                            AppleCallbackAPI
+                            AppleCallbackAPI,
+                            CurrentUserProfileLightAPI
                             )
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
@@ -42,6 +43,7 @@ path("forgot_password_confirmation/", ForgotPasswordConfirmationOTP.as_view()),
 path("otp_check/",Otp_Checker.as_view() ),
 
 path("user_profile/", CurrentUserProfileAPI.as_view(), name="user_profile"),
+path("user_profile/light/", CurrentUserProfileLightAPI.as_view()),
 path("coordinates/", CurrentUserCoordinatesListCreateAPI.as_view(), name="my-coordinates"),
 path("coordinates/<int:pk>/", CurrentUserCoordinateDetailAPI.as_view(), name="my-coordinate-detail"),
 

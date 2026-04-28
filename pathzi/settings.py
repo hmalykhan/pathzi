@@ -30,6 +30,12 @@ SECRET_KEY = 'django-insecure-phnpwqr^o#9fgr&8w0w&a3&ypw-%+y1^+ft=*l8ywn9*2-u(gx
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
+REST_FRAMEWORK = {
+    'DEFAULT_THROTTLE_RATES': {
+        'user': '100/min',
+    }
+}
+
 ALLOWED_HOSTS = ["*"]
 
 CACHES = {

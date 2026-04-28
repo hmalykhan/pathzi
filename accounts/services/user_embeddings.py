@@ -6,6 +6,7 @@ from typing import Iterable, Optional
 import requests
 
 from accounts.services.user_text_builder import build_user_career_text
+from accounts.services.user_service import get_explored_careers, get_saved_careers, get_career_queryset
 
 # from sentence_transformers import SentenceTransformer
 # from typing import List
@@ -15,6 +16,8 @@ import logging
 from django.core.cache import cache
 import threading
 import time
+from accounts.models import UserProfile
+from accounts.services.recommendation_cache import get_embedding_schedule_lock_key
 
 logger = logging.getLogger(__name__)
 ML_API_URL = "http://206.189.18.64:8000/ml/embed/"
@@ -125,10 +128,13 @@ def generate_and_store_user_embedding(
 
     return obj
 
-def update_embedding_async(user, ex, sv):
+def update_embedding_async(user):
     # 🔒 Prevent multiple threads for same user
     if getattr(user, "_embedding_running", False):
         return
+    profile, _ = UserProfile.objects.get_or_create(appuser=user)
+    ex = get_career_queryset(profile)
+    sv = get_saved_careers(profile)
 
     user._embedding_running = True
 
@@ -144,17 +150,19 @@ def update_embedding_async(user, ex, sv):
     thread.daemon = True   # 🔥 important (prevents hanging threads)
     thread.start()
 
-def schedule_embedding_update(user,ex, sv, delay=5):
-    key = f"embedding_schedule:{user.id}"
+def schedule_embedding_update(user, delay=5):
+    profile, _ = UserProfile.objects.get_or_create(appuser=user)
+    ex = get_career_queryset(profile)
+    sv = get_saved_careers(profile)
 
     # Each call updates timestamp
     now = time.time()
-    cache.set(key, now, timeout=delay + 10)
+    cache.set(get_embedding_schedule_lock_key(user.id), now, timeout=delay + 10)
 
     def task(start_time):
         time.sleep(delay)
 
-        latest_time = cache.get(key)
+        latest_time = cache.get(get_embedding_schedule_lock_key(user.id))
 
         # Only run if this is the latest trigger
         if latest_time != start_time:
@@ -163,7 +171,7 @@ def schedule_embedding_update(user,ex, sv, delay=5):
         try:
             generate_and_store_user_embedding(user, explored_careers=ex, saved_careers=sv)
         finally:
-            cache.delete(key)
+            cache.delete(get_embedding_schedule_lock_key(user.id))
 
     threading.Thread(
         target=task,

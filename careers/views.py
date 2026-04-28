@@ -27,8 +27,8 @@ from apprenticeship.models import Apprenticeship
 from apprenticeship.api.serializers import ApprenticeshipSerializer
 
 from accounts.services.career_recommender import recommend_careers_for_user,precompute_recommendations_async
-from accounts.services.user_embeddings import schedule_embedding_update
-from accounts.services.recommendation_cache import get_explored_cache_key, get_saved_cache_key, get_list_cache_key
+from accounts.services.user_embeddings import schedule_embedding_update, update_embedding_async
+from accounts.services.recommendation_cache import get_explored_cache_key, get_saved_cache_key, get_list_cache_key, get_recs_lock_key, get_embedding_schedule_lock_key
 from accounts.services.user_service import get_explored_careers, get_saved_careers, get_career_queryset, norm_key
 
 FREE_CAREER_LIMIT = 5
@@ -541,62 +541,63 @@ class CareersView(viewsets.ModelViewSet):
         cached_ids = cache.get(cache_key)
 
         # 🔥 Default fallback (always defined)
-        careers = qss.order_by("-id")[:50]
+        careers = qss
 
         if cached_ids is None:
             print("CACHE MISS ❌")
 
-            rec_result = recommend_careers_for_user(
-                user=user,
-                queryset=qss,
-                top_k=50,
-            )
+            # rec_result = recommend_careers_for_user(
+            #     user=user,
+            #     queryset=qss,
+            #     top_k=50,
+            # )
 
-            # ✅ If recommendations exist
-            if rec_result and rec_result.get("recommendations"):
+            # # ✅ If recommendations exist
+            # if rec_result and rec_result.get("recommendations"):
 
-                recommended_ids = [
-                    item["career_id"] for item in rec_result["recommendations"]
-                ]
+            #     recommended_ids = [
+            #         item["career_id"] for item in rec_result["recommendations"]
+            #     ]
 
-                # 🔥 cache only IDs
-                cache.set(cache_key, recommended_ids, timeout=60 * 60)
+            #     # 🔥 cache only IDs
+            #     cache.set(cache_key, recommended_ids, timeout=60 * 60)
 
-                # 🔥 preserve ranking order
-                preserved_order = Case(
-                    *[When(id=pk, then=pos) for pos, pk in enumerate(recommended_ids)]
-                )
+            #     # 🔥 preserve ranking order
+            #     preserved_order = Case(
+            #         *[When(id=pk, then=pos) for pos, pk in enumerate(recommended_ids)]
+            #     )
 
-                careers = Career.objects.filter(
-                    id__in=recommended_ids
-                ).order_by(preserved_order)
+            #     careers = Career.objects.filter(
+            #         id__in=recommended_ids
+            #     ).order_by(preserved_order)
 
-            else:
-                print("Fallback running ❗")
+            # else:
+            #     print("Fallback running ❗")
 
-                # 🔥 trigger embedding update (async)
-                ex = get_explored_careers(profile)
-                sv = get_saved_careers(profile)
-                schedule_embedding_update(request.user, ex=ex, sv=sv)
+            #     # 🔥 trigger embedding update (async)
+            #     # ex = get_explored_careers(profile)
+            #     # sv = get_saved_careers(profile)
 
-                # 🔥 prevent duplicate heavy jobs
-                if not cache.get(f"rec_precompute_lock:{user.id}"):
-                    cache.set(f"rec_precompute_lock:{user.id}", True, timeout=60)
-                    precompute_recommendations_async(request.user, qss)
+            #     # 🔥 prevent duplicate heavy jobs
+            #     if not cache.get(get_recs_lock_key(user.id)):
+            #         cache.set(get_recs_lock_key(user.id), True, timeout=60)
+            update_embedding_async(request.user)
+            precompute_recommendations_async(request.user)
+            # cached_ids = cache.get(cache_key)
 
         else:
             print("CACHE HIT ✅")
 
             recommended_ids = cached_ids
 
-            # 🔥 preserve ranking order
+                # 🔥 preserve ranking order
             preserved_order = Case(
                 *[When(id=pk, then=pos) for pos, pk in enumerate(recommended_ids)]
             )
 
             careers = Career.objects.filter(
-                id__in=recommended_ids
-            ).order_by(preserved_order)
+                    id__in=recommended_ids
+                ).order_by(preserved_order)
 
         serializer = CareerListSerializer(
             careers,
@@ -795,7 +796,7 @@ class CareersView(viewsets.ModelViewSet):
         )
 
         data = serializer.data
-        cache.set(cache_key, data, timeout=60 * 60)
+        cache.set(cache_key, data, timeout=None)
 
         return Response(data, status=200)
     
@@ -815,13 +816,13 @@ class CareersView(viewsets.ModelViewSet):
         cache.delete(get_list_cache_key(request.user.id))
 
         # 🔥 update embedding context
-        ex = get_explored_careers(profile)
-        sv = get_saved_careers(profile)
-        schedule_embedding_update(request.user, ex=ex, sv=sv)
+        # ex = get_explored_careers(profile)
+        # sv = get_saved_careers(profile)
+        schedule_embedding_update(request.user)
 
         # 🔥 async recommendation update
-        qss = get_career_queryset(request.user, profile)
-        precompute_recommendations_async(request.user, qss)
+        # qss = get_career_queryset(request.user, profile)
+        precompute_recommendations_async(request.user)
 
         serializer = CareerDetailSerializer(career)
 
@@ -845,13 +846,13 @@ class CareersView(viewsets.ModelViewSet):
             cache.delete(get_list_cache_key(request.user.id))
 
             # 🔥 update embedding context
-            ex = get_explored_careers(profile)
-            sv = get_saved_careers(profile)
-            schedule_embedding_update(request.user, ex=ex, sv=sv)
+            # ex = get_explored_careers(profile)
+            # sv = get_saved_careers(profile)
+            schedule_embedding_update(request.user)
 
             # 🔥 async recommendation update
-            qss = get_career_queryset(request.user, profile)
-            precompute_recommendations_async(request.user, qss)
+            # qss = get_career_queryset(request.user, profile)
+            precompute_recommendations_async(request.user)
 
             return Response({"message": "Career unsaved."}, status=200)
 
@@ -881,7 +882,7 @@ class CareersView(viewsets.ModelViewSet):
         serializer = CareerListSerializer(qs, many=True)
 
         data = serializer.data
-        cache.set(cache_key, data, timeout=60 * 60)
+        cache.set(cache_key, data, timeout=None)
 
         return Response(data, status=200)
     
@@ -901,13 +902,13 @@ class CareersView(viewsets.ModelViewSet):
         cache.delete(get_list_cache_key(request.user.id))
 
         # 🔥 update embedding context
-        ex = get_explored_careers(profile)
-        sv = get_saved_careers(profile)
-        schedule_embedding_update(request.user, ex=ex, sv=sv)
+        # ex = get_explored_careers(profile)
+        # sv = get_saved_careers(profile)
+        schedule_embedding_update(request.user)
 
         # 🔥 async recommendation update
-        qss = get_career_queryset(request.user, profile)
-        precompute_recommendations_async(request.user, qss)
+        # qss = get_career_queryset(request.user, profile)
+        precompute_recommendations_async(request.user)
 
         serializer = CareerDetailSerializer(career)
 
@@ -930,13 +931,13 @@ class CareersView(viewsets.ModelViewSet):
             cache.delete(get_list_cache_key(request.user.id))
 
             # 🔥 update embedding context
-            ex = get_explored_careers(profile)
-            sv = get_saved_careers(profile)
-            schedule_embedding_update(request.user, ex=ex, sv=sv)
+            # ex = get_explored_careers(profile)
+            # sv = get_saved_careers(profile)
+            schedule_embedding_update(request.user)
 
             # 🔥 async recommendation update
-            qss = get_career_queryset(request.user, profile)
-            precompute_recommendations_async(request.user, qss)
+            # qss = get_career_queryset(request.user, profile)
+            precompute_recommendations_async(request.user)
 
             return Response(
                 {"message": "Career unexplored."},
