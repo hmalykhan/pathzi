@@ -542,6 +542,7 @@ class CareersView(viewsets.ModelViewSet):
 
         # 🔥 Default fallback (always defined)
         careers = qss
+        print("this is the length of the qss : ", len(qss))
 
         if cached_ids is None:
             print("CACHE MISS ❌")

@@ -152,7 +152,7 @@ def update_embedding_async(user):
 
 def schedule_embedding_update(user, delay=5):
     profile, _ = UserProfile.objects.get_or_create(appuser=user)
-    ex = get_career_queryset(profile)
+    ex = get_explored_careers(profile)
     sv = get_saved_careers(profile)
 
     # Each call updates timestamp
