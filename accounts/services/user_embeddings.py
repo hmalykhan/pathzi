@@ -133,7 +133,7 @@ def update_embedding_async(user):
     if getattr(user, "_embedding_running", False):
         return
     profile, _ = UserProfile.objects.get_or_create(appuser=user)
-    ex = get_career_queryset(profile)
+    ex = get_explored_careers(profile)
     sv = get_saved_careers(profile)
 
     user._embedding_running = True
