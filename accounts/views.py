@@ -41,6 +41,7 @@ from .serializers import (
     ForgotPasswordSerializer,
     ForgotPasswordConfirmSerializer,
     GoogleLoginResponseSerializer,
+    UserProfileUpdateSerializer
 )
 
 logger = logging.getLogger(__name__)
@@ -322,11 +323,100 @@ class UserAPI(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
 
+# class SignUpAPI(generics.CreateAPIView):
+#     """
+#     POST /auth/register/
+#     Body handled by SignUpSerializer.
+#     """
+#     serializer_class = SignUpSerializer
+#     permission_classes = [permissions.AllowAny]
+
+#     def create(self, request, *args, **kwargs):
+#         serializer = self.get_serializer(data=request.data)
+
+#         if not serializer.is_valid():
+#             errors = serializer.errors
+
+#             if "email" in errors and errors["email"]:
+#                 msg = errors["email"][0]
+#             elif "username" in errors and errors["username"]:
+#                 msg = errors["username"][0]
+#             elif "password2" in errors and errors["password2"]:
+#                 msg = errors["password2"][0]
+#             elif "password" in errors and errors["password"]:
+#                 msg = errors["password"][0]
+#             elif "non_field_errors" in errors and errors["non_field_errors"]:
+#                 msg = errors["non_field_errors"][0]
+#             else:
+#                 first_key = next(iter(errors), None)
+#                 if first_key is None:
+#                     msg = "Invalid data."
+#                 else:
+#                     val = errors[first_key]
+#                     msg = val[0] if isinstance(val, list) and val else str(val)
+
+#             logger.warning("Signup validation failed: %s", str(msg))
+#             return Response(
+#                 {"status": False, "message": str(msg)},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         data = serializer.validated_data
+#         email = (data.get("email") or "").strip().lower()
+#         username = data["username"]
+
+#         # Check uniqueness with optimized queries (will use indexes)
+#         if User.objects.filter(username=username).exists():
+#             logger.warning("Signup failed: username already taken username=%s", username)
+#             return Response(
+#                 {"status": False, "message": "Username already taken."},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         if User.objects.filter(email__iexact=email).exists():
+#             logger.warning("Signup failed: email already registered email=%s", email)
+#             return Response(
+#                 {"status": False, "message": "Email already registered."},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         try:
+#             user = User.objects.create_user(
+#                 username=username,
+#                 email=email,
+#                 password=data["password"],
+#             )
+#             # Use create instead of get_or_create since we know user is new
+#             UserProfile.objects.create(appuser=user, age=0)
+#         except Exception as e:
+#             logger.exception("Signup failed (server error): %s", str(e))
+#             return Response(
+#                 {"status": False, "message": "Could not create user. Please try again."},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         refresh = RefreshToken.for_user(user)
+
+#         logger.info("User created successfully: user_id=%s email=%s", user.id, user.email)
+#         return Response(
+#             {
+#                 "status": True,
+#                 "message": "User created successfully.",
+#                 "data": {
+#                     "id": user.id,
+#                     "username": user.username,
+#                     "email": user.email,
+#                     "token": {
+#                         "refresh": str(refresh),
+#                         "access": str(refresh.access_token),
+#                     },
+#                 },
+#             },
+#             status=status.HTTP_201_CREATED,
+#         )
+
+
 class SignUpAPI(generics.CreateAPIView):
-    """
-    POST /auth/register/
-    Body handled by SignUpSerializer.
-    """
     serializer_class = SignUpSerializer
     permission_classes = [permissions.AllowAny]
 
@@ -336,6 +426,7 @@ class SignUpAPI(generics.CreateAPIView):
         if not serializer.is_valid():
             errors = serializer.errors
 
+            # 🔥 SAME ERROR PRIORITY AS YOUR ORIGINAL CODE
             if "email" in errors and errors["email"]:
                 msg = errors["email"][0]
             elif "username" in errors and errors["username"]:
@@ -348,11 +439,11 @@ class SignUpAPI(generics.CreateAPIView):
                 msg = errors["non_field_errors"][0]
             else:
                 first_key = next(iter(errors), None)
-                if first_key is None:
-                    msg = "Invalid data."
-                else:
+                if first_key:
                     val = errors[first_key]
                     msg = val[0] if isinstance(val, list) and val else str(val)
+                else:
+                    msg = "Invalid data."
 
             logger.warning("Signup validation failed: %s", str(msg))
             return Response(
@@ -361,10 +452,10 @@ class SignUpAPI(generics.CreateAPIView):
             )
 
         data = serializer.validated_data
-        email = (data.get("email") or "").strip().lower()
+        email = data["email"]
         username = data["username"]
 
-        # Check uniqueness with optimized queries (will use indexes)
+        # 🔥 SAME uniqueness behavior
         if User.objects.filter(username=username).exists():
             logger.warning("Signup failed: username already taken username=%s", username)
             return Response(
@@ -380,13 +471,16 @@ class SignUpAPI(generics.CreateAPIView):
             )
 
         try:
-            user = User.objects.create_user(
-                username=username,
-                email=email,
-                password=data["password"],
-            )
-            # Use create instead of get_or_create since we know user is new
-            UserProfile.objects.create(appuser=user, age=0)
+            # 🔥 ATOMIC → no partial user creation
+            with transaction.atomic():
+                user = User.objects.create_user(
+                    username=username,
+                    email=email,
+                    password=data["password"],
+                )
+
+                UserProfile.objects.create(appuser=user, age=0)
+
         except Exception as e:
             logger.exception("Signup failed (server error): %s", str(e))
             return Response(
@@ -397,6 +491,8 @@ class SignUpAPI(generics.CreateAPIView):
         refresh = RefreshToken.for_user(user)
 
         logger.info("User created successfully: user_id=%s email=%s", user.id, user.email)
+
+        # 🔥 EXACT SAME RESPONSE STRUCTURE
         return Response(
             {
                 "status": True,
@@ -464,6 +560,71 @@ class CurrentUserProfileLightAPI(generics.RetrieveAPIView):
     def get_object(self):
         profile, _ = UserProfile.objects.get_or_create(appuser=self.request.user)
         return profile
+    
+class CurrentUserProfileFastAPI(generics.RetrieveUpdateAPIView):
+    serializer_class = UserProfileUpdateSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        # 🔥 FAST: avoid unnecessary get_or_create when possible
+        try:
+            return UserProfile.objects.select_related("appuser").get(appuser=self.request.user)
+        except UserProfile.DoesNotExist:
+            return UserProfile.objects.create(appuser=self.request.user)
+
+    # 🔥 FAST GET (no heavy serializer)
+    def get(self, request, *args, **kwargs):
+        profile = self.get_object()
+
+        def get(self, request, *args, **kwargs):
+            profile = self.get_object()
+
+            return Response({
+                "status": True,
+                "message": "Profile fetched successfully.",
+                "data": {
+                    "name": profile.appuser.get_full_name(),  # ✅ FIXED
+                    "age": profile.age,
+                    "discipline": profile.discipline,
+                    "education_level": profile.education_level,
+                    "category": profile.category,
+                    "address": profile.address,
+                    "city": profile.city,
+                    "zip_code": profile.zip_code,  # or postal_code if needed
+                }
+            })
+
+    # 🔥 FAST PATCH
+    def patch(self, request, *args, **kwargs):
+        profile = self.get_object()
+
+        serializer = self.get_serializer(profile, data=request.data, partial=True)
+
+        if not serializer.is_valid():
+            errors = serializer.errors
+            first_key = next(iter(errors), None)
+
+            if first_key:
+                val = errors[first_key]
+                msg = val[0] if isinstance(val, list) else str(val)
+            else:
+                msg = "Invalid data"
+
+            return Response(
+                {"status": False, "message": msg},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        with transaction.atomic():
+            serializer.save()
+
+            cache.delete(get_list_cache_key(request.user.id))
+            cache.delete(get_embedding_schedule_lock_key(request.user.id))
+
+        return Response(
+            {"status": True, "message": "Profile updated successfully."},
+            status=status.HTTP_200_OK
+        )
 
 
 class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):

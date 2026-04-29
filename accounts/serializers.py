@@ -39,6 +39,60 @@ class CoordinatesSerializer(serializers.ModelSerializer):
         fields = ["id", "title", "latitude", "longitude", "postal_code", "state", "city", "active"]
         read_only_fields = ["id"]
 
+class UserProfileUpdateSerializer(serializers.ModelSerializer):
+    # If name comes from User model
+    name = serializers.CharField(source="appuser.first_name", required=False)
+
+    # category as list (same behavior as before)
+    category = serializers.ListField(
+        child=serializers.CharField(max_length=200),
+        required=False,
+        allow_empty=True
+    )
+
+    class Meta:
+        model = UserProfile
+        fields = [
+            "name",
+            "age",
+            "discipline",
+            "education_level",
+            "category",
+            "address",
+            "city",
+            "zip_code",  # postal code
+        ]
+
+    def validate_category(self, value):
+        cleaned, seen = [], set()
+        for item in value or []:
+            item = (item or "").strip()
+            if not item:
+                continue
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(item)
+        return cleaned
+
+    def update(self, instance, validated_data):
+        # Handle name (User model)
+        user_data = validated_data.pop("appuser", None)
+
+        if user_data:
+            name = user_data.get("first_name")
+            if name:
+                instance.appuser.first_name = name
+                instance.appuser.save(update_fields=["first_name"])
+
+        # Update profile fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        instance.save()
+        return instance
+
 
 class UserProfileSerializer(serializers.ModelSerializer):
     appuser = serializers.StringRelatedField(read_only=True)
@@ -212,6 +266,18 @@ class UserSerializer(serializers.ModelSerializer):
         return value
 
 
+# class SignUpSerializer(serializers.Serializer):
+#     username = serializers.CharField()
+#     email = serializers.EmailField()
+#     password = serializers.CharField(write_only=True, min_length=8)
+#     password2 = serializers.CharField(write_only=True, min_length=8)
+
+#     def validate(self, attrs):
+#         if attrs["password"] != attrs["password2"]:
+#             raise serializers.ValidationError({"password2": "Passwords do not match."})
+#         return attrs
+
+
 class SignUpSerializer(serializers.Serializer):
     username = serializers.CharField()
     email = serializers.EmailField()
@@ -221,6 +287,10 @@ class SignUpSerializer(serializers.Serializer):
     def validate(self, attrs):
         if attrs["password"] != attrs["password2"]:
             raise serializers.ValidationError({"password2": "Passwords do not match."})
+
+        email = (attrs.get("email") or "").strip().lower()
+        attrs["email"] = email
+
         return attrs
 
 
