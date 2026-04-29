@@ -566,35 +566,21 @@ class CurrentUserProfileFastAPI(generics.RetrieveUpdateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
-        # 🔥 FAST: avoid unnecessary get_or_create when possible
         try:
             return UserProfile.objects.select_related("appuser").get(appuser=self.request.user)
         except UserProfile.DoesNotExist:
             return UserProfile.objects.create(appuser=self.request.user)
 
-    # 🔥 FAST GET (no heavy serializer)
+    # ✅ GET → use serializer (flat response)
     def get(self, request, *args, **kwargs):
         profile = self.get_object()
+        serializer = self.get_serializer(profile)
 
-        return Response({
-            "status": True,
-            "message": "Profile fetched successfully.",
-            "data": {
-                "name": profile.appuser.get_full_name(),
-                "age": profile.age,
-                "discipline": profile.discipline,
-                "education_level": profile.education_level,
-                "category": profile.category,
-                "address": profile.address,
-                "city": profile.city,
-                "zip_code": profile.zip_code,
-            }
-        }, status=status.HTTP_200_OK)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
-    # 🔥 FAST PATCH
+    # ✅ PATCH → update + return same flat structure
     def patch(self, request, *args, **kwargs):
         profile = self.get_object()
-
         serializer = self.get_serializer(profile, data=request.data, partial=True)
 
         if not serializer.is_valid():
@@ -613,16 +599,16 @@ class CurrentUserProfileFastAPI(generics.RetrieveUpdateAPIView):
             )
 
         with transaction.atomic():
-            serializer.save()
+            instance = serializer.save()
 
             cache.delete(get_list_cache_key(request.user.id))
             cache.delete(get_embedding_schedule_lock_key(request.user.id))
 
+        # 🔥 Return UPDATED flat profile (same as GET)
         return Response(
-            {"status": True, "message": "Profile updated successfully."},
+            UserProfileUpdateSerializer(instance).data,
             status=status.HTTP_200_OK
         )
-
 
 class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
     """
@@ -1591,3 +1577,8 @@ class GoogleMobileAuthAPI(APIView):
 #             },
 #             status=status.HTTP_200_OK,
 #         )
+
+
+
+
+

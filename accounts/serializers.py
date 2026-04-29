@@ -3,6 +3,7 @@ from django.contrib.auth.models import User
 from django.apps import apps
 
 from .models import UserProfile, Coordinates
+from django.db import transaction
 
 class UserProfileLightSerializer(serializers.ModelSerializer):
     name = serializers.CharField(source="appuser.username")
@@ -40,10 +41,14 @@ class CoordinatesSerializer(serializers.ModelSerializer):
         read_only_fields = ["id"]
 
 class UserProfileUpdateSerializer(serializers.ModelSerializer):
-    # If name comes from User model
-    name = serializers.CharField(source="appuser.first_name", required=False)
+    # 🔥 required response fields
+    id = serializers.IntegerField(read_only=True)
+    status = serializers.BooleanField(read_only=True)
 
-    # category as list (same behavior as before)
+    # 🔥 renamed to appuser (from name)
+    appuser = serializers.CharField(source="appuser.first_name", required=False)
+
+    # category as list
     category = serializers.ListField(
         child=serializers.CharField(max_length=200),
         required=False,
@@ -53,16 +58,26 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserProfile
         fields = [
-            "name",
+            "id",
+            "status",
+            "appuser",  # 🔥 updated field name
             "age",
             "discipline",
             "education_level",
             "category",
             "address",
             "city",
-            "zip_code",  # postal code
+            "zip_code",
         ]
 
+    # 🔐 validate appuser (name)
+    def validate_appuser(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Name cannot be empty.")
+        return value
+
+    # 🔐 clean category
     def validate_category(self, value):
         cleaned, seen = [], set()
         for item in value or []:
@@ -77,20 +92,22 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
         return cleaned
 
     def update(self, instance, validated_data):
-        # Handle name (User model)
-        user_data = validated_data.pop("appuser", None)
+        with transaction.atomic():
+            # Handle appuser (User model)
+            user_data = validated_data.pop("appuser", None)
 
-        if user_data:
-            name = user_data.get("first_name")
-            if name:
-                instance.appuser.first_name = name
-                instance.appuser.save(update_fields=["first_name"])
+            if user_data:
+                name = user_data.get("first_name")
+                if name:
+                    instance.appuser.first_name = name.strip()
+                    instance.appuser.save(update_fields=["first_name"])
 
-        # Update profile fields
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
+            # Update profile fields
+            for attr, value in validated_data.items():
+                setattr(instance, attr, value)
 
-        instance.save()
+            instance.save()
+
         return instance
 
 
