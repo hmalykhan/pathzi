@@ -628,7 +628,9 @@ class CareersView(viewsets.ModelViewSet):
             "id",
             "sub_type",
             "jobname",
-            "job_description"
+            "job_description",
+            "dg_image_url"
+            
         )
 
         if cached_ids is None:
