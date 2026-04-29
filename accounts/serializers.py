@@ -46,7 +46,8 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
     status = serializers.BooleanField(read_only=True)
 
     # 🔥 renamed to appuser (from name)
-    appuser = serializers.CharField(source="appuser.first_name", required=False)
+    # appuser = serializers.CharField(source="appuser.first_name", required=False)
+    appuser = serializers.StringRelatedField(read_only=True)
 
     # category as list
     category = serializers.ListField(
