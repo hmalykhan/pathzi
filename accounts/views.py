@@ -576,23 +576,20 @@ class CurrentUserProfileFastAPI(generics.RetrieveUpdateAPIView):
     def get(self, request, *args, **kwargs):
         profile = self.get_object()
 
-        def get(self, request, *args, **kwargs):
-            profile = self.get_object()
-
-            return Response({
-                "status": True,
-                "message": "Profile fetched successfully.",
-                "data": {
-                    "name": profile.appuser.get_full_name(),  # ✅ FIXED
-                    "age": profile.age,
-                    "discipline": profile.discipline,
-                    "education_level": profile.education_level,
-                    "category": profile.category,
-                    "address": profile.address,
-                    "city": profile.city,
-                    "zip_code": profile.zip_code,  # or postal_code if needed
-                }
-            })
+        return Response({
+            "status": True,
+            "message": "Profile fetched successfully.",
+            "data": {
+                "name": profile.appuser.get_full_name(),
+                "age": profile.age,
+                "discipline": profile.discipline,
+                "education_level": profile.education_level,
+                "category": profile.category,
+                "address": profile.address,
+                "city": profile.city,
+                "zip_code": profile.zip_code,
+            }
+        }, status=status.HTTP_200_OK)
 
     # 🔥 FAST PATCH
     def patch(self, request, *args, **kwargs):
