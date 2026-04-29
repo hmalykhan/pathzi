@@ -608,7 +608,69 @@ class CareersView(viewsets.ModelViewSet):
 
     #     return Response(serializer.data, status=status.HTTP_200_OK)
 
+    # def list(self, request, *args, **kwargs):
+    #     user = request.user
+
+    #     if not user or not user.is_authenticated:
+    #         return Response([], status=status.HTTP_200_OK)
+
+    #     profile = self._profile_cached
+    #     if not profile:
+    #         return Response([], status=status.HTTP_200_OK)
+
+    #     qss = get_career_queryset(user, profile)
+
+    #     cache_key = get_list_cache_key(user.id)
+    #     cached_ids = cache.get(cache_key)
+
+    #     # 🔥 DEFAULT: full dataset but optimized fields
+    #     careers = qss.only(
+    #         "id",
+    #         "sub_type",
+    #         "jobname",
+    #         "job_description",
+    #         "dg_image_url"
+            
+    #     )
+
+    #     if cached_ids is None:
+    #         print("CACHE MISS ❌")
+
+    #         # 🔒 Trigger async ONLY ONCE
+    #         if cache.add(f"recs_triggered:{user.id}", True, timeout=60):
+    #             print("Triggering async 🚀")
+    #             update_embedding_and_recs_async(user.id)
+
+    #         # return base queryset (full data, no limit)
+
+    #     else:
+    #         print("CACHE HIT ✅")
+
+    #         preserved_order = Case(
+    #             *[When(id=pk, then=pos) for pos, pk in enumerate(cached_ids)]
+    #         )
+
+    #         careers = Career.objects.filter(
+    #             id__in=cached_ids
+    #         ).only(
+    #             "id",
+    #             "sub_type",
+    #             "jobname",
+    #             "job_description",
+    #             "dg_image_url"
+    #         ).order_by(preserved_order)
+
+    #     # 🔥 Use fast serializer
+    #     serializer = CareerFilterSerializer(
+    #         careers,
+    #         many=True,
+    #     )
+
+    #     return Response(serializer.data, status=status.HTTP_200_OK)
+
     def list(self, request, *args, **kwargs):
+        total_start = time.time()
+
         user = request.user
 
         if not user or not user.is_authenticated:
@@ -618,34 +680,38 @@ class CareersView(viewsets.ModelViewSet):
         if not profile:
             return Response([], status=status.HTTP_200_OK)
 
+        t0 = time.time()
         qss = get_career_queryset(user, profile)
+        print(f"[TIME] queryset build: {time.time() - t0:.3f}s")
 
         cache_key = get_list_cache_key(user.id)
-        cached_ids = cache.get(cache_key)
 
-        # 🔥 DEFAULT: full dataset but optimized fields
+        t1 = time.time()
+        cached_ids = cache.get(cache_key)
+        print(f"[TIME] cache fetch: {time.time() - t1:.3f}s")
+
+        # 🔥 DEFAULT queryset
+        t2 = time.time()
         careers = qss.only(
             "id",
             "sub_type",
             "jobname",
             "job_description",
             "dg_image_url"
-            
         )
+        print(f"[TIME] queryset preparation: {time.time() - t2:.3f}s")
 
         if cached_ids is None:
             print("CACHE MISS ❌")
 
-            # 🔒 Trigger async ONLY ONCE
             if cache.add(f"recs_triggered:{user.id}", True, timeout=60):
                 print("Triggering async 🚀")
                 update_embedding_and_recs_async(user.id)
 
-            # return base queryset (full data, no limit)
-
         else:
             print("CACHE HIT ✅")
 
+            t3 = time.time()
             preserved_order = Case(
                 *[When(id=pk, then=pos) for pos, pk in enumerate(cached_ids)]
             )
@@ -660,13 +726,23 @@ class CareersView(viewsets.ModelViewSet):
                 "dg_image_url"
             ).order_by(preserved_order)
 
-        # 🔥 Use fast serializer
-        serializer = CareerFilterSerializer(
-            careers,
-            many=True,
-        )
+            print(f"[TIME] reorder queryset: {time.time() - t3:.3f}s")
 
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        # 🔥 DB FETCH happens HERE (evaluation)
+        t4 = time.time()
+        careers_list = list(careers)
+        print(f"[TIME] DB fetch (query execution): {time.time() - t4:.3f}s")
+
+        # 🔥 Serialization
+        t5 = time.time()
+        serializer = CareerFilterSerializer(careers_list, many=True)
+        data = serializer.data
+        print(f"[TIME] serialization: {time.time() - t5:.3f}s")
+
+        total_time = time.time() - total_start
+        print(f"[TIME] TOTAL request time: {total_time:.3f}s")
+
+        return Response(data, status=status.HTTP_200_OK)
 
 
     # @action(detail=False, methods=["GET", "POST"], url_path="filter")

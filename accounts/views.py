@@ -488,7 +488,7 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
             serializer.save()
             cache.delete(get_list_cache_key(request.user.id))
             cache.delete(get_embedding_schedule_lock_key(request.user.id))
-            update_embedding_and_recs_async(request.user.id)
+            # update_embedding_and_recs_async(request.user.id)
             logger.info("Profile updated: user_id=%s", request.user.id)
             return Response(
                 {"status": True, "message": "Profile updated successfully.", "data": serializer.data},
