@@ -166,17 +166,23 @@ CACHE_TIMEOUT = 60 * 60  # 1 hour
 #     return decoded
 
 def verify_apple_token(identity_token):
-    jwks_client = PyJWKClient("https://appleid.apple.com/auth/keys")
-    signing_key = jwks_client.get_signing_key_from_jwt(identity_token)
+    try:
+        jwks_client = PyJWKClient(
+            "https://appleid.apple.com/auth/keys"
+        )
+        signing_key = jwks_client.get_signing_key_from_jwt(identity_token)
 
-    decoded = jwt.decode(
-        identity_token,
-        signing_key.key,
-        algorithms=["RS256"],
-        audience=[settings.APPLE_CLIENT_ID,settings.APPLE_CLIENT_ID_FLUTTER],
-        issuer="https://appleid.apple.com",
-    )
-    return decoded
+        decoded = jwt.decode(
+            identity_token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=[settings.APPLE_CLIENT_ID, settings.APPLE_CLIENT_ID_FLUTTER],
+            issuer="https://appleid.apple.com",
+        )
+        return decoded
+
+    except Exception:
+        raise ValueError("Apple verification failed")
 
 class AppleMobileAuthAPI(APIView):
     permission_classes = [permissions.AllowAny]
@@ -196,8 +202,6 @@ class AppleMobileAuthAPI(APIView):
         try:
             data = verify_apple_token(identity_token)
         except Exception as e:
-            # uncomment while debuggin.
-            # logger.exception("AppleAuth invalid token: %s", str(e))
             logger.exception("AppleAuth invalid token.")
             return Response(
                             {
@@ -1170,12 +1174,17 @@ class GoogleCallbackAPI(APIView):
         }
 
         try:
-            token_res = requests.post(token_url, data=payload)
+            token_res = requests.post(token_url, data=payload, timeout=5)
             token_json = token_res.json()
-        except Exception as e:
+        except requests.exceptions.Timeout:
             return Response(
-                {"status": False, "message": "Token exchange failed"},
-                status=status.HTTP_400_BAD_REQUEST,
+                {"status": False, "message": "Google service timeout"},
+                status=503
+            )
+        except Exception:
+            return Response(
+                {"status": False, "message": "Google service error"},
+                status=500
             )
 
         id_token_str = token_json.get("id_token")
@@ -1232,11 +1241,16 @@ class GoogleMobileAuthAPI(APIView):
             )
 
         try:
-            idinfo = google_id_token.verify_oauth2_token(
-                id_token_str,
-                google_requests.Request(),
-            )
-
+            try:
+                idinfo = google_id_token.verify_oauth2_token(
+                    id_token_str,
+                    google_requests.Request(),
+                )
+            except Exception:
+                return Response(
+                    {"status": False, "message": "Google verification failed"},
+                    status=400
+                )
             client_ids = {
                 settings.GOOGLE_WEB_CLIENT_ID,
                 settings.GOOGLE_ANDROID_CLIENT_ID,
