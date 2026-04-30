@@ -30,6 +30,7 @@ from accounts.services.career_recommender import recommend_careers_for_user,prec
 from accounts.services.user_embeddings import schedule_embedding_update, update_embedding_async
 from accounts.services.recommendation_cache import get_explored_cache_key, get_saved_cache_key, get_list_cache_key, get_recs_lock_key, get_embedding_schedule_lock_key
 from accounts.services.user_service import get_explored_careers, get_saved_careers, get_career_queryset, norm_key
+from django.db import transaction
 
 FREE_CAREER_LIMIT = 5
 
@@ -440,11 +441,184 @@ class CareersView(viewsets.ModelViewSet):
     #     )
     #     return Response(serializer.data, status=status.HTTP_200_OK)
 
-    from django.shortcuts import get_object_or_404
 
-    @action(detail=True, methods=["GET", "PUT"], url_path="report")
+    # @action(detail=True, methods=["GET", "PUT"], url_path="report")
+    # def report(self, request, pk=None):
+
+    #     try:
+    #         career_id = int(pk)
+    #     except (TypeError, ValueError):
+    #         raise NotFound()
+
+    #     profile = self._get_or_create_profile()
+
+    #     # 🔥 single DB fetch
+    #     career = get_object_or_404(Career, id=career_id)
+
+    #     qs = UserSavedCareer.objects.filter(
+    #         user_profile=profile,
+    #         career_id=career.id
+    #     )
+
+    #     if request.method == "GET":
+    #         row = qs.values("report_status", "report", "generated_at").first()
+
+    #         if not row:
+    #             return Response(
+    #                 {"detail": "Career is not saved. Save career first."},
+    #                 status=status.HTTP_400_BAD_REQUEST,
+    #             )
+
+    #         return Response(
+    #             {
+    #                 "report_status": bool(row["report_status"]),
+    #                 "report": row["report"] or {},
+    #                 "generated_at": row["generated_at"],
+    #             },
+    #             status=status.HTTP_200_OK,
+    #         )
+
+    #     # 🔥 validation
+    #     if "career_id" in request.data:
+    #         return Response(
+    #             {"detail": "career_id is not allowed"},
+    #             status=status.HTTP_400_BAD_REQUEST,
+    #         )
+
+    #     if "generated_at" in request.data:
+    #         return Response(
+    #             {"detail": "generated_at is not allowed"},
+    #             status=status.HTTP_400_BAD_REQUEST,
+    #         )
+
+    #     if "report" not in request.data:
+    #         return Response(
+    #             {"detail": "report is required"},
+    #             status=status.HTTP_400_BAD_REQUEST,
+    #         )
+
+    #     report_data = request.data["report"]
+    #     now = timezone.now()
+
+    #     updated = qs.update(
+    #         report=report_data,
+    #         report_status=True,
+    #         generated_at=now,
+    #     )
+
+    #     if updated == 0:
+    #         return Response(
+    #             {"detail": "Career is not saved. Save career first."},
+    #             status=status.HTTP_400_BAD_REQUEST,
+    #         )
+
+    #     # 🔥 cache invalidation (important)
+    #     cache.delete(get_saved_cache_key(request.user.id))
+    #     cache.delete(get_list_cache_key(request.user.id))
+
+    #     return Response(
+    #         {
+    #             "report_status": True,
+    #             "report": report_data,
+    #             "generated_at": now,
+    #         },
+    #         status=status.HTTP_200_OK,
+    #     )
+
+
+# @action(detail=True, methods=["GET", "POST", "PUT"], url_path="report")
+# def report(self, request, pk=None):
+
+#     try:
+#         career_id = int(pk)
+#     except (TypeError, ValueError):
+#         raise NotFound()
+
+#     profile = self._get_or_create_profile()
+
+#     # 🔥 GET → only fetch (fast, no extra work)
+#     if request.method == "GET":
+#         row = UserSavedCareer.objects.filter(
+#             user_profile=profile,
+#             career_id=career_id
+#         ).values("report_status", "report", "generated_at").first()
+
+#         if not row:
+#             return Response(
+#                 {"detail": "Career is not saved."},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         return Response(
+#             {
+#                 "report_status": bool(row["report_status"]),
+#                 "report": row["report"] or {},
+#                 "generated_at": row["generated_at"],
+#             },
+#             status=status.HTTP_200_OK,
+#         )
+
+#     # 🔥 WRITE (POST / PUT)
+
+#     # validation
+#     if "career_id" in request.data:
+#         return Response(
+#             {"detail": "career_id is not allowed"},
+#             status=status.HTTP_400_BAD_REQUEST,
+#         )
+
+#     if "generated_at" in request.data:
+#         return Response(
+#             {"detail": "generated_at is not allowed"},
+#             status=status.HTTP_400_BAD_REQUEST,
+#         )
+
+#     if "report" not in request.data:
+#         return Response(
+#             {"detail": "report is required"},
+#             status=status.HTTP_400_BAD_REQUEST,
+#         )
+
+#     report_data = request.data["report"]
+#     now = timezone.now()
+
+#     # 🔥 UPSERT (save career if not exists + update report)
+#     obj, _ = UserSavedCareer.objects.get_or_create(
+#         user_profile=profile,
+#         career_id=career_id,
+#         defaults={
+#             "report": report_data,
+#             "report_status": True,
+#             "generated_at": now,
+#         }
+#     )
+
+#     # 🔥 If already exists → update
+#     if obj.report != report_data or not obj.report_status:
+#         UserSavedCareer.objects.filter(id=obj.id).update(
+#             report=report_data,
+#             report_status=True,
+#             generated_at=now,
+#         )
+
+#     # 🔥 cache invalidation (important)
+#     cache.delete(get_saved_cache_key(request.user.id))
+#     cache.delete(get_list_cache_key(request.user.id))
+
+#     # 🔥 async (non-blocking)
+#     update_embedding_and_recs_async(request.user.id)
+
+#     return Response(
+#         {
+#             "report_status": True,
+#             "report": report_data,
+#             "generated_at": now,
+#         },
+#         status=status.HTTP_200_OK,
+#     )
+
+    @action(detail=True, methods=["GET", "POST", "PUT"], url_path="report")
     def report(self, request, pk=None):
-
         try:
             career_id = int(pk)
         except (TypeError, ValueError):
@@ -452,16 +626,12 @@ class CareersView(viewsets.ModelViewSet):
 
         profile = self._get_or_create_profile()
 
-        # 🔥 single DB fetch
-        career = get_object_or_404(Career, id=career_id)
-
-        qs = UserSavedCareer.objects.filter(
-            user_profile=profile,
-            career_id=career.id
-        )
-
+        # GET -> fetch only
         if request.method == "GET":
-            row = qs.values("report_status", "report", "generated_at").first()
+            row = UserSavedCareer.objects.filter(
+                user_profile=profile,
+                career_id=career_id
+            ).values("report_status", "report", "generated_at").first()
 
             if not row:
                 return Response(
@@ -478,16 +648,16 @@ class CareersView(viewsets.ModelViewSet):
                 status=status.HTTP_200_OK,
             )
 
-        # 🔥 validation
+        # POST / PUT validation
         if "career_id" in request.data:
             return Response(
-                {"detail": "career_id is not allowed"},
+                {"detail": "career_id is not allowed in request body."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         if "generated_at" in request.data:
             return Response(
-                {"detail": "generated_at is not allowed"},
+                {"detail": "generated_at is not allowed in request body."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -498,27 +668,39 @@ class CareersView(viewsets.ModelViewSet):
             )
 
         report_data = request.data["report"]
+
+        # Accept report_status from frontend, default true
+        report_status = request.data.get("report_status", True)
+        report_status = bool(report_status)
+
         now = timezone.now()
 
-        updated = qs.update(
-            report=report_data,
-            report_status=True,
-            generated_at=now,
-        )
-
-        if updated == 0:
-            return Response(
-                {"detail": "Career is not saved. Save career first."},
-                status=status.HTTP_400_BAD_REQUEST,
+        with transaction.atomic():
+            obj, created = UserSavedCareer.objects.get_or_create(
+                user_profile=profile,
+                career_id=career_id,
+                defaults={
+                    "report": report_data,
+                    "report_status": report_status,
+                    "generated_at": now,
+                }
             )
 
-        # 🔥 cache invalidation (important)
+            if not created:
+                UserSavedCareer.objects.filter(id=obj.id).update(
+                    report=report_data,
+                    report_status=report_status,
+                    generated_at=now,
+                )
+
         cache.delete(get_saved_cache_key(request.user.id))
         cache.delete(get_list_cache_key(request.user.id))
 
+        update_embedding_and_recs_async(request.user.id)
+
         return Response(
             {
-                "report_status": True,
+                "report_status": report_status,
                 "report": report_data,
                 "generated_at": now,
             },
@@ -955,10 +1137,52 @@ class CareersView(viewsets.ModelViewSet):
         return Response(data, status=status.HTTP_200_OK)
 
 
+    # @action(detail=False, methods=["GET"])
+    # def my(self, request):
+
+    #     profile = self._get_or_create_profile()
+    #     cache_key = get_saved_cache_key(request.user.id)
+
+    #     cached = cache.get(cache_key)
+    #     if cached:
+    #         print("SAVED CACHE HIT ✅")
+    #         return Response(cached, status=200)
+
+    #     print("SAVED CACHE MISS ❌")
+
+    #     # 🔥 Proper FK-based query
+    #     qs = Career.objects.filter(
+    #         saved_user_links__user_profile=profile
+    #     ).order_by("-saved_user_links__created_at").distinct()
+
+    #     career_ids = list(qs.values_list("id", flat=True))
+
+    #     saved_map = self._build_saved_map(career_ids)
+    #     # explored_map = self._build_explored_map(career_ids)
+    #     report_map = self._build_report_map(career_ids)
+
+    #     serializer = CareerListSerializer(
+    #         qs,
+    #         many=True,
+    #         context={
+    #             "request": request,
+    #             "saved_map": saved_map,
+    #             # "explored_map": explored_map,
+    #             "report_map": report_map,
+    #         },
+    #     )
+
+    #     data = serializer.data
+    #     cache.set(cache_key, data, timeout=None)
+
+    #     return Response(data, status=200)
+
     @action(detail=False, methods=["GET"])
     def my(self, request):
 
         profile = self._get_or_create_profile()
+        self._profile_cached = profile  # required for map
+
         cache_key = get_saved_cache_key(request.user.id)
 
         cached = cache.get(cache_key)
@@ -968,79 +1192,218 @@ class CareersView(viewsets.ModelViewSet):
 
         print("SAVED CACHE MISS ❌")
 
-        # 🔥 Proper FK-based query
         qs = Career.objects.filter(
             saved_user_links__user_profile=profile
+        ).only(
+            "id",
+            "sub_type",
+            "jobname",
+            "job_description",
+            "dg_image_url"
         ).order_by("-saved_user_links__created_at").distinct()
 
         career_ids = list(qs.values_list("id", flat=True))
 
-        saved_map = self._build_saved_map(career_ids)
-        # explored_map = self._build_explored_map(career_ids)
         report_map = self._build_report_map(career_ids)
 
-        serializer = CareerListSerializer(
-            qs,
-            many=True,
-            context={
-                "request": request,
-                "saved_map": saved_map,
-                # "explored_map": explored_map,
-                "report_map": report_map,
-            },
-        )
-
+        serializer = CareerFilterSerializer(qs, many=True)
         data = serializer.data
-        cache.set(cache_key, data, timeout=None)
+
+        # 🔥 Inject structured report
+        for item in data:
+            cid = item["id"]
+            link = report_map.get(cid)
+
+            item["my_report"] = {
+                "report_status": link.report_status if link else False,
+                "report": link.report if link else {},
+                "generated_at": link.generated_at if link else None,
+            }
+
+        cache.set(cache_key, data, timeout=60 * 60)
 
         return Response(data, status=200)
     
-    @action(detail=True, methods=["GET","POST"])
+    # @action(detail=True, methods=["GET","POST"])
+    # def save(self, request, pk=None):
+
+    #     career = get_object_or_404(Career, pk=pk)
+    #     profile = self._get_or_create_profile()
+
+    #     UserSavedCareer.objects.get_or_create(
+    #         user_profile=profile,
+    #         career=career
+    #     )
+
+    #     # 🔥 cache invalidation
+    #     cache.delete(get_saved_cache_key(request.user.id))
+    #     cache.delete(get_list_cache_key(request.user.id))
+
+    #     update_embedding_and_recs_async(request.user.id)
+
+    #     serializer = CareerDetailSerializer(career)
+
+    #     return Response(serializer.data, status=200)
+
+    @action(detail=True, methods=["GET", "POST"])
     def save(self, request, pk=None):
 
         career = get_object_or_404(Career, pk=pk)
         profile = self._get_or_create_profile()
 
-        UserSavedCareer.objects.get_or_create(
-            user_profile=profile,
-            career=career
-        )
+        if request.method == "POST":
+            # 🔥 Save only (no heavy response)
+            UserSavedCareer.objects.get_or_create(
+                user_profile=profile,
+                career=career
+            )
 
-        # 🔥 cache invalidation
-        cache.delete(get_saved_cache_key(request.user.id))
-        cache.delete(get_list_cache_key(request.user.id))
-
-        update_embedding_and_recs_async(request.user.id)
-
-        serializer = CareerDetailSerializer(career)
-
-        return Response(serializer.data, status=200)
-    
-    @action(detail=True, methods=["GET","POST"])
-    def unsave(self, request, pk=None):
-
-        career = get_object_or_404(Career, pk=pk)
-        profile = self._get_or_create_profile()
-
-        deleted, _ = UserSavedCareer.objects.filter(
-            user_profile=profile,
-            career=career
-        ).delete()
-
-        if deleted:
-
-            # 🔥 cache invalidation
             cache.delete(get_saved_cache_key(request.user.id))
             cache.delete(get_list_cache_key(request.user.id))
 
             update_embedding_and_recs_async(request.user.id)
 
-            return Response({"message": "Career unsaved."}, status=200)
+            return Response({
+                "status": True,
+                "saved": True
+            }, status=200)
 
-        return Response(
-            {"error": "Career was not saved."},
-            status=404
-        )
+        # 🔥 GET → return lightweight data
+        serializer = CareerFilterSerializer(career)
+        return Response(serializer.data, status=200)
+    
+    # @action(detail=True, methods=["GET","POST"])
+    # def unsave(self, request, pk=None):
+
+    #     career = get_object_or_404(Career, pk=pk)
+    #     profile = self._get_or_create_profile()
+
+    #     deleted, _ = UserSavedCareer.objects.filter(
+    #         user_profile=profile,
+    #         career=career
+    #     ).delete()
+
+    #     if deleted:
+
+    #         # 🔥 cache invalidation
+    #         cache.delete(get_saved_cache_key(request.user.id))
+    #         cache.delete(get_list_cache_key(request.user.id))
+
+    #         update_embedding_and_recs_async(request.user.id)
+
+    #         return Response({"message": "Career unsaved."}, status=200)
+
+    #     return Response(
+    #         {"error": "Career was not saved."},
+    #         status=404
+    #     )
+
+    @action(detail=True, methods=["GET", "POST"])
+    def unsave(self, request, pk=None):
+
+        career = get_object_or_404(Career, pk=pk)
+        profile = self._get_or_create_profile()
+
+        if request.method == "POST":
+            deleted, _ = UserSavedCareer.objects.filter(
+                user_profile=profile,
+                career=career
+            ).delete()
+
+            if deleted:
+                cache.delete(get_saved_cache_key(request.user.id))
+                cache.delete(get_list_cache_key(request.user.id))
+
+                update_embedding_and_recs_async(request.user.id)
+
+                return Response({
+                    "status": True,
+                    "unsaved": True
+                }, status=200)
+
+            return Response(
+                {"status": False, "message": "Career was not saved."},
+                status=404
+            )
+
+        # GET → return lightweight career info
+        serializer = CareerFilterSerializer(career)
+        return Response(serializer.data, status=200)
+
+    # @action(detail=False, methods=["GET"], url_path="explore_mine")
+    # def explore_mine(self, request):
+
+    #     profile = self._get_or_create_profile()
+    #     cache_key = get_explored_cache_key(request.user.id)
+
+    #     cached = cache.get(cache_key)
+    #     if cached:
+    #         print("EXPLORE CACHE HIT ✅")
+    #         return Response(cached, status=200)
+
+    #     print("EXPLORE CACHE MISS ❌")
+
+    #     # 🔥 Proper FK-based query
+    #     qs = Career.objects.filter(
+    #         explored_user_links__user_profile=profile
+    #     ).order_by("-explored_user_links__created_at").distinct()
+
+    #     serializer = CareerListSerializer(qs, many=True)
+
+    #     data = serializer.data
+    #     cache.set(cache_key, data, timeout=None)
+
+    #     return Response(data, status=200)
+    
+    # @action(detail=True, methods=["GET","POST"])
+    # def explore(self, request, pk=None):
+
+    #     career = get_object_or_404(Career, pk=pk)
+    #     profile = self._get_or_create_profile()
+
+    #     UserExploredCareer.objects.get_or_create(
+    #         user_profile=profile,
+    #         career=career
+    #     )
+
+    #     # 🔥 cache invalidation
+    #     cache.delete(get_explored_cache_key(request.user.id))
+    #     cache.delete(get_list_cache_key(request.user.id))
+
+    #     update_embedding_and_recs_async(request.user.id)
+
+    #     serializer = CareerDetailSerializer(career)
+
+    #     return Response(serializer.data, status=200)
+
+    # @action(detail=True, methods=["POST","GET"])
+    # def unexplore(self, request, pk=None):
+
+    #     career = get_object_or_404(Career, pk=pk)
+    #     profile = self._get_or_create_profile()
+
+    #     deleted, _ = UserExploredCareer.objects.filter(
+    #         user_profile=profile,
+    #         career=career
+    #     ).delete()
+
+    #     if deleted:
+    #         # 🔥 cache invalidation
+    #         cache.delete(get_explored_cache_key(request.user.id))
+    #         cache.delete(get_list_cache_key(request.user.id))
+
+    #         update_embedding_and_recs_async(request.user.id)
+
+    #         return Response(
+    #             {"message": "Career unexplored."},
+    #             status=status.HTTP_200_OK
+    #         )
+
+    #     return Response(
+    #         {"error": "Career was not explored."},
+    #         status=status.HTTP_404_NOT_FOUND
+    #     )
+
 
     @action(detail=False, methods=["GET"], url_path="explore_mine")
     def explore_mine(self, request):
@@ -1055,66 +1418,80 @@ class CareersView(viewsets.ModelViewSet):
 
         print("EXPLORE CACHE MISS ❌")
 
-        # 🔥 Proper FK-based query
         qs = Career.objects.filter(
             explored_user_links__user_profile=profile
+        ).only(
+            "id",
+            "sub_type",
+            "jobname",
+            "job_description",
+            "dg_image_url"
         ).order_by("-explored_user_links__created_at").distinct()
 
-        serializer = CareerListSerializer(qs, many=True)
-
+        serializer = CareerFilterSerializer(qs, many=True)  # 🔥 LIGHT
         data = serializer.data
-        cache.set(cache_key, data, timeout=None)
+
+        cache.set(cache_key, data, timeout=60 * 60)
 
         return Response(data, status=200)
     
-    @action(detail=True, methods=["GET","POST"])
+    @action(detail=True, methods=["GET", "POST"])
     def explore(self, request, pk=None):
 
         career = get_object_or_404(Career, pk=pk)
         profile = self._get_or_create_profile()
 
-        UserExploredCareer.objects.get_or_create(
-            user_profile=profile,
-            career=career
-        )
+        if request.method == "POST":
+            UserExploredCareer.objects.get_or_create(
+                user_profile=profile,
+                career=career
+            )
 
-        # 🔥 cache invalidation
-        cache.delete(get_explored_cache_key(request.user.id))
-        cache.delete(get_list_cache_key(request.user.id))
-
-        update_embedding_and_recs_async(request.user.id)
-
-        serializer = CareerDetailSerializer(career)
-
-        return Response(serializer.data, status=200)
-
-    @action(detail=True, methods=["POST","GET"])
-    def unexplore(self, request, pk=None):
-
-        career = get_object_or_404(Career, pk=pk)
-        profile = self._get_or_create_profile()
-
-        deleted, _ = UserExploredCareer.objects.filter(
-            user_profile=profile,
-            career=career
-        ).delete()
-
-        if deleted:
-            # 🔥 cache invalidation
             cache.delete(get_explored_cache_key(request.user.id))
             cache.delete(get_list_cache_key(request.user.id))
 
             update_embedding_and_recs_async(request.user.id)
 
+            return Response({
+                "status": True,
+                "explored": True
+            }, status=200)
+
+        # GET → lightweight response
+        serializer = CareerFilterSerializer(career)
+        return Response(serializer.data, status=200)
+    
+    @action(detail=True, methods=["GET", "POST"])
+    def unexplore(self, request, pk=None):
+
+        career = get_object_or_404(Career, pk=pk)
+        profile = self._get_or_create_profile()
+
+        if request.method == "POST":
+            deleted, _ = UserExploredCareer.objects.filter(
+                user_profile=profile,
+                career=career
+            ).delete()
+
+            if deleted:
+                cache.delete(get_explored_cache_key(request.user.id))
+                cache.delete(get_list_cache_key(request.user.id))
+
+                update_embedding_and_recs_async(request.user.id)
+
+                return Response({
+                    "status": True,
+                    "unexplored": True
+                }, status=200)
+
             return Response(
-                {"message": "Career unexplored."},
-                status=status.HTTP_200_OK
+                {"status": False, "message": "Career was not explored."},
+                status=404
             )
 
-        return Response(
-            {"error": "Career was not explored."},
-            status=status.HTTP_404_NOT_FOUND
-        )
+        # GET → return career info
+        serializer = CareerFilterSerializer(career)
+        return Response(serializer.data, status=200)
 
 
     def get_serializer_class(self):
