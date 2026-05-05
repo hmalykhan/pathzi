@@ -168,7 +168,8 @@ CACHE_TIMEOUT = 60 * 60  # 1 hour
 def verify_apple_token(identity_token):
     try:
         jwks_client = PyJWKClient(
-            "https://appleid.apple.com/auth/keys"
+            "https://appleid.apple.com/auth/keys",
+            timeout=5,
         )
         signing_key = jwks_client.get_signing_key_from_jwt(identity_token)
 
@@ -181,8 +182,9 @@ def verify_apple_token(identity_token):
         )
         return decoded
 
-    except Exception:
-        raise ValueError("Apple verification failed")
+    except Exception as e:
+        logger.warning("verify_apple_token failed: %s: %s", type(e).__name__, e)
+        raise ValueError("Apple verification failed") from e
 
 class AppleMobileAuthAPI(APIView):
     permission_classes = [permissions.AllowAny]
@@ -1204,9 +1206,13 @@ class GoogleCallbackAPI(APIView):
         try:
             idinfo = google_id_token.verify_oauth2_token(
                 id_token_str,
-                google_requests.Request(),
+                google_requests.Request(timeout=5),
             )
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                "GoogleCallback: verify_oauth2_token failed: %s: %s",
+                type(e).__name__, e,
+            )
             idinfo = {}
 
         # ✅ Return token in response for easy copy (TEST ONLY)
@@ -1244,9 +1250,13 @@ class GoogleMobileAuthAPI(APIView):
             try:
                 idinfo = google_id_token.verify_oauth2_token(
                     id_token_str,
-                    google_requests.Request(),
+                    google_requests.Request(timeout=5),
                 )
-            except Exception:
+            except Exception as e:
+                logger.warning(
+                    "GoogleMobileAuth: verify_oauth2_token failed: %s: %s",
+                    type(e).__name__, e,
+                )
                 return Response(
                     {"status": False, "message": "Google verification failed"},
                     status=400

@@ -1,4 +1,5 @@
 # For payment method limited careers for unsubsctibed uncomment 160, 211
+import logging
 import re, time
 from django.core.cache import cache
 from django.db.models import Case, When
@@ -32,6 +33,8 @@ from accounts.services.recommendation_cache import get_explored_cache_key, get_s
 from accounts.services.user_service import get_explored_careers, get_saved_careers, get_career_queryset, norm_key
 from django.db import transaction
 
+logger = logging.getLogger(__name__)
+
 FREE_CAREER_LIMIT = 5
 
 class CareersView(viewsets.ModelViewSet):
@@ -64,6 +67,16 @@ class CareersView(viewsets.ModelViewSet):
             return False
         billing = getattr(user, "billing", None)
         return bool(billing and billing.is_active)
+
+    @staticmethod
+    def _debounced_embedding_refresh(user_id, *, cooldown=30):
+        """
+        Coalesce rapid swipe bursts: only trigger a recompute if no other
+        rebuild was triggered for this user within `cooldown` seconds.
+        cache.add is atomic across Gunicorn workers via Redis.
+        """
+        if cache.add(f"recs_triggered:{user_id}", True, timeout=cooldown):
+            update_embedding_and_recs_async(user_id)
 
     # -----------------------
     # Pagination helper (keeps schema same)
@@ -146,11 +159,36 @@ class CareersView(viewsets.ModelViewSet):
 
     def get_queryset(self):
         # qs = self._filtered_base_queryset().order_by("id")
-        
+
         qs = self._filtered_base_queryset()
         # list must show only 5 for free users
         # if getattr(self, "action", None) == "list" and not self._is_subscribed():
         #     qs = qs[:FREE_CAREER_LIMIT]
+
+        # For single-career endpoints (retrieve / jobs / courses /
+        # apprenticeships / save / unsave / explore / unexplore / report),
+        # restrict free users to their top-5 allowed careers AT THE QUERYSET
+        # LEVEL. Doing it here means get_object()'s lookup is filtered in
+        # the same SQL statement instead of needing a follow-up .exists()
+        # check, saving one round-trip per free-user request.
+        detail_actions = {
+            "retrieve",
+            "jobs",
+            "courses",
+            "apprenticeships",
+            "save",
+            "unsave",
+            "explore",
+            "unexplore",
+            "report",
+        }
+        if (
+            getattr(self, "action", None) in detail_actions
+            and self.request.user.is_authenticated
+            and not self.request.user.is_staff
+            and not self._is_subscribed()
+        ):
+            qs = qs.filter(id__in=Subquery(self._allowed_ids_subquery()))
 
         return qs
     
@@ -198,6 +236,11 @@ class CareersView(viewsets.ModelViewSet):
         """
         Free users must NOT access careers outside top 5.
         Return 404 to hide existence.
+
+        The top-5 restriction is now enforced inside get_queryset() for
+        detail actions, so super().get_object() will already raise 404 when
+        a free user requests a career outside their allowed set — no second
+        .exists() round-trip needed.
         """
 
         # ✅ Admin/staff can retrieve ANY career by ID (bypass filtered queryset)
@@ -212,21 +255,21 @@ class CareersView(viewsets.ModelViewSet):
             self.check_object_permissions(self.request, obj)
             return obj
 
-        # ✅ everyone else: keep EXACT existing behavior
-        obj = super().get_object()
-
-        if self._is_subscribed():
-            return obj
-
-        allowed = Career.objects.filter(
-            id=obj.id,
-            id__in=Subquery(self._allowed_ids_subquery())
-        ).exists()
-
-        if not allowed:
-            raise NotFound("Not found.")
-
-        return obj
+        # ------------------------------------------------------------------
+        # OLD: two-query version (kept for reference)
+        #
+        #   obj = super().get_object()                      # query #1
+        #   if self._is_subscribed():
+        #       return obj
+        #   allowed = Career.objects.filter(                # query #2
+        #       id=obj.id,
+        #       id__in=Subquery(self._allowed_ids_subquery())
+        #   ).exists()
+        #   if not allowed:
+        #       raise NotFound("Not found.")
+        #   return obj
+        # ------------------------------------------------------------------
+        return super().get_object()
 
     # @action(detail=True, methods=["GET", "PUT"], url_path="report")
     # def report(self, request, pk=None):
@@ -624,7 +667,7 @@ class CareersView(viewsets.ModelViewSet):
         except (TypeError, ValueError):
             raise NotFound()
 
-        profile = self._get_or_create_profile()
+        profile = self._profile_cached or self._get_or_create_profile()
 
         # GET -> fetch only
         if request.method == "GET":
@@ -696,7 +739,7 @@ class CareersView(viewsets.ModelViewSet):
         cache.delete(get_saved_cache_key(request.user.id))
         cache.delete(get_list_cache_key(request.user.id))
 
-        update_embedding_and_recs_async(request.user.id)
+        self._debounced_embedding_refresh(request.user.id)
 
         return Response(
             {
@@ -864,13 +907,13 @@ class CareersView(viewsets.ModelViewSet):
 
         t0 = time.time()
         qss = get_career_queryset(user, profile)
-        print(f"[TIME] queryset build: {time.time() - t0:.3f}s")
+        logger.debug("[TIME] queryset build: %.3fs", time.time() - t0)
 
         cache_key = get_list_cache_key(user.id)
 
         t1 = time.time()
         cached_ids = cache.get(cache_key)
-        print(f"[TIME] cache fetch: {time.time() - t1:.3f}s")
+        logger.debug("[TIME] cache fetch: %.3fs", time.time() - t1)
 
         # 🔥 DEFAULT queryset
         t2 = time.time()
@@ -881,17 +924,17 @@ class CareersView(viewsets.ModelViewSet):
             "job_description",
             "dg_image_url"
         )
-        print(f"[TIME] queryset preparation: {time.time() - t2:.3f}s")
+        logger.debug("[TIME] queryset preparation: %.3fs", time.time() - t2)
 
         if cached_ids is None:
-            print("CACHE MISS ❌")
+            logger.debug("CACHE MISS")
 
             if cache.add(f"recs_triggered:{user.id}", True, timeout=60):
-                print("Triggering async 🚀")
+                logger.debug("Triggering async embedding rebuild for user %s", user.id)
                 update_embedding_and_recs_async(user.id)
 
         else:
-            print("CACHE HIT ✅")
+            logger.debug("CACHE HIT")
 
             t3 = time.time()
             preserved_order = Case(
@@ -908,21 +951,21 @@ class CareersView(viewsets.ModelViewSet):
                 "dg_image_url"
             ).order_by(preserved_order)
 
-            print(f"[TIME] reorder queryset: {time.time() - t3:.3f}s")
+            logger.debug("[TIME] reorder queryset: %.3fs", time.time() - t3)
 
         # 🔥 DB FETCH happens HERE (evaluation)
         t4 = time.time()
         careers_list = list(careers)
-        print(f"[TIME] DB fetch (query execution): {time.time() - t4:.3f}s")
+        logger.debug("[TIME] DB fetch (query execution): %.3fs", time.time() - t4)
 
         # 🔥 Serialization
         t5 = time.time()
         serializer = CareerFilterSerializer(careers_list, many=True)
         data = serializer.data
-        print(f"[TIME] serialization: {time.time() - t5:.3f}s")
+        logger.debug("[TIME] serialization: %.3fs", time.time() - t5)
 
         total_time = time.time() - total_start
-        print(f"[TIME] TOTAL request time: {total_time:.3f}s")
+        logger.debug("[TIME] TOTAL request time: %.3fs", total_time)
 
         return Response(data, status=status.HTTP_200_OK)
 
@@ -1001,21 +1044,21 @@ class CareersView(viewsets.ModelViewSet):
         # qs = self._slice(qs)
         # qs = qs[:50]
 
-        print("Query build time:", time.time() - build_start)
+        logger.debug("Query build time: %.3fs", time.time() - build_start)
 
         # 🔥 FORCE DB HIT
         db_start = time.time()
         data = list(qs)
-        print("DB fetch time:", time.time() - db_start)
+        logger.debug("DB fetch time: %.3fs", time.time() - db_start)
 
-        print("Rows fetched:", len(data))
+        logger.debug("Rows fetched: %d", len(data))
 
         # 🔥 Serialization
         ser_start = time.time()
         serializer = CareerFilterSerializer(data, many=True)
-        print("Serialization time:", time.time() - ser_start)
+        logger.debug("Serialization time: %.3fs", time.time() - ser_start)
 
-        print("TOTAL TIME:", time.time() - total_start)
+        logger.debug("TOTAL TIME: %.3fs", time.time() - total_start)
 
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -1180,29 +1223,70 @@ class CareersView(viewsets.ModelViewSet):
     @action(detail=False, methods=["GET"])
     def my(self, request):
 
-        profile = self._get_or_create_profile()
-        self._profile_cached = profile  # required for map
+        profile = self._profile_cached or self._get_or_create_profile()
+        # Ensure a freshly-created profile is cached for helpers like
+        # _build_report_map (overrides any None previously cached by the
+        # @cached_property descriptor).
+        self._profile_cached = profile
 
         cache_key = get_saved_cache_key(request.user.id)
 
         cached = cache.get(cache_key)
         if cached:
-            print("SAVED CACHE HIT ✅")
+            logger.debug("SAVED CACHE HIT")
             return Response(cached, status=200)
 
-        print("SAVED CACHE MISS ❌")
+        logger.debug("SAVED CACHE MISS")
 
-        qs = Career.objects.filter(
-            saved_user_links__user_profile=profile
-        ).only(
+        # ------------------------------------------------------------------
+        # OLD: single JOIN + DISTINCT query
+        # ------------------------------------------------------------------
+        # Why it was replaced:
+        #   This query JOINs Career with UserSavedCareer, ORDERS BY a column
+        #   on the joined table, then forces a SQL DISTINCT to dedupe rows
+        #   produced by the join. DISTINCT cannot use a single-column index
+        #   here, so Postgres falls back to a sort-based dedupe — slow on
+        #   tables with many saves.
+        #
+        # qs = Career.objects.filter(
+        #     saved_user_links__user_profile=profile
+        # ).only(
+        #     "id",
+        #     "sub_type",
+        #     "jobname",
+        #     "job_description",
+        #     "dg_image_url"
+        # ).order_by("-saved_user_links__created_at").distinct()
+        #
+        # career_ids = list(qs.values_list("id", flat=True))
+        # ------------------------------------------------------------------
+
+        # NEW: two indexed lookups — fetch ordered IDs, then hydrate Careers.
+        # Step 1: get saved career IDs newest-first directly from the join
+        # table (uses index on user_profile + created_at).
+        career_ids = list(
+            UserSavedCareer.objects
+            .filter(user_profile=profile)
+            .order_by("-created_at")
+            .values_list("career_id", flat=True)
+        )
+
+        if not career_ids:
+            cache.set(cache_key, [], timeout=60 * 60)
+            return Response([], status=200)
+
+        # Step 2: hydrate Career rows by primary key (no JOIN, no DISTINCT).
+        # Preserve the order from step 1 with a Case/When expression.
+        preserved_order = Case(
+            *[When(id=pk, then=pos) for pos, pk in enumerate(career_ids)]
+        )
+        qs = Career.objects.filter(id__in=career_ids).only(
             "id",
             "sub_type",
             "jobname",
             "job_description",
-            "dg_image_url"
-        ).order_by("-saved_user_links__created_at").distinct()
-
-        career_ids = list(qs.values_list("id", flat=True))
+            "dg_image_url",
+        ).order_by(preserved_order)
 
         report_map = self._build_report_map(career_ids)
 
@@ -1249,7 +1333,7 @@ class CareersView(viewsets.ModelViewSet):
     def save(self, request, pk=None):
 
         career = get_object_or_404(Career, pk=pk)
-        profile = self._get_or_create_profile()
+        profile = self._profile_cached or self._get_or_create_profile()
 
         if request.method == "POST":
             # 🔥 Save only (no heavy response)
@@ -1261,7 +1345,7 @@ class CareersView(viewsets.ModelViewSet):
             cache.delete(get_saved_cache_key(request.user.id))
             cache.delete(get_list_cache_key(request.user.id))
 
-            update_embedding_and_recs_async(request.user.id)
+            self._debounced_embedding_refresh(request.user.id)
 
             return Response({
                 "status": True,
@@ -1302,7 +1386,7 @@ class CareersView(viewsets.ModelViewSet):
     def unsave(self, request, pk=None):
 
         career = get_object_or_404(Career, pk=pk)
-        profile = self._get_or_create_profile()
+        profile = self._profile_cached or self._get_or_create_profile()
 
         if request.method == "POST":
             deleted, _ = UserSavedCareer.objects.filter(
@@ -1314,7 +1398,7 @@ class CareersView(viewsets.ModelViewSet):
                 cache.delete(get_saved_cache_key(request.user.id))
                 cache.delete(get_list_cache_key(request.user.id))
 
-                update_embedding_and_recs_async(request.user.id)
+                self._debounced_embedding_refresh(request.user.id)
 
                 return Response({
                     "status": True,
@@ -1408,25 +1492,56 @@ class CareersView(viewsets.ModelViewSet):
     @action(detail=False, methods=["GET"], url_path="explore_mine")
     def explore_mine(self, request):
 
-        profile = self._get_or_create_profile()
+        profile = self._profile_cached or self._get_or_create_profile()
         cache_key = get_explored_cache_key(request.user.id)
 
         cached = cache.get(cache_key)
         if cached:
-            print("EXPLORE CACHE HIT ✅")
+            logger.debug("EXPLORE CACHE HIT")
             return Response(cached, status=200)
 
-        print("EXPLORE CACHE MISS ❌")
+        logger.debug("EXPLORE CACHE MISS")
 
-        qs = Career.objects.filter(
-            explored_user_links__user_profile=profile
-        ).only(
+        # ------------------------------------------------------------------
+        # OLD: single JOIN + DISTINCT query (same anti-pattern as my()).
+        # Replaced with a two-step ID-then-hydrate lookup that uses indexes
+        # on UserExploredCareer (user_profile, created_at) instead of a
+        # sort-based DISTINCT over the joined result set.
+        #
+        # qs = Career.objects.filter(
+        #     explored_user_links__user_profile=profile
+        # ).only(
+        #     "id",
+        #     "sub_type",
+        #     "jobname",
+        #     "job_description",
+        #     "dg_image_url"
+        # ).order_by("-explored_user_links__created_at").distinct()
+        # ------------------------------------------------------------------
+
+        # NEW: Step 1 — get explored career IDs newest-first from join table.
+        career_ids = list(
+            UserExploredCareer.objects
+            .filter(user_profile=profile)
+            .order_by("-created_at")
+            .values_list("career_id", flat=True)
+        )
+
+        if not career_ids:
+            cache.set(cache_key, [], timeout=60 * 60)
+            return Response([], status=200)
+
+        # Step 2 — hydrate Career rows by primary key, preserving order.
+        preserved_order = Case(
+            *[When(id=pk, then=pos) for pos, pk in enumerate(career_ids)]
+        )
+        qs = Career.objects.filter(id__in=career_ids).only(
             "id",
             "sub_type",
             "jobname",
             "job_description",
-            "dg_image_url"
-        ).order_by("-explored_user_links__created_at").distinct()
+            "dg_image_url",
+        ).order_by(preserved_order)
 
         serializer = CareerFilterSerializer(qs, many=True)  # 🔥 LIGHT
         data = serializer.data
@@ -1439,7 +1554,7 @@ class CareersView(viewsets.ModelViewSet):
     def explore(self, request, pk=None):
 
         career = get_object_or_404(Career, pk=pk)
-        profile = self._get_or_create_profile()
+        profile = self._profile_cached or self._get_or_create_profile()
 
         if request.method == "POST":
             UserExploredCareer.objects.get_or_create(
@@ -1450,7 +1565,7 @@ class CareersView(viewsets.ModelViewSet):
             cache.delete(get_explored_cache_key(request.user.id))
             cache.delete(get_list_cache_key(request.user.id))
 
-            update_embedding_and_recs_async(request.user.id)
+            self._debounced_embedding_refresh(request.user.id)
 
             return Response({
                 "status": True,
@@ -1465,7 +1580,7 @@ class CareersView(viewsets.ModelViewSet):
     def unexplore(self, request, pk=None):
 
         career = get_object_or_404(Career, pk=pk)
-        profile = self._get_or_create_profile()
+        profile = self._profile_cached or self._get_or_create_profile()
 
         if request.method == "POST":
             deleted, _ = UserExploredCareer.objects.filter(
@@ -1477,7 +1592,7 @@ class CareersView(viewsets.ModelViewSet):
                 cache.delete(get_explored_cache_key(request.user.id))
                 cache.delete(get_list_cache_key(request.user.id))
 
-                update_embedding_and_recs_async(request.user.id)
+                self._debounced_embedding_refresh(request.user.id)
 
                 return Response({
                     "status": True,

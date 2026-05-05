@@ -1,4 +1,5 @@
 
+import logging
 import uuid
 from datetime import datetime, timezone as dt_timezone
 
@@ -8,18 +9,13 @@ from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from stripe import error as stripe_error 
-# this is my file     
+from stripe import error as stripe_error
+# this is my file
 
 from .models import BillingProfile
 from .utils import subscription_period_end_dt
 
-stripe.api_key = settings.STRIPE_SECRET_KEY
-try:
-    from stripe import http_client
-    stripe.default_http_client = http_client.RequestsClient(timeout=5)
-except Exception:
-    pass
+logger = logging.getLogger(__name__)
 
 
 # ----------------------------
@@ -60,7 +56,8 @@ def _unit_amount_of_price(price_id: str) -> int | None:
     try:
         p = stripe.Price.retrieve(price_id)
         return p.get("unit_amount")
-    except Exception:
+    except stripe_error.StripeError as e:
+        logger.warning("stripe.Price.retrieve failed for %s: %s", price_id, e)
         return None
 
 
@@ -81,7 +78,8 @@ def _get_invoice(subscription):
     if isinstance(inv, str) and inv:
         try:
             return stripe.Invoice.retrieve(inv)
-        except Exception:
+        except stripe_error.StripeError as e:
+            logger.warning("stripe.Invoice.retrieve failed for %s: %s", inv, e)
             return None
 
     return None
@@ -111,7 +109,8 @@ def _get_client_secret_from_invoice(invoice):
         try:
             pi = stripe.PaymentIntent.retrieve(pi)
             return pi.get("client_secret"), hosted_url
-        except Exception:
+        except stripe_error.StripeError as e:
+            logger.warning("stripe.PaymentIntent.retrieve failed for %s: %s", pi, e)
             return None, hosted_url
 
     return None, hosted_url
@@ -128,7 +127,8 @@ def _get_setup_intent_client_secret(sub):
     if isinstance(si, str) and si:
         try:
             return stripe.SetupIntent.retrieve(si).get("client_secret")
-        except Exception:
+        except stripe_error.StripeError as e:
+            logger.warning("stripe.SetupIntent.retrieve failed for %s: %s", si, e)
             return None
     return None
 
@@ -142,7 +142,11 @@ def _release_schedule_if_any(schedule_id: str | None):
         return
     try:
         stripe.SubscriptionSchedule.release(schedule_id)
-    except Exception:
+    except stripe_error.StripeError as e:
+        logger.error(
+            "stripe.SubscriptionSchedule.release failed for %s: %s",
+            schedule_id, e,
+        )
         return
 
 
@@ -168,7 +172,11 @@ def _sync_billing_from_stripe(billing: BillingProfile) -> BillingProfile:
 
     try:
         sub = stripe.Subscription.retrieve(billing.stripe_subscription_id, expand=["items"])
-    except Exception:
+    except stripe_error.StripeError as e:
+        logger.warning(
+            "_sync_billing_from_stripe: retrieve failed for sub %s: %s",
+            billing.stripe_subscription_id, e,
+        )
         return billing
 
     status = sub.get("status") or billing.subscription_status
@@ -283,19 +291,35 @@ class SubscribeView(APIView):
             profile.save(update_fields=["stripe_customer_id", "updated_at"])
 
         # 2) Ephemeral Key (PaymentSheet customer mode)
-        eph_key = stripe.EphemeralKey.create(
-            customer=profile.stripe_customer_id,
-            stripe_version=settings.STRIPE_API_VERSION,
-        )
+        try:
+            eph_key = stripe.EphemeralKey.create(
+                customer=profile.stripe_customer_id,
+                stripe_version=settings.STRIPE_API_VERSION,
+            )
+        except stripe_error.StripeError as e:
+            logger.warning("stripe.EphemeralKey.create failed for user %s: %s", user.id, e)
+            return Response(
+                {"detail": "Stripe error creating ephemeral key.", "stripe_error": str(e)},
+                status=502,
+            )
 
         expand_fields = ["latest_invoice.confirmation_secret", "pending_setup_intent", "items"]
 
-        
         if profile.stripe_subscription_id and profile.subscription_status in ("incomplete", "past_due", "unpaid"):
-            sub = stripe.Subscription.retrieve(
-                profile.stripe_subscription_id,
-                expand=expand_fields,
-            )
+            try:
+                sub = stripe.Subscription.retrieve(
+                    profile.stripe_subscription_id,
+                    expand=expand_fields,
+                )
+            except stripe_error.StripeError as e:
+                logger.warning(
+                    "stripe.Subscription.retrieve failed for sub %s: %s",
+                    profile.stripe_subscription_id, e,
+                )
+                return Response(
+                    {"detail": "Stripe error retrieving subscription.", "stripe_error": str(e)},
+                    status=502,
+                )
 
             item_id, current_price_id = _extract_subscription_item(sub)
 
@@ -364,16 +388,24 @@ class SubscribeView(APIView):
             or f"subscribe:{user.id}:{uuid.uuid4()}"
         )
 
-        sub = stripe.Subscription.create(
-            customer=profile.stripe_customer_id,
-            items=[{"price": price_id}],
-            collection_method="charge_automatically",
-            payment_behavior="default_incomplete",
-            payment_settings={"save_default_payment_method": "on_subscription"},
-            expand=expand_fields,
-            metadata={"user_id": str(user.id), "plan_id": plan_id},
-            idempotency_key=idempotency_key,
-        )
+        try:
+            sub = stripe.Subscription.create(
+                customer=profile.stripe_customer_id,
+                items=[{"price": price_id}],
+                collection_method="charge_automatically",
+                payment_behavior="default_incomplete",
+                payment_settings={"save_default_payment_method": "on_subscription"},
+                expand=expand_fields,
+                metadata={"user_id": str(user.id), "plan_id": plan_id},
+                idempotency_key=idempotency_key,
+                request_timeout=20,
+            )
+        except stripe_error.StripeError as e:
+            logger.warning("stripe.Subscription.create failed for user %s: %s", user.id, e)
+            return Response(
+                {"detail": "Stripe error creating subscription.", "stripe_error": str(e)},
+                status=502,
+            )
 
         profile.stripe_subscription_id = sub["id"]
         profile.subscription_status = sub.get("status", "incomplete")
@@ -543,10 +575,20 @@ class ChangePlanView(APIView):
                 )
 
             # 🔹 NEW: Generate fresh Ephemeral Key (important for PaymentSheet)
-            eph_key = stripe.EphemeralKey.create(
-                customer=billing.stripe_customer_id,
-                stripe_version=settings.STRIPE_API_VERSION,
-            )
+            try:
+                eph_key = stripe.EphemeralKey.create(
+                    customer=billing.stripe_customer_id,
+                    stripe_version=settings.STRIPE_API_VERSION,
+                )
+            except stripe_error.StripeError as e:
+                logger.warning(
+                    "stripe.EphemeralKey.create failed for user %s on upgrade: %s",
+                    request.user.id, e,
+                )
+                return Response(
+                    {"detail": "Stripe error creating ephemeral key.", "stripe_error": str(e)},
+                    status=502,
+                )
 
             invoice = _get_invoice(updated)
             pay_cs, hosted_url = _get_client_secret_from_invoice(invoice)

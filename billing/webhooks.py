@@ -16,7 +16,7 @@ from stripe import error as stripe_error
 from .models import BillingProfile, StripeEvent
 from .utils import subscription_period_end_dt, ts_to_dt
 
-stripe.api_key = settings.STRIPE_SECRET_KEY
+# Stripe (api_key + http_client timeout) is configured once in billing.apps.BillingConfig.ready().
 
 _MISSING = object()
 
