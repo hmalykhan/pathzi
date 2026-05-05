@@ -38,9 +38,9 @@ from .serializers import (
     LoginSerializer,
     ResetPasswordSerializer,
     UserProfileLightSerializer,
-    ForgotPasswordSerializer,
-    ForgotPasswordConfirmSerializer,
-    GoogleLoginResponseSerializer,
+    # ForgotPasswordSerializer,
+    # ForgotPasswordConfirmSerializer,
+    # GoogleLoginResponseSerializer,
     UserProfileUpdateSerializer
 )
 
@@ -50,10 +50,8 @@ logger = logging.getLogger(__name__)
 import jwt
 import requests
 from django.conf import settings
-# from logging import logger
 import requests
 from rest_framework_simplejwt.tokens import RefreshToken
-from asgiref.sync import sync_to_async
 from django.utils.crypto import get_random_string
 from django.contrib.auth.models import User
 from rest_framework.views import APIView
@@ -61,10 +59,9 @@ from rest_framework import status, permissions
 import threading
 from django.core.mail import send_mail
 from jwt import PyJWKClient
-from accounts.services.user_embeddings import update_embedding_async
 from accounts.services.recommendation_cache import get_list_cache_key
-from accounts.services.career_recommender import precompute_recommendations_async, update_embedding_and_recs_async
 from accounts.services.recommendation_cache import get_embedding_schedule_lock_key
+from careers.services.recommendation_triggers import trigger_recs_debounced
 
 
 class AppleAuthURLAPI(APIView):
@@ -638,7 +635,7 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
             serializer.save()
             cache.delete(get_list_cache_key(request.user.id))
             cache.delete(get_embedding_schedule_lock_key(request.user.id))
-            # update_embedding_and_recs_async(request.user.id)
+            trigger_recs_debounced(request.user.id)
             logger.info("Profile updated: user_id=%s", request.user.id)
             return Response(
                 {"status": True, "message": "Profile updated successfully.", "data": serializer.data},

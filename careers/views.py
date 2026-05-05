@@ -27,11 +27,18 @@ from jobs.api.serializers import JobsSerializer
 from apprenticeship.models import Apprenticeship
 from apprenticeship.api.serializers import ApprenticeshipSerializer
 
-from accounts.services.career_recommender import recommend_careers_for_user,precompute_recommendations_async, update_embedding_and_recs_async
-from accounts.services.user_embeddings import schedule_embedding_update, update_embedding_async
+from accounts.services.career_recommender import update_embedding_and_recs_async
+from careers.services.recommendation_triggers import trigger_recs_debounced
 from accounts.services.recommendation_cache import get_explored_cache_key, get_saved_cache_key, get_list_cache_key, get_recs_lock_key, get_embedding_schedule_lock_key
 from accounts.services.user_service import get_explored_careers, get_saved_careers, get_career_queryset, norm_key
 from django.db import transaction
+from rest_framework import status
+from rest_framework.decorators import action
+from rest_framework.response import Response
+
+from careers.api.serializers import BulkCareerInteractionSerializer
+from careers.services.interactions_bulk import apply_bulk_career_interactions
+from careers.throttles import InteractionThrottle
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +83,7 @@ class CareersView(viewsets.ModelViewSet):
         cache.add is atomic across Gunicorn workers via Redis.
         """
         if cache.add(f"recs_triggered:{user_id}", True, timeout=cooldown):
-            update_embedding_and_recs_async(user_id)
+            trigger_recs_debounced(user_id)
 
     # -----------------------
     # Pagination helper (keeps schema same)
@@ -171,24 +178,26 @@ class CareersView(viewsets.ModelViewSet):
         # LEVEL. Doing it here means get_object()'s lookup is filtered in
         # the same SQL statement instead of needing a follow-up .exists()
         # check, saving one round-trip per free-user request.
-        detail_actions = {
-            "retrieve",
-            "jobs",
-            "courses",
-            "apprenticeships",
-            "save",
-            "unsave",
-            "explore",
-            "unexplore",
-            "report",
-        }
-        if (
-            getattr(self, "action", None) in detail_actions
-            and self.request.user.is_authenticated
-            and not self.request.user.is_staff
-            and not self._is_subscribed()
-        ):
-            qs = qs.filter(id__in=Subquery(self._allowed_ids_subquery()))
+
+        # New for the subscribed login uncomment when want to subscribed logic
+        # detail_actions = {
+        #     "retrieve",
+        #     "jobs",
+        #     "courses",
+        #     "apprenticeships",
+        #     "save",
+        #     "unsave",
+        #     "explore",
+        #     "unexplore",
+        #     "report",
+        # }
+        # if (
+        #     getattr(self, "action", None) in detail_actions
+        #     and self.request.user.is_authenticated
+        #     and not self.request.user.is_staff
+        #     and not self._is_subscribed()
+        # ):
+        #     qs = qs.filter(id__in=Subquery(self._allowed_ids_subquery()))
 
         return qs
     
@@ -931,7 +940,7 @@ class CareersView(viewsets.ModelViewSet):
 
             if cache.add(f"recs_triggered:{user.id}", True, timeout=60):
                 logger.debug("Triggering async embedding rebuild for user %s", user.id)
-                update_embedding_and_recs_async(user.id)
+                trigger_recs_debounced(user.id)
 
         else:
             logger.debug("CACHE HIT")
@@ -1607,6 +1616,52 @@ class CareersView(viewsets.ModelViewSet):
         # GET → return career info
         serializer = CareerFilterSerializer(career)
         return Response(serializer.data, status=200)
+    
+    @action(
+    detail=False,
+    methods=["POST"],
+    url_path="interactions/bulk",
+    throttle_classes=[InteractionThrottle],
+    )
+    def bulk_interactions(self, request):
+        serializer = BulkCareerInteractionSerializer(data=request.data)
+
+        if not serializer.is_valid():
+            return Response(
+                {
+                    "status": False,
+                    "message": serializer.errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        profile = self._get_or_create_profile()
+
+        result = apply_bulk_career_interactions(
+            user=request.user,
+            profile=profile,
+            items=serializer.validated_data["items"],
+        )
+
+        if not result["ok"]:
+            return Response(
+                {
+                    "status": False,
+                    "message": "Some career IDs are invalid.",
+                    "missing_ids": result["missing_ids"],
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {
+                "status": True,
+                "updated_count": result["updated_count"],
+                "saved_changed": result["saved_changed"],
+                "explored_changed": result["explored_changed"],
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
     def get_serializer_class(self):

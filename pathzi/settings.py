@@ -30,29 +30,54 @@ SECRET_KEY = 'django-insecure-phnpwqr^o#9fgr&8w0w&a3&ypw-%+y1^+ft=*l8ywn9*2-u(gx
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
+import ssl
+
+REDIS_URL = config("REDIS_URL")
+
 REST_FRAMEWORK = {
-    'DEFAULT_THROTTLE_RATES': {
-        'user': '100/min',
+    "DEFAULT_THROTTLE_RATES": {
+        "user": "100/min",
+        "interaction": "10/second",
     }
 }
 
 ALLOWED_HOSTS = ["*"]
 
+
+# Django cache uses clean REDIS_URL + Python SSL option
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": config("REDIS_URL"),
+        "LOCATION": REDIS_URL,
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
-
-            # 🔥 REQUIRED for external TLS Redis
             "CONNECTION_POOL_KWARGS": {
-                "ssl_cert_reqs": None
-            }
-        }
+                "ssl_cert_reqs": ssl.CERT_NONE,
+            },
+        },
     }
 }
 
+
+# Celery needs ssl_cert_reqs in the rediss URL
+CELERY_REDIS_URL = f"{REDIS_URL}/0?ssl_cert_reqs=CERT_NONE"
+
+CELERY_BROKER_URL = CELERY_REDIS_URL
+CELERY_RESULT_BACKEND = CELERY_REDIS_URL
+
+CELERY_BROKER_USE_SSL = {
+    "ssl_cert_reqs": ssl.CERT_NONE,
+}
+
+CELERY_REDIS_BACKEND_USE_SSL = {
+    "ssl_cert_reqs": ssl.CERT_NONE,
+}
+
+CELERY_TASK_ACKS_LATE = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+
+CELERY_TASK_TIME_LIMIT = 300
+CELERY_TASK_SOFT_TIME_LIMIT = 240
 # Application definition
 
 INSTALLED_APPS = [
@@ -113,7 +138,8 @@ REST_FRAMEWORK = {
         "rest_framework.throttling.UserRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
-        "user": "10/min"
+        "user": "10/min",
+        "interaction": "10/second",
     },
     # "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     # "PAGE_SIZE": 50,

@@ -462,4 +462,53 @@ class CareerDetailSerializer(serializers.ModelSerializer):
 
 
 
+    from rest_framework import serializers
+
+
+class CareerInteractionItemSerializer(serializers.Serializer):
+    career_id = serializers.IntegerField(required=True)
+    saved = serializers.BooleanField(required=False)
+    explored = serializers.BooleanField(required=False)
+
+    def validate(self, attrs):
+        if "saved" not in attrs and "explored" not in attrs:
+            raise serializers.ValidationError(
+                "At least one of saved or explored is required."
+            )
+        return attrs
+
+
+class BulkCareerInteractionSerializer(serializers.Serializer):
+    items = CareerInteractionItemSerializer(many=True)
+
+    def validate_items(self, items):
+        if not items:
+            raise serializers.ValidationError("items cannot be empty.")
+
+        if len(items) > 100:
+            raise serializers.ValidationError(
+                "You can update at most 100 career interactions at once."
+            )
+
+        # Final state wins per career_id.
+        merged = {}
+
+        for item in items:
+            career_id = item["career_id"]
+
+            if career_id not in merged:
+                merged[career_id] = {
+                    "career_id": career_id,
+                }
+
+            if "saved" in item:
+                merged[career_id]["saved"] = item["saved"]
+
+            if "explored" in item:
+                merged[career_id]["explored"] = item["explored"]
+
+        return list(merged.values())
+
+
+
     
