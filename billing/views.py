@@ -398,7 +398,6 @@ class SubscribeView(APIView):
                 expand=expand_fields,
                 metadata={"user_id": str(user.id), "plan_id": plan_id},
                 idempotency_key=idempotency_key,
-                request_timeout=20,
             )
         except stripe_error.StripeError as e:
             logger.warning("stripe.Subscription.create failed for user %s: %s", user.id, e)

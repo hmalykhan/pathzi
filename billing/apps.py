@@ -11,4 +11,4 @@ class BillingConfig(AppConfig):
         from stripe._http_client import RequestsClient
 
         stripe.api_key = settings.STRIPE_SECRET_KEY
-        stripe.default_http_client = RequestsClient(timeout=5)
+        stripe.default_http_client = RequestsClient(timeout=20)

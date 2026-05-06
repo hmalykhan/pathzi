@@ -28,7 +28,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-phnpwqr^o#9fgr&8w0w&a3&ypw-%+y1^+ft=*l8ywn9*2-u(gx'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
 import ssl
 
@@ -41,7 +41,13 @@ REST_FRAMEWORK = {
     }
 }
 
-ALLOWED_HOSTS = ["*"]
+# ALLOWED_HOSTS = ["*"]
+
+ALLOWED_HOSTS = [
+    "stingray-app-jqmc6.ondigitalocean.app",
+    "pathzi.co.uk",
+    "www.pathzi.co.uk",
+]
 
 
 # Django cache uses clean REDIS_URL + Python SSL option
