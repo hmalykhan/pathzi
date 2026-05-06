@@ -47,6 +47,7 @@ ALLOWED_HOSTS = [
     "stingray-app-jqmc6.ondigitalocean.app",
     "pathzi.co.uk",
     "www.pathzi.co.uk",
+    "localhost"
 ]
 
 

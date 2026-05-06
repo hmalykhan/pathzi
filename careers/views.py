@@ -39,6 +39,7 @@ from rest_framework.response import Response
 from careers.api.serializers import BulkCareerInteractionSerializer
 from careers.services.interactions_bulk import apply_bulk_career_interactions
 from careers.throttles import InteractionThrottle
+from rest_framework.permissions import IsAuthenticated
 
 logger = logging.getLogger(__name__)
 
@@ -1621,6 +1622,7 @@ class CareersView(viewsets.ModelViewSet):
     detail=False,
     methods=["POST"],
     url_path="interactions/bulk",
+    permission_classes=[IsAuthenticated],
     throttle_classes=[InteractionThrottle],
     )
     def bulk_interactions(self, request):

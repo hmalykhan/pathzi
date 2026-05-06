@@ -8,7 +8,7 @@ class CoursePermission(permissions.BasePermission):
 
         action = getattr(view, "action", None)
 
-        if action in {"save", "list", "my", "retrieve", "unsave"}:
+        if action in {"save", "list", "my", "retrieve", "unsave", "bulk_interactions"}:
             return bool(request.user and request.user.is_authenticated)
 
         return bool(request.user and request.user.is_staff)
