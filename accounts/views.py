@@ -1203,7 +1203,8 @@ class GoogleCallbackAPI(APIView):
         try:
             idinfo = google_id_token.verify_oauth2_token(
                 id_token_str,
-                google_requests.Request(timeout=5),
+                # google_requests.Request(timeout=5),
+                google_requests.Request(),
             )
         except Exception as e:
             logger.warning(
@@ -1247,7 +1248,8 @@ class GoogleMobileAuthAPI(APIView):
             try:
                 idinfo = google_id_token.verify_oauth2_token(
                     id_token_str,
-                    google_requests.Request(timeout=5),
+                    # google_requests.Request(timeout=5),
+                    google_requests.Request(),
                 )
             except Exception as e:
                 logger.warning(
