@@ -30,4 +30,5 @@ urlpatterns = [
     path('careers/', include('careers.urls')),
     path("geo/", include("geo_search.urls")),
     path("usage-limits/", include("usage_limits.urls")),
+    path("analytics/", include("analytics.urls")),
 ]

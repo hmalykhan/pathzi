@@ -13,6 +13,9 @@ from .services_db import (
 )
 from .services_search import search_nearby
 
+from analytics.services import log_activity
+from analytics import constants as analytics_constants
+
 # ✅ tolerate typos/aliases from frontend
 TYPE_ALIASES = {
     "job": "jobs",
@@ -376,6 +379,23 @@ class NearbySearchAPI(APIView):
                 )
             lat, lon = center
             center_source = "db_centroid"
+
+        # Analytics: record the search (Lane A). Never raises.
+        log_activity(
+            user=request.user,
+            activity_type=analytics_constants.SEARCH_PERFORMED,
+            activity_value=q or None,
+            metadata={
+                "q": q or None,
+                "city": city or None,
+                "postcode": postcode or None,
+                "category": category or None,
+                "subcategory": subcategory or None,
+                "types": types,
+                "radius_km": radius_km,
+                "center_source": center_source,
+            },
+        )
 
         # ✅ PASS city/postcode into search_nearby so results match EXACT city/zip fields
         results = {

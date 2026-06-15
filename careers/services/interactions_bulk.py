@@ -9,6 +9,9 @@ from accounts.services.recommendation_cache import (
 from careers.models import Career, UserExploredCareer, UserSavedCareer
 from careers.services.recommendation_triggers import trigger_recs_debounced
 
+from analytics.services import log_activity
+from analytics import constants as analytics_constants
+
 
 def apply_bulk_career_interactions(user, profile, items):
     """
@@ -137,6 +140,23 @@ def apply_bulk_career_interactions(user, profile, items):
     if saved_changed or explored_changed:
         cache.delete(get_list_cache_key(user.id))
         trigger_recs_debounced(user.id)
+
+    # Analytics: one event per requested interaction (Lane A). log_activity
+    # never raises, so this can't affect the bulk result. We log the user's
+    # intent across all four lists, matching the single-action endpoints.
+    for activity_type, career_ids in (
+        (analytics_constants.CAREER_SAVED, save_true_ids),
+        (analytics_constants.CAREER_UNSAVED, save_false_ids),
+        (analytics_constants.CAREER_EXPLORED, explore_true_ids),
+        (analytics_constants.CAREER_UNEXPLORED, explore_false_ids),
+    ):
+        for career_id in career_ids:
+            log_activity(
+                user=user,
+                activity_type=activity_type,
+                career=career_id,
+                metadata={"source": "bulk_interactions"},
+            )
 
     return {
         "ok": True,

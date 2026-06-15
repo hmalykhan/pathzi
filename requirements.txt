@@ -1,3 +1,4 @@
+# sentance-transformers
 asgiref==3.10.0
 cachetools==6.2.2
 certifi==2025.11.12
@@ -31,4 +32,4 @@ django_redis==6.0.0
 celery>=5.3
 redis>=5.0
 django-redis>=5.4
-# sentance-transformers
+whitenoise==6.12.0

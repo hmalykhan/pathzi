@@ -41,6 +41,9 @@ from careers.services.interactions_bulk import apply_bulk_career_interactions
 from careers.throttles import InteractionThrottle
 from rest_framework.permissions import IsAuthenticated
 
+from analytics.services import log_activity
+from analytics import constants as analytics_constants
+
 logger = logging.getLogger(__name__)
 
 FREE_CAREER_LIMIT = 5
@@ -1357,6 +1360,13 @@ class CareersView(viewsets.ModelViewSet):
 
             self._debounced_embedding_refresh(request.user.id)
 
+            log_activity(
+                user=request.user,
+                activity_type=analytics_constants.CAREER_SAVED,
+                career=career,
+                activity_value=career.jobname,
+            )
+
             return Response({
                 "status": True,
                 "saved": True
@@ -1409,6 +1419,13 @@ class CareersView(viewsets.ModelViewSet):
                 cache.delete(get_list_cache_key(request.user.id))
 
                 self._debounced_embedding_refresh(request.user.id)
+
+                log_activity(
+                    user=request.user,
+                    activity_type=analytics_constants.CAREER_UNSAVED,
+                    career=career,
+                    activity_value=career.jobname,
+                )
 
                 return Response({
                     "status": True,
@@ -1577,6 +1594,13 @@ class CareersView(viewsets.ModelViewSet):
 
             self._debounced_embedding_refresh(request.user.id)
 
+            log_activity(
+                user=request.user,
+                activity_type=analytics_constants.CAREER_EXPLORED,
+                career=career,
+                activity_value=career.jobname,
+            )
+
             return Response({
                 "status": True,
                 "explored": True
@@ -1603,6 +1627,13 @@ class CareersView(viewsets.ModelViewSet):
                 cache.delete(get_list_cache_key(request.user.id))
 
                 self._debounced_embedding_refresh(request.user.id)
+
+                log_activity(
+                    user=request.user,
+                    activity_type=analytics_constants.CAREER_UNEXPLORED,
+                    career=career,
+                    activity_value=career.jobname,
+                )
 
                 return Response({
                     "status": True,

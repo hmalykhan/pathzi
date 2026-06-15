@@ -28,7 +28,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-phnpwqr^o#9fgr&8w0w&a3&ypw-%+y1^+ft=*l8ywn9*2-u(gx'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = True
 
 import ssl
 
@@ -38,6 +38,9 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "user": "100/min",
         "interaction": "10/second",
+        # Frontend analytics ingest: each request can carry up to 200 events,
+        # so a modest request rate still allows a high event throughput.
+        "analytics": "120/min",
     }
 }
 
@@ -85,6 +88,47 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 
 CELERY_TASK_TIME_LIMIT = 300
 CELERY_TASK_SOFT_TIME_LIMIT = 240
+
+# ---------------------------------------------------------------------------
+# Redis-command reduction ("Layer 2" tweaks).
+# Redis is the Celery broker + result backend, so a running worker keeps
+# clicking the Upstash command meter even with no users. These cut the
+# always-on idle chatter without changing task behaviour.
+# ---------------------------------------------------------------------------
+
+# Don't write a result receipt to Redis for every task (we never read them).
+CELERY_TASK_IGNORE_RESULT = True
+
+# Silence inter-worker gossip / heartbeat / remote-control polling — we run a
+# single worker and don't use Flower-style monitoring or remote commands.
+CELERY_WORKER_SEND_TASK_EVENTS = False
+CELERY_WORKER_ENABLE_REMOTE_CONTROL = False
+
+# Check the broker for scheduled/delayed tasks less often when idle.
+# Trade-off: a delayed task may start up to ~5s late (fine for background work).
+CELERY_BROKER_TRANSPORT_OPTIONS = {"polling_interval": 5.0}
+
+# How long analytics events are kept before the retention purge deletes them.
+ANALYTICS_RETENTION_DAYS = 365
+
+# Periodic tasks (requires beat: `celery -A pathzi worker -B`)
+from celery.schedules import crontab  # noqa: E402
+
+CELERY_BEAT_SCHEDULE = {
+    "flush-analytics-queue": {
+        # Drains frontend-fired events from the analytics:queue Redis list
+        # into Postgres in batches (Lane B of the analytics module).
+        "task": "analytics.tasks.flush_activity_queue",
+        # 30s instead of 5s → 6x fewer idle Redis polls. Events still land
+        # within ~30s, which is well within "appears in seconds".
+        "schedule": 30.0,
+    },
+    "purge-old-analytics": {
+        # GDPR/storage hygiene: delete events older than ANALYTICS_RETENTION_DAYS.
+        "task": "analytics.tasks.purge_old_activity",
+        "schedule": crontab(hour=3, minute=0),  # daily at 03:00
+    },
+}
 # Application definition
 
 INSTALLED_APPS = [
@@ -104,11 +148,13 @@ INSTALLED_APPS = [
     "billing",
     "django_extensions",
     "geo_search",
-    "usage_limits"
+    "usage_limits",
+    "analytics",
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -147,6 +193,9 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "user": "10/min",
         "interaction": "10/second",
+        # Frontend analytics ingest: each request carries up to 200 events,
+        # so a modest request rate still allows high event throughput.
+        "analytics": "120/min",
     },
     # "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     # "PAGE_SIZE": 50,
