@@ -1,0 +1,637 @@
+{
+  "info": {
+    "_postman_id": "f1a7c0de-aaaa-4bbb-8ccc-pathzianalytics01",
+    "name": "Pathzi Analytics \u2014 Ingest API",
+    "description": "Analytics activity + consent ingest endpoints.\n\nSETUP:\n1. Set the collection variable `base_url` (e.g. http://localhost:8000 or https://pathzi.co.uk).\n2. Set `access_token` to a valid JWT access token (a staff/normal user).\n   The collection sends it as a Bearer token automatically.\n\nActivity events are queued and appear in reports within ~30 seconds. Consent is written immediately.\n\nAllowed activity_type (activity endpoint): career_viewed, career_swiped_right, career_swiped_left, route_viewed, route_clicked, provider_link_clicked, connect_button_clicked.\nLimits: 1-200 events/request, 50 metadata keys/event, 120 requests/min.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "access_token",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Activity",
+      "item": [
+        {
+          "name": "Activity \u2014 one event (minimal)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/analytics/activity/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "analytics",
+                "activity",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"activity_type\": \"career_viewed\",\n      \"career_id\": 2336\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Smallest valid request: a single event with only the required activity_type (career_id recommended). Returns 202 and queues 1 event."
+          },
+          "response": [
+            {
+              "name": "202 Accepted",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/analytics/activity/",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "analytics",
+                    "activity",
+                    ""
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"events\": [\n    {\n      \"activity_type\": \"career_viewed\",\n      \"career_id\": 2336\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Smallest valid request: a single event with only the required activity_type (career_id recommended). Returns 202 and queues 1 event."
+              },
+              "status": "Accepted",
+              "code": 202,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"status\": true,\n  \"queued\": 1\n}"
+            }
+          ]
+        },
+        {
+          "name": "Activity \u2014 one event (full body)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/analytics/activity/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "analytics",
+                "activity",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"activity_type\": \"route_clicked\",\n      \"career_id\": 2336,\n      \"route_id\": 4,\n      \"activity_value\": \"University\",\n      \"metadata\": {\n        \"source\": \"career_detail\",\n        \"position\": 2,\n        \"session_id\": \"abc123\"\n      }\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A single event using every field: activity_type, career_id, route_id, activity_value and metadata."
+          },
+          "response": [
+            {
+              "name": "202 Accepted",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/analytics/activity/",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "analytics",
+                    "activity",
+                    ""
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"events\": [\n    {\n      \"activity_type\": \"route_clicked\",\n      \"career_id\": 2336,\n      \"route_id\": 4,\n      \"activity_value\": \"University\",\n      \"metadata\": {\n        \"source\": \"career_detail\",\n        \"position\": 2,\n        \"session_id\": \"abc123\"\n      }\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "A single event using every field: activity_type, career_id, route_id, activity_value and metadata."
+              },
+              "status": "Accepted",
+              "code": 202,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"status\": true,\n  \"queued\": 1\n}"
+            }
+          ]
+        },
+        {
+          "name": "Activity \u2014 multiple events (batch)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/analytics/activity/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "analytics",
+                "activity",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"activity_type\": \"career_viewed\",\n      \"career_id\": 2336,\n      \"metadata\": {\n        \"source\": \"swipe_deck\",\n        \"position\": 4\n      }\n    },\n    {\n      \"activity_type\": \"career_swiped_right\",\n      \"career_id\": 2336,\n      \"metadata\": {\n        \"source\": \"swipe_deck\",\n        \"position\": 4\n      }\n    },\n    {\n      \"activity_type\": \"career_viewed\",\n      \"career_id\": 2421,\n      \"metadata\": {\n        \"source\": \"swipe_deck\",\n        \"position\": 5\n      }\n    },\n    {\n      \"activity_type\": \"career_swiped_left\",\n      \"career_id\": 2421,\n      \"metadata\": {\n        \"source\": \"swipe_deck\",\n        \"position\": 5\n      }\n    },\n    {\n      \"activity_type\": \"provider_link_clicked\",\n      \"career_id\": 2336,\n      \"activity_value\": \"UCAS\",\n      \"metadata\": {\n        \"provider_type\": \"university\"\n      }\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Batch of several events in one request (recommended \u2014 buffer on the client and flush in batches of up to 200)."
+          },
+          "response": [
+            {
+              "name": "202 Accepted",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/analytics/activity/",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "analytics",
+                    "activity",
+                    ""
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"events\": [\n    {\n      \"activity_type\": \"career_viewed\",\n      \"career_id\": 2336,\n      \"metadata\": {\n        \"source\": \"swipe_deck\",\n        \"position\": 4\n      }\n    },\n    {\n      \"activity_type\": \"career_swiped_right\",\n      \"career_id\": 2336,\n      \"metadata\": {\n        \"source\": \"swipe_deck\",\n        \"position\": 4\n      }\n    },\n    {\n      \"activity_type\": \"career_viewed\",\n      \"career_id\": 2421,\n      \"metadata\": {\n        \"source\": \"swipe_deck\",\n        \"position\": 5\n      }\n    },\n    {\n      \"activity_type\": \"career_swiped_left\",\n      \"career_id\": 2421,\n      \"metadata\": {\n        \"source\": \"swipe_deck\",\n        \"position\": 5\n      }\n    },\n    {\n      \"activity_type\": \"provider_link_clicked\",\n      \"career_id\": 2336,\n      \"activity_value\": \"UCAS\",\n      \"metadata\": {\n        \"provider_type\": \"university\"\n      }\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Batch of several events in one request (recommended \u2014 buffer on the client and flush in batches of up to 200)."
+              },
+              "status": "Accepted",
+              "code": 202,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"status\": true,\n  \"queued\": 5\n}"
+            }
+          ]
+        },
+        {
+          "name": "Activity \u2014 invalid: backend-only type (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/analytics/activity/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "analytics",
+                "activity",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"activity_type\": \"career_saved\",\n      \"career_id\": 2336\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "career_saved is recorded by the backend automatically and is rejected here."
+          },
+          "response": [
+            {
+              "name": "400 Bad Request",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/analytics/activity/",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "analytics",
+                    "activity",
+                    ""
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"events\": [\n    {\n      \"activity_type\": \"career_saved\",\n      \"career_id\": 2336\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "career_saved is recorded by the backend automatically and is rejected here."
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"events\": {\n    \"0\": {\n      \"activity_type\": [\n        \"Unsupported activity_type 'career_saved'. Allowed: ['career_swiped_left', 'career_swiped_right', 'career_viewed', 'connect_button_clicked', 'provider_link_clicked', 'route_clicked', 'route_viewed']\"\n      ]\n    }\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Activity \u2014 invalid: empty batch (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/analytics/activity/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "analytics",
+                "activity",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "An empty events list is rejected."
+          },
+          "response": [
+            {
+              "name": "400 Bad Request",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/analytics/activity/",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "analytics",
+                    "activity",
+                    ""
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"events\": []\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "An empty events list is rejected."
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"events\": [\n    \"events must contain at least 1 event.\"\n  ]\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Consent",
+      "item": [
+        {
+          "name": "Consent \u2014 minimal",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/analytics/consent/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "analytics",
+                "consent",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider_name\": \"City College\",\n  \"contact_email\": \"user@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Smallest valid consent: provider_name + contact_email."
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/analytics/consent/",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "analytics",
+                    "consent",
+                    ""
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"provider_name\": \"City College\",\n  \"contact_email\": \"user@example.com\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Smallest valid consent: provider_name + contact_email."
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"status\": true,\n  \"message\": \"Consent recorded.\",\n  \"lead_id\": 17,\n  \"consent_at\": \"2026-06-16T13:40:00Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Consent \u2014 full body",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/analytics/consent/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "analytics",
+                "consent",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"career_id\": 2336,\n  \"provider_name\": \"City College\",\n  \"provider_type\": \"college\",\n  \"contact_email\": \"user@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Consent with all fields including career_id and provider_type."
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/analytics/consent/",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "analytics",
+                    "consent",
+                    ""
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"career_id\": 2336,\n  \"provider_name\": \"City College\",\n  \"provider_type\": \"college\",\n  \"contact_email\": \"user@example.com\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Consent with all fields including career_id and provider_type."
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"status\": true,\n  \"message\": \"Consent recorded.\",\n  \"lead_id\": 18,\n  \"consent_at\": \"2026-06-16T13:41:00Z\"\n}"
+            },
+            {
+              "name": "400 Bad Request \u2014 bad email",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/analytics/consent/",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "analytics",
+                    "consent",
+                    ""
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"career_id\": 2336,\n  \"provider_name\": \"City College\",\n  \"provider_type\": \"college\",\n  \"contact_email\": \"user@example.com\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Consent with all fields including career_id and provider_type."
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"contact_email\": [\n    \"Enter a valid email address.\"\n  ]\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

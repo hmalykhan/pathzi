@@ -1,0 +1,933 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pathzi · Analytics Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<style>
+  :root{
+    --navy:#0f2e4f; --blue:#1f6fb2; --blue2:#3b8fd6; --bg:#f4f6fa;
+    --card:#ffffff; --ink:#1f2733; --muted:#7a8699; --line:#e5e9f0;
+    --green:#1e9e6a; --red:#d8504d; --amber:#e0a200;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+       background:var(--bg);color:var(--ink)}
+  header{background:linear-gradient(110deg,var(--navy),var(--blue));color:#fff;
+         padding:22px 28px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+  header h1{margin:0;font-size:22px;font-weight:700;letter-spacing:.3px}
+  header .sub{opacity:.85;font-size:13px;margin-top:2px}
+  .controls{display:flex;align-items:center;gap:10px}
+  .controls select,.controls button{
+    border:none;border-radius:8px;padding:9px 12px;font-size:13px;cursor:pointer}
+  .controls select{background:#ffffff;color:var(--ink)}
+  .controls button{background:rgba(255,255,255,.18);color:#fff;font-weight:600}
+  .controls button:hover{background:rgba(255,255,255,.30)}
+  main{padding:24px 28px;max-width:1280px;margin:0 auto}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:24px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 18px 16px;
+       box-shadow:0 1px 2px rgba(16,30,54,.04)}
+  .kpi .label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px}
+  .kpi .value{font-size:30px;font-weight:750;margin-top:6px;color:var(--navy)}
+  .kpi .value.small{font-size:24px}
+  .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;
+        box-shadow:0 1px 2px rgba(16,30,54,.04)}
+  .card h3{margin:0 0 14px;font-size:14px;font-weight:700;color:var(--navy);
+           display:flex;align-items:center;gap:8px}
+  .card h3 .pill{font-size:11px;font-weight:600;color:var(--blue);background:#eaf3fb;
+                 padding:2px 8px;border-radius:20px}
+  .col-12{grid-column:span 12}.col-8{grid-column:span 8}.col-6{grid-column:span 6}
+  .col-4{grid-column:span 4}
+  @media(max-width:900px){.col-8,.col-6,.col-4{grid-column:span 12}}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .bar{height:8px;border-radius:6px;background:var(--blue);display:inline-block;vertical-align:middle}
+  .muted{color:var(--muted)}
+  .empty{color:var(--muted);font-size:13px;padding:14px 4px;text-align:center}
+  canvas{max-height:280px}
+  /* growable bar-chart wrapper (prevents Chart.js infinite-resize growth) */
+  .chartbox{position:relative;width:100%;height:280px}
+  .chartbox canvas{max-height:none !important;height:100% !important}
+  .err{background:#fdecec;color:#b3261e;border:1px solid #f5c2c0;border-radius:10px;
+       padding:10px 14px;margin-bottom:18px;font-size:13px;display:none}
+  .ratio-pos{color:var(--green);font-weight:600}
+  .ratio-neg{color:var(--red);font-weight:600}
+  footer{color:var(--muted);font-size:12px;text-align:center;padding:24px}
+  /* clickable KPI */
+  .kpi.clickable{cursor:pointer;transition:transform .08s,box-shadow .12s}
+  .kpi.clickable:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(16,30,54,.12);border-color:var(--blue2)}
+  .kpi .hint{font-size:11px;color:var(--blue);margin-top:6px}
+  /* modal */
+  .modal-overlay{position:fixed;inset:0;background:rgba(15,30,54,.55);display:none;
+                 align-items:flex-start;justify-content:center;z-index:50;padding:40px 16px;overflow:auto}
+  .modal{background:#fff;border-radius:16px;width:100%;max-width:920px;box-shadow:0 24px 60px rgba(0,0,0,.3);
+         overflow:hidden}
+  .modal-head{display:flex;align-items:center;justify-content:space-between;
+              padding:16px 22px;background:linear-gradient(110deg,var(--navy),var(--blue));color:#fff}
+  .modal-head h2{margin:0;font-size:17px}
+  .modal-head button{background:rgba(255,255,255,.18);color:#fff;border:none;border-radius:8px;
+                     width:32px;height:32px;font-size:16px;cursor:pointer}
+  .modal-head button:hover{background:rgba(255,255,255,.32)}
+  .modal-body{padding:20px 22px;max-height:72vh;overflow:auto}
+  .toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:14px}
+  .toolbar .fld{display:flex;flex-direction:column;gap:3px}
+  .toolbar label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  .toolbar input{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px}
+  .toolbar input[type=search]{min-width:220px}
+  .toolbar button{border:none;border-radius:8px;padding:9px 14px;font-size:13px;font-weight:600;cursor:pointer}
+  .btn-primary{background:var(--blue);color:#fff}
+  .btn-ghost{background:#eef2f7;color:var(--ink)}
+  tr.row-link{cursor:pointer}
+  tr.row-link:hover td{background:#f3f8fd}
+  .badge{display:inline-block;background:#eaf3fb;color:var(--blue);border-radius:20px;
+         padding:2px 9px;font-size:12px;font-weight:600}
+  .back{background:none;border:none;color:var(--blue);cursor:pointer;font-size:13px;padding:0;margin-bottom:10px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 16px}
+  .chip{background:#f1f5fa;border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:13px}
+  .chip b{color:var(--navy)}
+  .ev-type{font-weight:600;color:var(--navy)}
+  /* per-career stat cards */
+  .statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin:6px 0 18px}
+  .stat{background:#f7f9fc;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .stat .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+  .stat .v{font-size:22px;font-weight:750;color:var(--navy);margin-top:4px}
+  .stat .v.g{color:var(--green)} .stat .v.r{color:var(--red)}
+  /* pager */
+  .pager{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:14px}
+  .pager .info{font-size:12px;color:var(--muted)}
+  .pager button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 12px;
+                font-size:13px;cursor:pointer;color:var(--ink)}
+  .pager button:hover:not(:disabled){background:#f3f8fd;border-color:var(--blue2)}
+  .pager button:disabled{opacity:.45;cursor:default}
+  /* view more */
+  .more-wrap{text-align:center;margin-top:12px;display:flex;gap:8px;justify-content:center}
+  .viewmore{background:#eef4fb;color:var(--blue);border:1px solid #d4e6f6;border-radius:8px;
+            padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer}
+  .viewmore:hover{background:#e0eefb;border-color:var(--blue2)}
+  .showless{background:#f1f3f6;color:var(--muted);border:1px solid var(--line);border-radius:8px;
+            padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer}
+  .showless:hover{background:#e7eaef;color:var(--ink)}
+  /* download PDF button (in each section header) */
+  .dlbtn{margin-left:auto;background:var(--navy);color:#fff;border:none;border-radius:6px;
+         padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;letter-spacing:.3px}
+  .dlbtn:hover{background:var(--blue)}
+  /* report sheet (scrollable full-data view) */
+  .sheet-table thead th{position:sticky;top:0;background:#fff;z-index:1;box-shadow:0 1px 0 var(--line)}
+  #sheet .modal-body{max-height:76vh}
+  #sheet .modal-head .sub{color:#dfe9f5;font-size:12px;margin-top:2px}
+  /* keep the sheet PDF button on one line (override the round ✕ button sizing) */
+  #sheet-pdf{width:auto;height:auto;white-space:nowrap;padding:7px 14px;font-size:12px;
+             font-weight:600;background:rgba(255,255,255,.18)}
+  #sheet-pdf:hover{background:rgba(255,255,255,.32)}
+  /* full-history chart inside the sheet */
+  #sheet-chart-wrap{position:relative;width:100%;height:62vh}
+  #sheet-chart{max-height:none !important;height:100% !important}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Pathzi Analytics</h1>
+    <div class="sub">Career engagement &amp; discovery insights</div>
+  </div>
+  <div class="controls">
+    <label class="muted" style="color:#fff;font-size:13px">Window</label>
+    <select id="days">
+      <option value="7">Last 7 days</option>
+      <option value="30" selected>Last 30 days</option>
+      <option value="90">Last 90 days</option>
+      <option value="365">Last 365 days</option>
+    </select>
+    <button id="refresh">↻ Refresh</button>
+  </div>
+</header>
+
+<main>
+  <div class="err" id="err"></div>
+
+  <!-- KPI CARDS -->
+  <div class="kpis" id="kpis">
+    <div class="kpi clickable" id="card_users"><div class="label">Total Users</div><div class="value" id="k_users">–</div><div class="hint">▸ click to view users</div></div>
+    <div class="kpi clickable" id="card_careers"><div class="label">Total Careers</div><div class="value" id="k_careers">–</div><div class="hint">▸ click to view careers</div></div>
+    <div class="kpi clickable" id="card_views"><div class="label">Career Views</div><div class="value" id="k_views">–</div><div class="hint">▸ view list</div></div>
+    <div class="kpi clickable" id="card_swipes"><div class="label">Total Swipes</div><div class="value" id="k_swipes">–</div><div class="hint">▸ view list</div></div>
+    <div class="kpi clickable" id="card_right"><div class="label">Right Swipes</div><div class="value small" id="k_right" style="color:var(--green)">–</div><div class="hint">▸ view list</div></div>
+    <div class="kpi clickable" id="card_left"><div class="label">Left Swipes</div><div class="value small" id="k_left" style="color:var(--red)">–</div><div class="hint">▸ view list</div></div>
+    <div class="kpi clickable" id="card_saves"><div class="label">Saves</div><div class="value small" id="k_saves">–</div><div class="hint">▸ view list</div></div>
+  </div>
+
+  <div class="grid">
+    <!-- activity over time -->
+    <div class="card col-8">
+      <h3>Activity by Date <span class="pill" id="ts_label">all events</span><button class="dlbtn" id="dl_ts">⬇ PDF</button></h3>
+      <canvas id="chart_ts"></canvas>
+      <div class="more-wrap"><button class="viewmore" id="view_ts">View full chart ▸</button></div>
+    </div>
+    <!-- like vs skip donut -->
+    <div class="card col-4">
+      <h3>Right vs Left Swipes<button class="dlbtn" id="dl_swipe">⬇ PDF</button></h3>
+      <canvas id="chart_swipe"></canvas>
+    </div>
+
+    <!-- most viewed -->
+    <div class="card col-6">
+      <h3>Most Viewed Careers<button class="dlbtn" id="dl_viewed">⬇ PDF</button></h3>
+      <div class="chartbox" id="box_viewed"><canvas id="chart_viewed"></canvas></div>
+      <div class="more-wrap"><button class="viewmore" id="view_viewed">View all ▸</button></div>
+    </div>
+    <!-- most saved -->
+    <div class="card col-6">
+      <h3>Most Saved Careers<button class="dlbtn" id="dl_saved">⬇ PDF</button></h3>
+      <div class="chartbox" id="box_saved"><canvas id="chart_saved"></canvas></div>
+      <div class="more-wrap"><button class="viewmore" id="view_saved">View all ▸</button></div>
+    </div>
+
+    <!-- routes -->
+    <div class="card col-4">
+      <h3>Top Education Routes<button class="dlbtn" id="dl_routes">⬇ PDF</button></h3>
+      <table id="tbl_routes"><thead><tr><th>Route ID</th><th class="num">Clicks</th></tr></thead><tbody></tbody></table>
+      <div class="more-wrap"><button class="viewmore" id="view_routes">View all ▸</button></div>
+    </div>
+    <!-- providers -->
+    <div class="card col-4">
+      <h3>Top Provider Links<button class="dlbtn" id="dl_providers">⬇ PDF</button></h3>
+      <table id="tbl_providers"><thead><tr><th>Provider</th><th class="num">Clicks</th></tr></thead><tbody></tbody></table>
+      <div class="more-wrap"><button class="viewmore" id="view_providers">View all ▸</button></div>
+    </div>
+    <!-- consent leads -->
+    <div class="card col-4">
+      <h3>Careers Generating Leads<button class="dlbtn" id="dl_leads">⬇ PDF</button></h3>
+      <table id="tbl_leads"><thead><tr><th>Career</th><th class="num">Leads</th></tr></thead><tbody></tbody></table>
+      <div class="more-wrap"><button class="viewmore" id="view_leads">View all ▸</button></div>
+    </div>
+
+    <!-- like vs skip table -->
+    <div class="card col-6">
+      <h3>Like vs Skip (per career)<button class="dlbtn" id="dl_ratio">⬇ PDF</button></h3>
+      <table id="tbl_ratio"><thead><tr><th>Career</th><th class="num">Right</th><th class="num">Left</th><th class="num">Like %</th></tr></thead><tbody></tbody></table>
+      <div class="more-wrap"><button class="viewmore" id="view_ratio">View all ▸</button></div>
+    </div>
+    <!-- popular by location -->
+    <div class="card col-6">
+      <h3>Popular Careers by Location<button class="dlbtn" id="dl_loc">⬇ PDF</button></h3>
+      <table id="tbl_location"><thead><tr><th>City</th><th>Top Career</th><th class="num">Views</th></tr></thead><tbody></tbody></table>
+      <div class="more-wrap"><button class="viewmore" id="view_loc">View all ▸</button></div>
+    </div>
+  </div>
+</main>
+
+<!-- ===================== USERS MODAL ===================== -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="modal-title">All Users</h2>
+      <button id="modal-close" title="Close">✕</button>
+    </div>
+    <div class="modal-body">
+
+      <!-- VIEW 1: users list -->
+      <div id="view-users">
+        <div class="toolbar">
+          <div class="fld">
+            <label>Search</label>
+            <input type="search" id="u_search" placeholder="username or email…">
+          </div>
+          <div class="fld">
+            <label>Active from</label>
+            <input type="date" id="u_from">
+          </div>
+          <div class="fld">
+            <label>Active to</label>
+            <input type="date" id="u_to">
+          </div>
+          <button class="btn-primary" id="u_apply">Apply</button>
+          <button class="btn-ghost" id="u_clear">Clear</button>
+        </div>
+        <table id="tbl_users">
+          <thead><tr><th>User</th><th>Email</th><th class="num">Events</th><th>Last active</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="pager"><span class="info" id="u_info"></span>
+          <button id="u_prev" disabled>‹ Prev</button><button id="u_next" disabled>Next ›</button></div>
+      </div>
+
+      <!-- VIEW 2: single user detail -->
+      <div id="view-detail" style="display:none">
+        <button class="back" id="detail-back">← Back to all users</button>
+        <h3 id="d_name" style="margin:4px 0 2px;color:var(--navy)">User</h3>
+        <div class="muted" id="d_email" style="font-size:13px;margin-bottom:12px"></div>
+        <div class="toolbar">
+          <div class="fld">
+            <label>From</label>
+            <input type="date" id="d_from">
+          </div>
+          <div class="fld">
+            <label>To</label>
+            <input type="date" id="d_to">
+          </div>
+          <button class="btn-primary" id="d_apply">Apply</button>
+          <button class="btn-ghost" id="d_clear">Clear</button>
+        </div>
+        <div class="chips" id="d_chips"></div>
+        <table id="tbl_timeline">
+          <thead><tr><th>When</th><th>Activity</th><th>Career</th><th>Route</th><th>Value</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ===================== CAREERS MODAL ===================== -->
+<div class="modal-overlay" id="cmodal">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="cmodal-title">All Careers</h2>
+      <button id="cmodal-close" title="Close">✕</button>
+    </div>
+    <div class="modal-body">
+
+      <!-- VIEW 1: careers list -->
+      <div id="view-careers">
+        <div class="toolbar">
+          <div class="fld">
+            <label>Search</label>
+            <input type="search" id="c_search" placeholder="career name or category…">
+          </div>
+          <div class="fld">
+            <label>Active from</label>
+            <input type="date" id="c_from">
+          </div>
+          <div class="fld">
+            <label>Active to</label>
+            <input type="date" id="c_to">
+          </div>
+          <button class="btn-primary" id="c_apply">Apply</button>
+          <button class="btn-ghost" id="c_clear">Clear</button>
+        </div>
+        <table id="tbl_careers">
+          <thead><tr><th>Career</th><th>Category</th><th class="num">Events</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="pager"><span class="info" id="c_info"></span>
+          <button id="c_prev" disabled>‹ Prev</button><button id="c_next" disabled>Next ›</button></div>
+      </div>
+
+      <!-- VIEW 2: single career detail -->
+      <div id="view-cdetail" style="display:none">
+        <button class="back" id="cdetail-back">← Back to all careers</button>
+        <h3 id="cd_name" style="margin:4px 0 2px;color:var(--navy)">Career</h3>
+        <div class="muted" id="cd_cat" style="font-size:13px;margin-bottom:12px"></div>
+        <div class="toolbar">
+          <div class="fld"><label>From</label><input type="date" id="cd_from"></div>
+          <div class="fld"><label>To</label><input type="date" id="cd_to"></div>
+          <button class="btn-primary" id="cd_apply">Apply</button>
+          <button class="btn-ghost" id="cd_clear">Clear</button>
+        </div>
+        <div class="statgrid" id="cd_stats"></div>
+        <h4 style="margin:6px 0 8px;color:var(--navy);font-size:13px">Education routes clicked</h4>
+        <table id="tbl_croutes">
+          <thead><tr><th>Route ID</th><th class="num">Clicks</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ===================== REPORT SHEET (full scrollable data) ===================== -->
+<div class="modal-overlay" id="sheet">
+  <div class="modal">
+    <div class="modal-head">
+      <div>
+        <h2 id="sheet-title">Report</h2>
+        <div class="sub" id="sheet-sub"></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="dlbtn" id="sheet-pdf" style="margin-left:0">⬇ PDF</button>
+        <button id="sheet-close" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div id="sheet-chart-wrap" style="display:none"><canvas id="sheet-chart"></canvas></div>
+      <table id="sheet-table" class="sheet-table"><thead></thead><tbody></tbody></table>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== EVENTS MODAL ===================== -->
+<div class="modal-overlay" id="emodal">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="emodal-title">Events</h2>
+      <button id="emodal-close" title="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="toolbar">
+        <div class="fld">
+          <label>Search</label>
+          <input type="search" id="e_search" placeholder="user, email or career…">
+        </div>
+        <div class="fld"><label>From</label><input type="date" id="e_from"></div>
+        <div class="fld"><label>To</label><input type="date" id="e_to"></div>
+        <button class="btn-primary" id="e_apply">Apply</button>
+        <button class="btn-ghost" id="e_clear">Clear</button>
+      </div>
+      <table id="tbl_events">
+        <thead><tr><th>When</th><th>Action</th><th>Career</th><th>User</th><th>Email</th><th>Details</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="pager"><span class="info" id="e_info"></span>
+        <button id="e_prev" disabled>‹ Prev</button><button id="e_next" disabled>Next ›</button></div>
+    </div>
+  </div>
+</div>
+
+<footer>Pathzi · Analytics Dashboard — staff only</footer>
+
+<script>
+const BASE = "/analytics/admin";
+const $ = (id)=>document.getElementById(id);
+let charts = {};
+
+function showErr(msg){ const e=$("err"); e.textContent=msg; e.style.display="block"; }
+function hideErr(){ $("err").style.display="none"; }
+function fmt(n){ return (n==null)?"–":Number(n).toLocaleString(); }
+
+async function getJSON(path){
+  const r = await fetch(BASE+path, {headers:{"Accept":"application/json"}, credentials:"same-origin"});
+  if(r.status===403){ throw new Error("Access denied — you must be logged in as a staff user."); }
+  if(!r.ok){ throw new Error("Request failed ("+r.status+") for "+path); }
+  return r.json();
+}
+
+function destroy(name){ if(charts[name]){ charts[name].destroy(); delete charts[name]; } }
+
+function barChart(canvasId, name, labels, data, color){
+  destroy(name);
+  const cv = $(canvasId);
+  // Grow the fixed-height WRAPPER (not the canvas) so Chart.js fills it
+  // without entering its infinite-resize growth loop.
+  const box = cv.parentElement;
+  if(box && box.classList.contains("chartbox")){
+    box.style.height = Math.max(240, labels.length * 26) + "px";
+  }
+  charts[name] = new Chart(cv, {
+    type:"bar",
+    data:{labels, datasets:[{data, backgroundColor:color, borderRadius:6, maxBarThickness:34}]},
+    options:{indexAxis:"y", plugins:{legend:{display:false}},
+      scales:{x:{beginAtZero:true,ticks:{precision:0}}}, responsive:true, maintainAspectRatio:false}
+  });
+}
+
+function rowsTable(tblId, rows, cells, emptyMsg){
+  const tb = $(tblId).querySelector("tbody"); tb.innerHTML="";
+  if(!rows || !rows.length){
+    const tr=document.createElement("tr");
+    tr.innerHTML='<td colspan="9" class="empty">'+(emptyMsg||"No data yet")+'</td>';
+    tb.appendChild(tr); return;
+  }
+  rows.forEach(r=>{ const tr=document.createElement("tr"); tr.innerHTML=cells(r); tb.appendChild(tr); });
+}
+
+async function load(){
+  hideErr();
+  const days = $("days").value;
+  try{
+    // KPIs
+    const ov = await getJSON(`/overview/?days=${days}`);
+    $("k_users").textContent = fmt(ov.total_users);
+    $("k_careers").textContent = fmt(ov.total_careers);
+    $("k_views").textContent = fmt(ov.total_career_views);
+    $("k_swipes").textContent = fmt(ov.total_swipes);
+    $("k_right").textContent = fmt(ov.total_right_swipes);
+    $("k_left").textContent = fmt(ov.total_left_swipes);
+    $("k_saves").textContent = fmt(ov.total_saves);
+
+    // right vs left donut
+    destroy("swipe");
+    charts.swipe = new Chart($("chart_swipe"), {
+      type:"doughnut",
+      data:{labels:["Right (like)","Left (skip)"],
+            datasets:[{data:[ov.total_right_swipes, ov.total_left_swipes],
+                       backgroundColor:["#1e9e6a","#d8504d"]}]},
+      options:{plugins:{legend:{position:"bottom"}}, cutout:"62%", responsive:true, maintainAspectRatio:false}
+    });
+
+    // timeseries
+    const ts = await getJSON(`/timeseries/?days=${days}`);
+    destroy("ts");
+    charts.ts = new Chart($("chart_ts"), {
+      type:"line",
+      data:{labels: ts.results.map(r=>r.date),
+            datasets:[{data: ts.results.map(r=>r.count), label:"events",
+              borderColor:"#1f6fb2", backgroundColor:"rgba(31,111,178,.12)",
+              fill:true, tension:.3, pointRadius:2}]},
+      options:{plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true,ticks:{precision:0}}},
+               responsive:true, maintainAspectRatio:false}
+    });
+
+    // ranked sections — paginated with "View more" (reset to first page on reload)
+    await loadTopCareers("viewed", "career_viewed", chViewed, "chart_viewed", "#1f6fb2", true);
+    await loadTopCareers("saved", "career_saved", chSaved, "chart_saved", "#3b8fd6", true);
+    await loadTable("routes", "/routes/", "tbl_routes", rowRoutes, 2, true);
+    await loadTable("providers", "/providers/", "tbl_providers", rowProviders, 2, true);
+    await loadTable("leads", "/consent-leads/", "tbl_leads", rowLeads, 2, true);
+    await loadTable("ratio", "/like-vs-skip/", "tbl_ratio", rowRatio, 4, true);
+    await loadTable("loc", "/by-location/", "tbl_location", rowLoc, 3, true);
+
+  }catch(e){ showErr(e.message); }
+}
+
+/* ===================== RANKED SECTIONS: View more ===================== */
+const STEP = 10;
+const secOff = {viewed:0, saved:0, routes:0, providers:0, leads:0, ratio:0, loc:0};
+let chViewed = {labels:[], data:[]}, chSaved = {labels:[], data:[]};
+
+function toggleMore(key, loaded, total){
+  const more = $("more_"+key), less = $("less_"+key);
+  if(more){
+    if(loaded >= total){ more.style.display="none"; }
+    else { more.style.display="inline-block"; more.textContent = `View more (${loaded} of ${fmt(total)})`; }
+  }
+  // "Show less" appears once expanded beyond the first page
+  if(less){ less.style.display = (loaded > STEP) ? "inline-block" : "none"; }
+}
+
+async function loadTopCareers(key, activity, store, canvasId, color, reset){
+  if(reset){ secOff[key]=0; store.labels=[]; store.data=[]; }
+  const r = await getJSON(`/top/${activity}/?offset=${secOff[key]}&limit=${STEP}`);
+  (r.results||[]).forEach(x=>{ store.labels.push(x.jobname||("#"+x.career_id)); store.data.push(x.count); });
+  secOff[key] += (r.results||[]).length;
+  barChart(canvasId, key, store.labels, store.data, color);
+  toggleMore(key, secOff[key], r.total||0);
+}
+
+async function loadTable(key, url, tblId, rowHtml, cols, reset){
+  if(reset) secOff[key]=0;
+  const tb = $(tblId).querySelector("tbody");
+  if(reset) tb.innerHTML="";
+  const r = await getJSON(`${url}?offset=${secOff[key]}&limit=${STEP}`);
+  const rows = r.results||[];
+  if(reset && !rows.length){ tb.innerHTML=`<tr><td colspan="${cols}" class="empty">No data yet</td></tr>`; }
+  rows.forEach(x=>{ const tr=document.createElement("tr"); tr.innerHTML=rowHtml(x); tb.appendChild(tr); });
+  secOff[key] += rows.length;
+  toggleMore(key, secOff[key], r.total||0);
+}
+
+const rowRoutes = r=>`<td>Route ${r.route_id}</td><td class="num">${fmt(r.count)}</td>`;
+const rowProviders = r=>`<td>${r.provider}</td><td class="num">${fmt(r.count)}</td>`;
+const rowLeads = r=>`<td>${r.jobname||("#"+r.career_id)}</td><td class="num">${fmt(r.leads)}</td>`;
+const rowRatio = r=>{
+  const pct = r.like_ratio==null ? "–" : Math.round(r.like_ratio*100)+"%";
+  const cls = r.like_ratio==null ? "" : (r.like_ratio>=0.5?"ratio-pos":"ratio-neg");
+  return `<td>${r.jobname||("#"+r.career_id)}</td><td class="num">${fmt(r.right)}</td>`+
+         `<td class="num">${fmt(r.left)}</td><td class="num ${cls}">${pct}</td>`;
+};
+const rowLoc = r=>`<td>${r.city}</td><td>${r.jobname||"–"}</td><td class="num">${fmt(r.count)}</td>`;
+
+// "View all" opens the full-data scrollable sheet (works for any row count)
+["ts","viewed","saved","routes","providers","leads","ratio","loc"].forEach(k=>{
+  const b = $("view_"+k);
+  if(b) b.addEventListener("click", ()=> openSheet(k));
+});
+
+/* ===================== PDF DOWNLOAD (per section) ===================== */
+function renderPdf(title, head, body, subtitle){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  doc.setFontSize(16); doc.setTextColor(15,46,79);
+  doc.text("Pathzi Analytics", 14, 16);
+  doc.setFontSize(12); doc.setTextColor(31,111,178);
+  doc.text(title, 14, 24);
+  doc.setFontSize(9); doc.setTextColor(120,120,120);
+  doc.text((subtitle ? subtitle+"  ·  " : "") + "Generated " + new Date().toLocaleString(), 14, 30);
+  doc.autoTable({
+    head:[head], body, startY:35,
+    styles:{fontSize:9, cellPadding:3},
+    headStyles:{fillColor:[31,111,178], textColor:255},
+    alternateRowStyles:{fillColor:[244,246,250]},
+  });
+  doc.save("pathzi_" + title.replace(/[^a-z0-9]+/gi,"_").toLowerCase() + ".pdf");
+}
+
+// Single source of truth for each section's title/columns/rows (fetches ALL rows).
+async function getSectionData(key){
+  const days = $("days").value;
+  const ALL = "offset=0&limit=100000";
+  switch(key){
+    case "ts": {
+      const d = await getJSON(`/timeseries/?days=${days}`);
+      return {title:"Activity by Date", sub:`Last ${days} days`, head:["Date","Events"],
+              rows:d.results.map(r=>[r.date, fmt(r.count)])};
+    }
+    case "swipe": {
+      const o = await getJSON(`/overview/?days=${days}`);
+      return {title:"Right vs Left Swipes", sub:`Last ${days} days`, head:["Action","Count"],
+              rows:[["Right swipes (likes)", fmt(o.total_right_swipes)],
+                    ["Left swipes (skips)", fmt(o.total_left_swipes)],
+                    ["Total swipes", fmt(o.total_swipes)]]};
+    }
+    case "viewed": {
+      const d = await getJSON(`/top/career_viewed/?${ALL}`);
+      return {title:"Most Viewed Careers", sub:`${d.total} careers`, head:["#","Career","Views"],
+              rows:d.results.map((r,i)=>[i+1, r.jobname||("#"+r.career_id), fmt(r.count)])};
+    }
+    case "saved": {
+      const d = await getJSON(`/top/career_saved/?${ALL}`);
+      return {title:"Most Saved Careers", sub:`${d.total} careers`, head:["#","Career","Saves"],
+              rows:d.results.map((r,i)=>[i+1, r.jobname||("#"+r.career_id), fmt(r.count)])};
+    }
+    case "routes": {
+      const d = await getJSON(`/routes/?${ALL}`);
+      return {title:"Top Education Routes", sub:`${d.total} routes`, head:["Route ID","Clicks"],
+              rows:d.results.map(r=>["Route "+r.route_id, fmt(r.count)])};
+    }
+    case "providers": {
+      const d = await getJSON(`/providers/?${ALL}`);
+      return {title:"Top Provider Links", sub:`${d.total} providers`, head:["Provider","Clicks"],
+              rows:d.results.map(r=>[r.provider, fmt(r.count)])};
+    }
+    case "leads": {
+      const d = await getJSON(`/consent-leads/?${ALL}`);
+      return {title:"Careers Generating Leads", sub:`${d.total} careers`, head:["Career","Leads"],
+              rows:d.results.map(r=>[r.jobname||("#"+r.career_id), fmt(r.leads)])};
+    }
+    case "ratio": {
+      const d = await getJSON(`/like-vs-skip/?${ALL}`);
+      return {title:"Like vs Skip per Career", sub:`${d.total} careers`,
+              head:["Career","Right","Left","Like %"],
+              rows:d.results.map(r=>[r.jobname||("#"+r.career_id), fmt(r.right), fmt(r.left),
+                r.like_ratio==null?"–":Math.round(r.like_ratio*100)+"%"])};
+    }
+    case "loc": {
+      const d = await getJSON(`/by-location/?${ALL}`);
+      return {title:"Popular Careers by Location", sub:`${d.total} cities`,
+              head:["City","Top Career","Views"],
+              rows:d.results.map(r=>[r.city, r.jobname||"–", fmt(r.count)])};
+    }
+  }
+}
+
+let sheetKey = null, sheetChart = null;
+
+async function openSheetChart(key){
+  // Full-history line chart (Activity by Date), all dates, in the sheet.
+  $("sheet-chart-wrap").style.display = "block";
+  $("sheet-table").style.display = "none";
+  $("sheet-title").textContent = "Loading…"; $("sheet-sub").textContent = "";
+  $("sheet").style.display = "flex";
+  const d = await getJSON(`/timeseries/?days=3650`);
+  $("sheet-title").textContent = "Activity by Date — full history";
+  $("sheet-sub").textContent = `${d.results.length} days`;
+  if(sheetChart){ sheetChart.destroy(); sheetChart = null; }
+  sheetChart = new Chart($("sheet-chart"), {
+    type:"line",
+    data:{labels:d.results.map(r=>r.date),
+          datasets:[{data:d.results.map(r=>r.count), label:"events",
+            borderColor:"#1f6fb2", backgroundColor:"rgba(31,111,178,.12)",
+            fill:true, tension:.3, pointRadius:1}]},
+    options:{plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true,ticks:{precision:0}}},
+             responsive:true, maintainAspectRatio:false}
+  });
+}
+
+async function openSheet(key){
+  try{
+    sheetKey = key;
+    if(key === "ts"){ await openSheetChart(key); return; }
+    // table mode
+    $("sheet-chart-wrap").style.display = "none";
+    $("sheet-table").style.display = "";
+    $("sheet-title").textContent = "Loading…"; $("sheet-sub").textContent = "";
+    $("sheet-table").querySelector("thead").innerHTML = "";
+    $("sheet-table").querySelector("tbody").innerHTML = "";
+    $("sheet").style.display = "flex";
+    const {title, sub, head, rows} = await getSectionData(key);
+    $("sheet-title").textContent = title;
+    $("sheet-sub").textContent = sub || `${rows.length} rows`;
+    $("sheet-table").querySelector("thead").innerHTML =
+      "<tr>" + head.map((h,i)=>`<th${i>0?' class="num"':''}>${h}</th>`).join("") + "</tr>";
+    $("sheet-table").querySelector("tbody").innerHTML = rows.length
+      ? rows.map(r=>"<tr>"+r.map((c,i)=>`<td${i>0?' class="num"':''}>${c}</td>`).join("")+"</tr>").join("")
+      : `<tr><td colspan="${head.length}" class="empty">No data yet</td></tr>`;
+  }catch(e){ showErr("Open failed: "+e.message); $("sheet").style.display="none"; }
+}
+
+async function downloadReport(key){
+  try{
+    const {title, sub, head, rows} = await getSectionData(key);
+    renderPdf(title, head, rows, sub);
+  }catch(e){ showErr("PDF download failed: "+e.message); }
+}
+
+// header PDF buttons + sheet controls
+["ts","swipe","viewed","saved","routes","providers","leads","ratio","loc"].forEach(k=>{
+  const b = $("dl_"+k);
+  if(b) b.addEventListener("click", ()=> downloadReport(k));
+});
+$("sheet-close").addEventListener("click", ()=> $("sheet").style.display="none");
+$("sheet").addEventListener("click", (e)=>{ if(e.target===$("sheet")) $("sheet").style.display="none"; });
+$("sheet-pdf").addEventListener("click", ()=>{ if(sheetKey) downloadReport(sheetKey); });
+document.addEventListener("keydown", (e)=>{ if(e.key==="Escape") $("sheet").style.display="none"; });
+
+$("refresh").addEventListener("click", load);
+$("days").addEventListener("change", load);
+load();
+
+/* ===================== PAGINATION HELPERS ===================== */
+const PAGE = 50;
+let usersOffset = 0, careersOffset = 0, eventsOffset = 0;
+function renderPager(prefix, offset, total, count){
+  const info=$(prefix+"_info"), prev=$(prefix+"_prev"), next=$(prefix+"_next");
+  if(!total){ info.textContent="No results"; prev.disabled=true; next.disabled=true; return; }
+  info.textContent = `Showing ${offset+1}–${offset+count} of ${fmt(total)}`;
+  prev.disabled = offset<=0;
+  next.disabled = (offset+count)>=total;
+}
+
+/* ===================== USERS DRILL-DOWN ===================== */
+const modal = $("modal");
+let currentUserId = null, currentUserName = "";
+
+function openModal(){ modal.style.display="flex"; }
+function closeModal(){ modal.style.display="none"; }
+function showUsersView(){ $("view-users").style.display="block"; $("view-detail").style.display="none"; $("modal-title").textContent="All Users"; }
+function showDetailView(){ $("view-users").style.display="none"; $("view-detail").style.display="block"; $("modal-title").textContent="User Activity"; }
+function dateOnly(iso){ return iso ? iso.slice(0,10) : "–"; }
+function dt(iso){ if(!iso) return "–"; const d=new Date(iso); return d.toLocaleString(); }
+
+async function loadUsers(){
+  const tb = $("tbl_users").querySelector("tbody");
+  tb.innerHTML = '<tr><td colspan="4" class="empty">Loading…</td></tr>';
+  const params = new URLSearchParams();
+  if($("u_search").value.trim()) params.set("q", $("u_search").value.trim());
+  if($("u_from").value) params.set("date_from", $("u_from").value);
+  if($("u_to").value) params.set("date_to", $("u_to").value);
+  params.set("offset", usersOffset); params.set("limit", PAGE);
+  try{
+    const data = await getJSON(`/users/?${params.toString()}`);
+    const rows = data.results || [];
+    renderPager("u", usersOffset, data.total||0, rows.length);
+    if(!rows.length){ tb.innerHTML='<tr><td colspan="4" class="empty">No users found</td></tr>'; return; }
+    tb.innerHTML="";
+    rows.forEach(u=>{
+      const tr=document.createElement("tr");
+      tr.className="row-link";
+      tr.innerHTML = `<td><b>${u.username||("#"+u.id)}</b></td><td class="muted">${u.email||"–"}</td>`+
+                     `<td class="num"><span class="badge">${fmt(u.event_count)}</span></td>`+
+                     `<td class="muted">${dt(u.last_active)}</td>`;
+      tr.addEventListener("click", ()=> openUser(u.id, u.username||("#"+u.id), u.email||""));
+      tb.appendChild(tr);
+    });
+  }catch(e){ tb.innerHTML=`<tr><td colspan="4" class="empty">${e.message}</td></tr>`; }
+}
+
+async function loadUserDetail(){
+  const tb = $("tbl_timeline").querySelector("tbody");
+  tb.innerHTML = '<tr><td colspan="5" class="empty">Loading…</td></tr>';
+  const params = new URLSearchParams();
+  if($("d_from").value) params.set("date_from", $("d_from").value);
+  if($("d_to").value) params.set("date_to", $("d_to").value);
+  try{
+    const data = await getJSON(`/user/${currentUserId}/?${params.toString()}`);
+    $("d_name").textContent = data.username || ("User #"+currentUserId);
+    $("d_email").textContent = data.email || "";
+    // counts chips
+    const chips = $("d_chips"); chips.innerHTML="";
+    const total=document.createElement("span"); total.className="chip";
+    total.innerHTML=`Total events: <b>${fmt(data.total_events)}</b>`; chips.appendChild(total);
+    Object.entries(data.counts||{}).sort((a,b)=>b[1]-a[1]).forEach(([k,v])=>{
+      const c=document.createElement("span"); c.className="chip";
+      c.innerHTML=`${k.replace(/_/g,' ')}: <b>${fmt(v)}</b>`; chips.appendChild(c);
+    });
+    // timeline
+    const tl = data.timeline || [];
+    if(!tl.length){ tb.innerHTML='<tr><td colspan="5" class="empty">No activity in this range</td></tr>'; return; }
+    tb.innerHTML="";
+    tl.forEach(a=>{
+      const tr=document.createElement("tr");
+      tr.innerHTML = `<td class="muted">${dt(a.created_at)}</td>`+
+                     `<td class="ev-type">${a.activity_type.replace(/_/g,' ')}</td>`+
+                     `<td>${a.career||"–"}</td>`+
+                     `<td>${a.route_id!=null?("Route "+a.route_id):"–"}</td>`+
+                     `<td class="muted">${a.activity_value||"–"}</td>`;
+      tb.appendChild(tr);
+    });
+  }catch(e){ tb.innerHTML=`<tr><td colspan="5" class="empty">${e.message}</td></tr>`; }
+}
+
+function openUser(id, name, email){
+  currentUserId=id; currentUserName=name;
+  showDetailView();
+  $("d_from").value=""; $("d_to").value="";
+  loadUserDetail();
+}
+
+// wire up
+$("card_users").addEventListener("click", ()=>{ usersOffset=0; openModal(); showUsersView(); loadUsers(); });
+$("modal-close").addEventListener("click", closeModal);
+modal.addEventListener("click", (e)=>{ if(e.target===modal) closeModal(); });
+$("u_apply").addEventListener("click", ()=>{ usersOffset=0; loadUsers(); });
+$("u_clear").addEventListener("click", ()=>{ $("u_search").value=""; $("u_from").value=""; $("u_to").value=""; usersOffset=0; loadUsers(); });
+$("u_search").addEventListener("keydown", (e)=>{ if(e.key==="Enter"){ usersOffset=0; loadUsers(); } });
+$("u_prev").addEventListener("click", ()=>{ usersOffset=Math.max(0,usersOffset-PAGE); loadUsers(); });
+$("u_next").addEventListener("click", ()=>{ usersOffset+=PAGE; loadUsers(); });
+$("detail-back").addEventListener("click", ()=>{ showUsersView(); });
+$("d_apply").addEventListener("click", loadUserDetail);
+$("d_clear").addEventListener("click", ()=>{ $("d_from").value=""; $("d_to").value=""; loadUserDetail(); });
+document.addEventListener("keydown", (e)=>{ if(e.key==="Escape") closeModal(); });
+
+/* ===================== CAREERS DRILL-DOWN ===================== */
+const cmodal = $("cmodal");
+let currentCareerId = null;
+
+function openCModal(){ cmodal.style.display="flex"; }
+function closeCModal(){ cmodal.style.display="none"; }
+function showCareersView(){ $("view-careers").style.display="block"; $("view-cdetail").style.display="none"; $("cmodal-title").textContent="All Careers"; }
+function showCDetailView(){ $("view-careers").style.display="none"; $("view-cdetail").style.display="block"; $("cmodal-title").textContent="Career Details"; }
+
+async function loadCareers(){
+  const tb = $("tbl_careers").querySelector("tbody");
+  tb.innerHTML = '<tr><td colspan="3" class="empty">Loading…</td></tr>';
+  const params = new URLSearchParams();
+  if($("c_search").value.trim()) params.set("q", $("c_search").value.trim());
+  if($("c_from").value) params.set("date_from", $("c_from").value);
+  if($("c_to").value) params.set("date_to", $("c_to").value);
+  params.set("offset", careersOffset); params.set("limit", PAGE);
+  try{
+    const data = await getJSON(`/careers/?${params.toString()}`);
+    const rows = data.results || [];
+    renderPager("c", careersOffset, data.total||0, rows.length);
+    if(!rows.length){ tb.innerHTML='<tr><td colspan="3" class="empty">No careers found</td></tr>'; return; }
+    tb.innerHTML="";
+    rows.forEach(c=>{
+      const tr=document.createElement("tr"); tr.className="row-link";
+      const cat = [c.career_type, c.sub_type].filter(Boolean).join(" · ") || "–";
+      tr.innerHTML = `<td><b>${c.jobname||("#"+c.id)}</b></td><td class="muted">${cat}</td>`+
+                     `<td class="num"><span class="badge">${fmt(c.event_count)}</span></td>`;
+      tr.addEventListener("click", ()=> openCareer(c.id, c.jobname||("#"+c.id), cat));
+      tb.appendChild(tr);
+    });
+  }catch(e){ tb.innerHTML=`<tr><td colspan="3" class="empty">${e.message}</td></tr>`; }
+}
+
+async function loadCareerDetail(){
+  const sg = $("cd_stats"); sg.innerHTML='<div class="empty">Loading…</div>';
+  const rb = $("tbl_croutes").querySelector("tbody"); rb.innerHTML="";
+  const params = new URLSearchParams();
+  if($("cd_from").value) params.set("date_from", $("cd_from").value);
+  if($("cd_to").value) params.set("date_to", $("cd_to").value);
+  try{
+    const data = await getJSON(`/career/${currentCareerId}/?${params.toString()}`);
+    $("cd_name").textContent = data.jobname || ("Career #"+currentCareerId);
+    const s = data.stats || {};
+    const cards = [
+      ["Views", s.views, ""], ["Right Swipes", s.right_swipes, "g"],
+      ["Left Swipes", s.left_swipes, "r"], ["Total Swipes", s.total_swipes, ""],
+      ["Saves", s.saves, ""], ["Explores", s.explores, ""],
+      ["Unsaves", s.unsaves, ""], ["Consent Leads", data.consent_leads, ""],
+    ];
+    sg.innerHTML="";
+    cards.forEach(([l,v,cls])=>{
+      const d=document.createElement("div"); d.className="stat";
+      d.innerHTML=`<div class="l">${l}</div><div class="v ${cls}">${fmt(v||0)}</div>`;
+      sg.appendChild(d);
+    });
+    // routes table
+    const routes = data.routes || [];
+    if(!routes.length){ rb.innerHTML='<tr><td colspan="2" class="empty">No route clicks</td></tr>'; }
+    else routes.forEach(r=>{ const tr=document.createElement("tr");
+      tr.innerHTML=`<td>Route ${r.route_id}</td><td class="num">${fmt(r.count)}</td>`; rb.appendChild(tr); });
+  }catch(e){ sg.innerHTML=`<div class="empty">${e.message}</div>`; }
+}
+
+function openCareer(id, name, cat){
+  currentCareerId=id; showCDetailView();
+  $("cd_cat").textContent = cat || "";
+  $("cd_from").value=""; $("cd_to").value="";
+  loadCareerDetail();
+}
+
+$("card_careers").addEventListener("click", ()=>{ careersOffset=0; openCModal(); showCareersView(); loadCareers(); });
+$("cmodal-close").addEventListener("click", closeCModal);
+cmodal.addEventListener("click", (e)=>{ if(e.target===cmodal) closeCModal(); });
+$("c_apply").addEventListener("click", ()=>{ careersOffset=0; loadCareers(); });
+$("c_clear").addEventListener("click", ()=>{ $("c_search").value=""; $("c_from").value=""; $("c_to").value=""; careersOffset=0; loadCareers(); });
+$("c_search").addEventListener("keydown", (e)=>{ if(e.key==="Enter"){ careersOffset=0; loadCareers(); } });
+$("c_prev").addEventListener("click", ()=>{ careersOffset=Math.max(0,careersOffset-PAGE); loadCareers(); });
+$("c_next").addEventListener("click", ()=>{ careersOffset+=PAGE; loadCareers(); });
+$("cdetail-back").addEventListener("click", ()=>{ showCareersView(); });
+$("cd_apply").addEventListener("click", loadCareerDetail);
+$("cd_clear").addEventListener("click", ()=>{ $("cd_from").value=""; $("cd_to").value=""; loadCareerDetail(); });
+document.addEventListener("keydown", (e)=>{ if(e.key==="Escape") closeCModal(); });
+
+/* ===================== EVENTS DRILL-DOWN (KPI cards) ===================== */
+const emodal = $("emodal");
+let currentEventTypes = "", currentEventTitle = "Events";
+
+function openEModal(){ emodal.style.display="flex"; }
+function closeEModal(){ emodal.style.display="none"; }
+
+async function loadEvents(){
+  const tb = $("tbl_events").querySelector("tbody");
+  tb.innerHTML = '<tr><td colspan="6" class="empty">Loading…</td></tr>';
+  const params = new URLSearchParams();
+  if(currentEventTypes) params.set("types", currentEventTypes);
+  if($("e_search").value.trim()) params.set("q", $("e_search").value.trim());
+  if($("e_from").value) params.set("date_from", $("e_from").value);
+  if($("e_to").value) params.set("date_to", $("e_to").value);
+  params.set("offset", eventsOffset); params.set("limit", PAGE);
+  try{
+    const data = await getJSON(`/events/?${params.toString()}`);
+    const rows = data.results || [];
+    renderPager("e", eventsOffset, data.total||0, rows.length);
+    if(!rows.length){ tb.innerHTML='<tr><td colspan="6" class="empty">No events found</td></tr>'; return; }
+    tb.innerHTML="";
+    rows.forEach(a=>{
+      const details = a.activity_value || (a.route_id!=null ? ("Route "+a.route_id) : "–");
+      const tr=document.createElement("tr");
+      tr.innerHTML = `<td class="muted">${dt(a.created_at)}</td>`+
+                     `<td class="ev-type">${a.activity_type.replace(/_/g,' ')}</td>`+
+                     `<td>${a.career||"–"}</td>`+
+                     `<td><b>${a.username||("#"+(a.user_id||'?'))}</b></td>`+
+                     `<td class="muted">${a.email||"–"}</td>`+
+                     `<td class="muted">${details}</td>`;
+      tb.appendChild(tr);
+    });
+  }catch(e){ tb.innerHTML=`<tr><td colspan="6" class="empty">${e.message}</td></tr>`; }
+}
+
+function openEvents(types, title){
+  currentEventTypes = types; currentEventTitle = title;
+  $("emodal-title").textContent = title;
+  $("e_search").value=""; $("e_from").value=""; $("e_to").value=""; eventsOffset=0;
+  openEModal(); loadEvents();
+}
+
+// wire KPI cards -> event feeds
+$("card_views").addEventListener("click",  ()=> openEvents("career_viewed", "Career Views"));
+$("card_swipes").addEventListener("click", ()=> openEvents("career_swiped_right,career_swiped_left", "All Swipes"));
+$("card_right").addEventListener("click",  ()=> openEvents("career_swiped_right", "Right Swipes (likes)"));
+$("card_left").addEventListener("click",   ()=> openEvents("career_swiped_left", "Left Swipes (skips)"));
+$("card_saves").addEventListener("click",  ()=> openEvents("career_saved", "Saves"));
+$("emodal-close").addEventListener("click", closeEModal);
+emodal.addEventListener("click", (e)=>{ if(e.target===emodal) closeEModal(); });
+$("e_apply").addEventListener("click", ()=>{ eventsOffset=0; loadEvents(); });
+$("e_clear").addEventListener("click", ()=>{ $("e_search").value=""; $("e_from").value=""; $("e_to").value=""; eventsOffset=0; loadEvents(); });
+$("e_search").addEventListener("keydown", (e)=>{ if(e.key==="Enter"){ eventsOffset=0; loadEvents(); } });
+$("e_prev").addEventListener("click", ()=>{ eventsOffset=Math.max(0,eventsOffset-PAGE); loadEvents(); });
+$("e_next").addEventListener("click", ()=>{ eventsOffset+=PAGE; loadEvents(); });
+document.addEventListener("keydown", (e)=>{ if(e.key==="Escape") closeEModal(); });
+</script>
+</body>
+</html>

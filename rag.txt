@@ -1,0 +1,82 @@
+amdin.py
+from django.contrib import admin
+
+# Register your models here.
+
+
+
+apps.py
+from django.apps import AppConfig
+
+
+class MlServiceConfig(AppConfig):
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'ml_service'
+
+
+models.py
+from django.db import models
+
+# Create your models here.
+
+services.pyfrom sentence_transformers import SentenceTransformer
+from typing import List
+
+# 🔹 Load model ONCE (global singleton)
+_model = None
+
+def get_model() -> SentenceTransformer:
+    global _model
+
+    if _model is None:
+        _model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+    return _model
+
+def embed_text(text: str) -> List[float]:
+    """
+    Convert a single text string into a 384-dim embedding vector.
+    """
+
+    if not text or not text.strip():
+        raise ValueError("Input text is empty")
+
+    model = get_model()
+
+    embedding = model.encode(text)
+
+    # Convert numpy → python list (important for pgvector)
+    return embedding.tolist()
+
+
+
+
+    view code
+    from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework import status
+
+from .services import embed_text
+
+
+@api_view(["POST"])
+def embed(request):
+    text = request.data.get("text")
+
+    if not text:
+        return Response(
+            {"error": "Text is required"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        embedding = embed_text(text)
+        return Response({"embedding": embedding})
+
+    except Exception as e:
+        return Response(
+            {"error": str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+    

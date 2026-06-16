@@ -7,10 +7,18 @@ Public analytics endpoints (frontend-fired).
 
 import logging
 
+from django.contrib.admin.views.decorators import staff_member_required
+from django.shortcuts import render
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+
+@staff_member_required
+def analytics_dashboard(request):
+    """Staff-only HTML dashboard that visualises the /analytics/admin/ reports."""
+    return render(request, "analytics/dashboard.html")
 
 from . import constants as C
 from . import reports
@@ -29,6 +37,18 @@ def _int(request, key, default):
         return int(request.query_params.get(key, default))
     except (TypeError, ValueError):
         return default
+
+
+def _date(request, key):
+    """Read a YYYY-MM-DD query param as a date, or None."""
+    from datetime import datetime
+    raw = request.query_params.get(key)
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError:
+        return None
 
 
 class ActivityIngestAPI(APIView):
@@ -118,6 +138,7 @@ class OverviewReportAPI(APIView):
     """Dashboard header totals: users, views, swipes, right/left, saves."""
 
     permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
 
     def get(self, request):
         return Response(reports.overview(days=_int(request, "days", 30)))
@@ -127,49 +148,55 @@ class TopCareersReportAPI(APIView):
     """Top-N careers for an activity type, e.g. /top/career_viewed/."""
 
     permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
 
     def get(self, request, activity_type):
-        return Response(
-            {
-                "activity_type": activity_type,
-                "results": reports.top_careers(
-                    activity_type,
-                    limit=_int(request, "limit", 20),
-                    days=_int(request, "days", 0) or None,
-                ),
-            }
+        data = reports.top_careers(
+            activity_type,
+            offset=_int(request, "offset", 0),
+            limit=_int(request, "limit", 10),
+            days=_int(request, "days", 0) or None,
         )
+        return Response({"activity_type": activity_type, **data})
 
 
 class LikeVsSkipReportAPI(APIView):
     permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
 
     def get(self, request):
         return Response(
-            {
-                "results": reports.like_vs_skip_ratio(
-                    limit=_int(request, "limit", 20),
-                    days=_int(request, "days", 0) or None,
-                )
-            }
+            reports.like_vs_skip_ratio(
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 10),
+                days=_int(request, "days", 0) or None,
+            )
         )
 
 
 class RouteClicksReportAPI(APIView):
     permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
 
     def get(self, request):
         return Response(
-            {"results": reports.route_clicks(limit=_int(request, "limit", 20))}
+            reports.route_clicks(
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 10),
+            )
         )
 
 
 class ProviderClicksReportAPI(APIView):
     permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
 
     def get(self, request):
         return Response(
-            {"results": reports.provider_clicks(limit=_int(request, "limit", 20))}
+            reports.provider_clicks(
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 10),
+            )
         )
 
 
@@ -177,10 +204,14 @@ class ConsentLeadsReportAPI(APIView):
     """Careers generating consent leads (from ProviderLead)."""
 
     permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
 
     def get(self, request):
         return Response(
-            {"results": reports.consent_leads(limit=_int(request, "limit", 20))}
+            reports.consent_leads(
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 10),
+            )
         )
 
 
@@ -188,6 +219,7 @@ class TimeseriesReportAPI(APIView):
     """User activity by date. Optional ?type=<activity_type>&days=<n>."""
 
     permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
 
     def get(self, request):
         return Response(
@@ -200,32 +232,105 @@ class TimeseriesReportAPI(APIView):
         )
 
 
+class CareersListAPI(APIView):
+    """List careers with activity counts. Optional ?q=&date_from=&date_to=&limit=."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []
+
+    def get(self, request):
+        return Response(
+            reports.careers_list(
+                q=request.query_params.get("q") or None,
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 50),
+            )
+        )
+
+
 class CareerReportAPI(APIView):
     permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
 
     def get(self, request, career_id):
-        return Response(reports.career_summary(career_id))
+        return Response(
+            reports.career_summary(
+                career_id,
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
+
+
+class EventsListAPI(APIView):
+    """
+    Flat event feed for KPI-card drill-downs.
+    ?types=career_swiped_right,career_swiped_left  &q=  &date_from=  &date_to=  &limit=
+    """
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []
+
+    def get(self, request):
+        raw = request.query_params.get("types") or request.query_params.get("type")
+        types = [t.strip() for t in raw.split(",") if t.strip()] if raw else None
+        return Response(
+            reports.events_list(
+                activity_types=types,
+                q=request.query_params.get("q") or None,
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 50),
+            )
+        )
+
+
+class UsersListAPI(APIView):
+    """List all users with activity counts. Optional ?q=&date_from=&date_to=&limit=."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []
+
+    def get(self, request):
+        return Response(
+            reports.users_list(
+                q=request.query_params.get("q") or None,
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 50),
+            )
+        )
 
 
 class UserReportAPI(APIView):
     permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
 
     def get(self, request, user_id):
-        return Response(reports.user_summary(user_id))
+        return Response(
+            reports.user_summary(
+                user_id,
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
 
 
 class PopularByLocationReportAPI(APIView):
     """Popular careers grouped by user's profile city. Optional ?city=&days=."""
 
     permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
 
     def get(self, request):
         return Response(
-            {
-                "results": reports.popular_careers_by_location(
-                    limit_per_city=_int(request, "limit", 10),
-                    days=_int(request, "days", 0) or None,
-                    city=request.query_params.get("city") or None,
-                )
-            }
+            reports.popular_careers_by_location(
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 10),
+                days=_int(request, "days", 0) or None,
+            )
         )
