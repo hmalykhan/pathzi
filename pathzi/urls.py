@@ -17,8 +17,11 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 
+from analytics.views import analytics_dashboard
+
 
 urlpatterns = [
+    path('', analytics_dashboard, name='home'),
     path('admin/', admin.site.urls),
     path('auth/', include('rest_framework.urls', namespace = 'rest_framework')),
     path("api/billing/", include("billing.urls")),
