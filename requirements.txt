@@ -79,7 +79,7 @@ prompt_toolkit==3.0.52
 psycopg2-binary==2.9.11
 pyasn1==0.6.1
 pyasn1_modules==0.4.2
-pycparser @ file:///home/task_177428331609253/croot/pycparser_1774283347109/work
+pycparser
 pydantic==2.12.5
 pydantic_core==2.41.5
 pyee==13.0.1
