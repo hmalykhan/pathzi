@@ -1,47 +1,54 @@
-# careers/services/embedding.py
+# careers/services/embeddings.py
 
-from sentence_transformers import SentenceTransformer
 from typing import List
+import logging
 
-# 🔹 Load model ONCE (global singleton)
-_model = None
+import requests
+
+logger = logging.getLogger(__name__)
+
+# Embeddings are produced by the dedicated embedding microservice (DO droplet),
+# not in-process. This keeps torch/transformers out of the main backend and
+# guarantees careers and users are embedded by the exact same model
+# (essential for accurate cosine-distance matching).
+ML_API_URL = "http://206.189.18.64:8000/ml/embed/"
 
 
-def get_model() -> SentenceTransformer:
-    global _model
+def _call_ml_api(text: str) -> List[float]:
+    """POST text to the embedding microservice and return its 384-dim vector."""
+    for attempt in range(2):  # 1 retry
+        try:
+            response = requests.post(ML_API_URL, json={"text": text}, timeout=(2, 5))
+            response.raise_for_status()
+            embedding = response.json().get("embedding")
+            if embedding is None:
+                raise ValueError("ML API returned no embedding")
+            return embedding
+        except requests.Timeout:
+            logger.warning(f"ML API timeout, attempt {attempt + 1}")
+        except requests.RequestException as e:
+            logger.error(f"ML API error: {e}")
+            break
 
-    if _model is None:
-        _model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-
-    return _model
+    raise RuntimeError("Failed to fetch embedding from ML microservice")
 
 
 def embed_text(text: str) -> List[float]:
     """
     Convert a single text string into a 384-dim embedding vector.
     """
-
     if not text or not text.strip():
         raise ValueError("Input text is empty")
 
-    model = get_model()
-
-    embedding = model.encode(text)
-
-    # Convert numpy → python list (important for pgvector)
-    return embedding.tolist()
+    return _call_ml_api(text)
 
 
 def embed_texts(texts: List[str]) -> List[List[float]]:
     """
-    Batch embedding (MUCH faster for bulk operations)
+    Batch embedding. The microservice embeds one text per request, so this
+    loops; it is the single place to optimise if a batch endpoint is added.
     """
-
     if not texts:
         return []
 
-    model = get_model()
-
-    embeddings = model.encode(texts)
-
-    return [vec.tolist() for vec in embeddings]
+    return [_call_ml_api(t) for t in texts]
