@@ -76,6 +76,7 @@ def log_activity(
     career=None,
     route_id=None,
     activity_value=None,
+    card=None,
     metadata=None,
 ):
     """
@@ -98,6 +99,7 @@ def log_activity(
             "route_id": route_id,
             "activity_type": activity_type,
             "activity_value": activity_value,
+            "card": card,
             "metadata": metadata or {},
         }
 

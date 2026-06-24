@@ -34,11 +34,19 @@ class UserActivity(models.Model):
         related_name="activities",
     )
 
-    route_id = models.IntegerField(null=True, blank=True)
+    # Education-route TYPE the event refers to: "course" | "apprenticeship" |
+    # "job" (see constants.ROUTE_TYPES). Kept as the column name `route_id` for
+    # backwards compatibility; null for events that aren't route interactions.
+    route_id = models.CharField(max_length=20, null=True, blank=True)
 
     activity_type = models.CharField(max_length=50, db_index=True)
 
     activity_value = models.TextField(null=True, blank=True)
+
+    # Title of the course / apprenticeship / job "card" the action refers to
+    # (frontend-supplied, e.g. for provider-link clicks). null for events that
+    # don't reference a specific titled card.
+    card = models.CharField(max_length=255, null=True, blank=True)
 
     metadata = models.JSONField(default=dict, blank=True)
 

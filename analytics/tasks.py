@@ -39,6 +39,7 @@ def record_activity_task(self, payload):
             route_id=payload.get("route_id"),
             activity_type=payload["activity_type"],
             activity_value=payload.get("activity_value"),
+            card=payload.get("card"),
             metadata=payload.get("metadata") or {},
         )
         return "ok"
@@ -57,6 +58,13 @@ def _coerce_int(value):
         return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _route_str(value):
+    """route_id is now a short string ("course"/"apprenticeship"/"job")."""
+    if value is None or value == "":
+        return None
+    return str(value)[:20]
 
 
 @shared_task
@@ -118,9 +126,10 @@ def flush_activity_queue():
             UserActivity(
                 user_id=user_id if user_id in valid_users else None,
                 career_id=career_id if career_id in valid_careers else None,
-                route_id=_coerce_int(event.get("route_id")),
+                route_id=_route_str(event.get("route_id")),
                 activity_type=str(event["activity_type"])[:50],
                 activity_value=event.get("activity_value"),
+                card=(str(event["card"])[:255] if event.get("card") else None),
                 metadata=metadata if isinstance(metadata, dict) else {},
             )
         )

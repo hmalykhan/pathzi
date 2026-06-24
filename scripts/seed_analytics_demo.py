@@ -50,6 +50,13 @@ def seed():
     # Weighted career popularity so "top" charts have a clear ranking.
     weights = [max(1, 16 - i) for i in range(len(careers))]
     providers = ["UCAS", "Indeed", "NHS Careers", "Reed", "Gov.uk Apprenticeships", "Pearson"]
+    # Demo card titles per route type (the title the user clicked through to).
+    CARD_TITLES = {
+        "course": ["BSc (Hons) Programme", "Level 3 BTEC Diploma", "Foundation Degree", "HND Course"],
+        "apprenticeship": ["Level 2 Intermediate Apprenticeship", "Level 3 Advanced Apprenticeship",
+                            "Degree Apprenticeship", "Higher Apprenticeship"],
+        "job": ["Graduate Trainee Role", "Junior Associate Position", "Entry-Level Vacancy"],
+    }
     cities = ["London", "Manchester", "Birmingham", "Leeds", "Bristol"]
 
     # Give a handful of users a profile city so the location chart populates.
@@ -75,7 +82,7 @@ def seed():
 
         batch = []
 
-        def add(activity_type, career, route_id=None, val=None, user=None):
+        def add(activity_type, career, route_id=None, val=None, user=None, card=None):
             # Spread activity across ALL users so the user list is populated;
             # located users (with a city) still get plenty by chance, keeping
             # the location chart populated.
@@ -86,6 +93,7 @@ def seed():
                     route_id=route_id,
                     activity_type=activity_type,
                     activity_value=val,
+                    card=card,
                     metadata={"demo": True},
                 )
             )
@@ -105,10 +113,12 @@ def seed():
 
         for _ in range(random.randint(4, 10)):
             add(C.ROUTE_CLICKED, random.choices(careers, weights=weights, k=1)[0],
-                route_id=random.randint(1, 6))
+                route_id=random.choice(C.ROUTE_TYPES))
         for _ in range(random.randint(3, 8)):
+            route = random.choice(C.ROUTE_TYPES)
             add(C.PROVIDER_LINK_CLICKED, random.choices(careers, weights=weights, k=1)[0],
-                val=random.choice(providers))
+                route_id=route, val=random.choice(providers),
+                card=random.choice(CARD_TITLES[route]))
 
         created = UserActivity.objects.bulk_create(batch)
         # auto_now_add overrides created_at, so backdate this day's rows.

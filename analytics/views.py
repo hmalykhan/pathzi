@@ -75,6 +75,7 @@ class ActivityIngestAPI(APIView):
                     "route_id": event.get("route_id"),
                     "activity_type": event["activity_type"],
                     "activity_value": event.get("activity_value"),
+                    "card": event.get("card"),
                     # GDPR: strip any emails/phones the frontend may have included
                     "metadata": sanitize_metadata(event.get("metadata") or {}),
                 }
@@ -141,7 +142,10 @@ class OverviewReportAPI(APIView):
     throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
 
     def get(self, request):
-        return Response(reports.overview(days=_int(request, "days", 30)))
+        return Response(reports.overview(
+            date_from=_date(request, "date_from"),
+            date_to=_date(request, "date_to"),
+        ))
 
 
 class TopCareersReportAPI(APIView):
@@ -155,9 +159,97 @@ class TopCareersReportAPI(APIView):
             activity_type,
             offset=_int(request, "offset", 0),
             limit=_int(request, "limit", 10),
-            days=_int(request, "days", 0) or None,
+            date_from=_date(request, "date_from"),
+            date_to=_date(request, "date_to"),
         )
         return Response({"activity_type": activity_type, **data})
+
+
+class CareerActivityUsersAPI(APIView):
+    """Users who did one activity on one career (lazy hover popup)."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request, activity_type, career_id):
+        return Response(
+            reports.career_activity_users(
+                career_id,
+                activity_type,
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
+
+
+class CareerEngagementUsersAPI(APIView):
+    """Top careers for an activity type, each with the users who did it."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request, activity_type):
+        return Response(
+            reports.career_engagement_users(
+                activity_type,
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 10),
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
+
+
+class CareerSwipeUsersAPI(APIView):
+    """Users who swiped on one career, with their right/left counts."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request, career_id):
+        return Response(
+            reports.career_swipe_users(
+                career_id,
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
+
+
+class SwipeDirectionUsersAPI(APIView):
+    """Careers + users for one swipe direction (right=like / left=skip)."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request, direction):
+        direction = "right" if direction == "right" else "left"
+        return Response(
+            reports.swipe_direction_users(
+                direction,
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 10),
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
+
+
+class SwipeEngagementUsersAPI(APIView):
+    """Careers ranked by right-swipes, each with its swiping users (right/left)."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request):
+        return Response(
+            reports.swipe_engagement_users(
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 10),
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
 
 
 class LikeVsSkipReportAPI(APIView):
@@ -169,7 +261,8 @@ class LikeVsSkipReportAPI(APIView):
             reports.like_vs_skip_ratio(
                 offset=_int(request, "offset", 0),
                 limit=_int(request, "limit", 10),
-                days=_int(request, "days", 0) or None,
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
             )
         )
 
@@ -187,6 +280,56 @@ class RouteClicksReportAPI(APIView):
         )
 
 
+class RouteClicksByCareerAPI(APIView):
+    """Careers with their course / apprenticeship / job route-click counts."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request):
+        return Response(
+            reports.route_clicks_by_career(
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 10),
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
+
+
+class CareerRouteUsersAPI(APIView):
+    """Users who clicked routes on one career (per-user course/apprenticeship/job)."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request, career_id):
+        return Response(
+            reports.career_route_users(
+                career_id,
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
+
+
+class RouteEngagementUsersAPI(APIView):
+    """Careers ranked by route clicks, each with its clicking users."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request):
+        return Response(
+            reports.route_engagement_users(
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 10),
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
+
+
 class ProviderClicksReportAPI(APIView):
     permission_classes = [IsStaffUser]
     throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
@@ -196,6 +339,58 @@ class ProviderClicksReportAPI(APIView):
             reports.provider_clicks(
                 offset=_int(request, "offset", 0),
                 limit=_int(request, "limit", 10),
+            )
+        )
+
+
+class ProviderCardsAPI(APIView):
+    """Titled cards (course/apprenticeship/job) with career, route and clicks."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request):
+        return Response(
+            reports.provider_cards(
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 10),
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
+
+
+class CardClickUsersAPI(APIView):
+    """Users who clicked one titled card (lazy hover popup)."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request):
+        return Response(
+            reports.card_click_users(
+                request.query_params.get("card") or "",
+                career_id=_int(request, "career_id", 0) or None,
+                route=request.query_params.get("route") or None,
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
+
+
+class ProviderCardUsersAPI(APIView):
+    """Every titled card with its clicking users (grouped View all)."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request):
+        return Response(
+            reports.provider_card_users(
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 10),
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
             )
         )
 
@@ -211,12 +406,47 @@ class ConsentLeadsReportAPI(APIView):
             reports.consent_leads(
                 offset=_int(request, "offset", 0),
                 limit=_int(request, "limit", 10),
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
+
+
+class CareerLeadUsersAPI(APIView):
+    """Users who generated consent leads for one career (lazy hover popup)."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request, career_id):
+        return Response(
+            reports.career_lead_users(
+                career_id,
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
+
+
+class LeadEngagementUsersAPI(APIView):
+    """Careers ranked by leads, each with the users who generated them."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request):
+        return Response(
+            reports.lead_engagement_users(
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 10),
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
             )
         )
 
 
 class TimeseriesReportAPI(APIView):
-    """User activity by date. Optional ?type=<activity_type>&days=<n>."""
+    """User activity by date. Optional ?type=<activity_type>&date_from=&date_to=."""
 
     permission_classes = [IsStaffUser]
     throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
@@ -226,7 +456,8 @@ class TimeseriesReportAPI(APIView):
             {
                 "results": reports.timeseries(
                     activity_type=request.query_params.get("type") or None,
-                    days=_int(request, "days", 30),
+                    date_from=_date(request, "date_from"),
+                    date_to=_date(request, "date_to"),
                 )
             }
         )
@@ -316,6 +547,8 @@ class UserReportAPI(APIView):
                 user_id,
                 date_from=_date(request, "date_from"),
                 date_to=_date(request, "date_to"),
+                # allow the PDF export to pull the full timeline, not just 200
+                timeline_limit=_int(request, "limit", 200),
             )
         )
 
@@ -331,6 +564,41 @@ class PopularByLocationReportAPI(APIView):
             reports.popular_careers_by_location(
                 offset=_int(request, "offset", 0),
                 limit=_int(request, "limit", 10),
-                days=_int(request, "days", 0) or None,
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
+
+
+class CityUsersAPI(APIView):
+    """Users living in one city, with their career-view counts (lazy hover)."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request):
+        city = request.query_params.get("city") or ""
+        return Response(
+            reports.city_users(
+                city,
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
+
+
+class LocationEngagementUsersAPI(APIView):
+    """Cities ranked by views, each with the users living there."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request):
+        return Response(
+            reports.location_engagement_users(
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 10),
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
             )
         )

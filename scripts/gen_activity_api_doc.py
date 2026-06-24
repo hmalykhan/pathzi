@@ -96,8 +96,9 @@ h2("2.2 Event fields")
 table(["Field", "Type", "Required", "Notes"],
       [["activity_type", "string", "Yes", "One of the allowed values in 2.3"],
        ["career_id", "integer", "No", "DB id of the career the action is about"],
-       ["route_id", "integer", "No", "Education-route id (route events)"],
+       ["route_id", "string", "No", "Education-route type (route events): course | apprenticeship | job"],
        ["activity_value", "string", "No", "Optional label (provider/route name)"],
+       ["card", "string", "No", "Title of the course/apprenticeship/job card (provider clicks)"],
        ["metadata", "object", "No", "Free-form context. Max 50 keys. No personal data"]],
       widths=[1.3, 0.9, 0.8, 3.5])
 
@@ -106,10 +107,10 @@ table(["activity_type", "When the app sends it", "Recommended fields"],
       [["career_viewed", "A career card is shown", "career_id; meta: source, position, session_id"],
        ["career_swiped_right", "User likes / swipes right", "career_id; meta: source, position"],
        ["career_swiped_left", "User skips / swipes left", "career_id; meta: source, position"],
-       ["route_viewed", "An education route is shown", "career_id, route_id; meta: source"],
-       ["route_clicked", "User taps an education route", "career_id, route_id; meta: source"],
-       ["provider_link_clicked", "User opens a provider link", "career_id; activity_value=provider; meta: provider_type, url"],
-       ["connect_button_clicked", "User taps a connect button", "career_id; activity_value=provider"]],
+       ["route_viewed", "An education route is shown", "career_id, route_id=course|apprenticeship|job"],
+       ["route_clicked", "User taps an education route", "career_id, route_id=course|apprenticeship|job"],
+       ["provider_link_clicked", "User opens a provider link", "career_id, route_id, card=title; activity_value=provider"],
+       ["connect_button_clicked", "User taps a connect button", "career_id, route_id, card=title; activity_value=provider"]],
       widths=[1.7, 2.2, 2.6])
 body("Do NOT send these (recorded automatically by the backend; rejected with 400): "
      "career_saved, career_unsaved, career_explored, career_unexplored, search_performed. "

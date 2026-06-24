@@ -6,8 +6,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pathzi · Analytics Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+<!-- local fallback if the CDN is ever blocked (run collectstatic for prod) -->
+<script>window.jspdf||document.write('<scr'+'ipt src="{% static "analytics/vendor/jspdf.umd.min.js" %}"></scr'+'ipt><scr'+'ipt src="{% static "analytics/vendor/jspdf.plugin.autotable.min.js" %}"></scr'+'ipt>')</script>
 <style>
   :root{
     --navy:#0f2e4f; --blue:#1f6fb2; --blue2:#3b8fd6; --bg:#f4f6fa;
@@ -54,7 +56,7 @@
   canvas{max-height:280px}
   /* growable bar-chart wrapper (prevents Chart.js infinite-resize growth) */
   .chartbox{position:relative;width:100%;height:280px}
-  .chartbox canvas{max-height:none !important;height:100% !important}
+  .chartbox canvas,.chartwrap canvas{max-height:none !important;height:100% !important}
   .err{background:#fdecec;color:#b3261e;border:1px solid #f5c2c0;border-radius:10px;
        padding:10px 14px;margin-bottom:18px;font-size:13px;display:none}
   .ratio-pos{color:var(--green);font-weight:600}
@@ -118,6 +120,23 @@
   .dlbtn{margin-left:auto;background:var(--navy);color:#fff;border:none;border-radius:6px;
          padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;letter-spacing:.3px}
   .dlbtn:hover{background:var(--blue)}
+  /* per-section date-range filter button (sits left of the PDF button) */
+  .winbtn{margin-left:auto;font-size:11px;font-weight:600;color:var(--blue);background:#eef4fb;
+          border:1px solid #d4e6f6;border-radius:6px;padding:4px 10px;cursor:pointer;white-space:nowrap;
+          max-width:210px;overflow:hidden;text-overflow:ellipsis;line-height:1.4}
+  .winbtn:hover{background:#e0eefb;border-color:var(--blue2)}
+  .winbtn.active{background:var(--blue);color:#fff;border-color:var(--blue)}
+  .winbtn + .dlbtn{margin-left:8px}
+  /* the floating From/To popover */
+  .winpop{position:fixed;z-index:90;display:none;background:#fff;border:1px solid var(--line);
+          border-radius:10px;box-shadow:0 14px 36px rgba(15,30,54,.24);padding:14px;width:232px}
+  .winpop.show{display:block}
+  .winpop-fld{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+  .winpop-fld label{font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+  .winpop-fld input{padding:7px 9px;border:1px solid var(--line);border-radius:8px;font-size:13px;color:var(--ink)}
+  .winpop-fld input:focus{outline:none;border-color:var(--blue2);box-shadow:0 0 0 3px rgba(31,111,178,.12)}
+  .winpop-act{display:flex;gap:8px;margin-top:2px}
+  .winpop-act button{flex:1;padding:8px 0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}
   /* report sheet (scrollable full-data view) */
   .sheet-table thead th{position:sticky;top:0;background:#fff;z-index:1;box-shadow:0 1px 0 var(--line)}
   #sheet .modal-body{max-height:76vh}
@@ -129,6 +148,47 @@
   /* full-history chart inside the sheet */
   #sheet-chart-wrap{position:relative;width:100%;height:62vh}
   #sheet-chart{max-height:none !important;height:100% !important}
+  /* floating hover popup: users who viewed/saved the hovered career */
+  .cu-pop{position:fixed;z-index:80;display:none;width:380px;max-height:460px;overflow-y:auto;
+          background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 14px 12px;
+          box-shadow:0 12px 32px rgba(15,30,54,.22)}
+  .cu-pop.show{display:block}
+  .cu-title{font-size:15px;font-weight:700;color:var(--navy);margin-bottom:10px;line-height:1.35;
+            padding-bottom:8px;border-bottom:1px solid var(--line)}
+  .cu-title .cu-count{display:block;font-weight:600;color:var(--blue);font-size:12.5px;margin-top:3px}
+  .cu-hint{color:var(--muted);font-size:13px;padding:6px 2px}
+  .cu-list{display:flex;flex-direction:column;gap:3px}
+  .cu-user{display:grid;grid-template-columns:1fr auto;gap:0 10px;padding:8px 10px;border-radius:8px;
+           cursor:pointer;border:1px solid transparent}
+  .cu-user:hover{background:#f3f8fd;border-color:#d4e6f6}
+  .cu-u-name{font-size:13.5px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cu-u-email{font-size:12px;color:var(--muted);grid-column:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cu-u-count{grid-column:2;grid-row:1/3;align-self:center;font-size:13px;font-weight:700;color:var(--blue);white-space:nowrap}
+  .rt{color:var(--green)} .lf{color:var(--red)}
+  /* career sub-group header inside the grouped swipe popup */
+  .cu-grp{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:10px 0 4px;
+          font-size:12.5px;font-weight:700;color:var(--navy);border-bottom:1px dashed var(--line);padding-bottom:3px}
+  .cu-grp .n{font-weight:700;font-size:12px}
+  .cu-grp:first-child{margin-top:0}
+  /* ---- refresh button spin + loading skeletons ---- */
+  #refresh .ricon{display:inline-block}
+  #refresh.loading{opacity:.9;cursor:default}
+  #refresh.loading .ricon{animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .dlbtn.loading{opacity:.9;cursor:default}
+  .dlbtn.loading .ricon{display:inline-block;animation:spin .7s linear infinite}
+  .skel{position:relative;overflow:hidden;background:#e9edf3;border-radius:6px}
+  .skel::after{content:"";position:absolute;inset:0;transform:translateX(-100%);
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.65),transparent);
+    animation:shimmer 1.3s infinite}
+  @keyframes shimmer{100%{transform:translateX(100%)}}
+  .skel-line{height:12px;margin:3px 0;display:inline-block}
+  .skel-kpi{height:30px;width:64px;border-radius:8px;display:inline-block}
+  .chart-skel{position:absolute;inset:0;z-index:3;border-radius:10px;min-height:220px}
+  /* chart wrappers need an explicit height (Chart.js fills the container) */
+  .chartwrap{position:relative;width:100%}
+  #wrap_ts{height:320px}
+  #wrap_swipe{height:300px}
 </style>
 </head>
 <body>
@@ -138,14 +198,7 @@
     <div class="sub">Career engagement &amp; discovery insights</div>
   </div>
   <div class="controls">
-    <label class="muted" style="color:#fff;font-size:13px">Window</label>
-    <select id="days">
-      <option value="7">Last 7 days</option>
-      <option value="30" selected>Last 30 days</option>
-      <option value="90">Last 90 days</option>
-      <option value="365">Last 365 days</option>
-    </select>
-    <button id="refresh">↻ Refresh</button>
+    <button id="refresh"><span class="ricon">↻</span> Refresh</button>
   </div>
 </header>
 
@@ -167,13 +220,14 @@
     <!-- activity over time -->
     <div class="card col-8">
       <h3>Activity by Date <span class="pill" id="ts_label">all events</span><button class="dlbtn" id="dl_ts">⬇ PDF</button></h3>
-      <canvas id="chart_ts"></canvas>
+      <div class="chartwrap" id="wrap_ts" style="position:relative"><canvas id="chart_ts"></canvas></div>
       <div class="more-wrap"><button class="viewmore" id="view_ts">View full chart ▸</button></div>
     </div>
     <!-- like vs skip donut -->
     <div class="card col-4">
       <h3>Right vs Left Swipes<button class="dlbtn" id="dl_swipe">⬇ PDF</button></h3>
-      <canvas id="chart_swipe"></canvas>
+      <div class="chartwrap" id="wrap_swipe" style="position:relative"><canvas id="chart_swipe"></canvas></div>
+      <div class="more-wrap"><button class="viewmore" id="view_swipe">View all ▸</button></div>
     </div>
 
     <!-- most viewed -->
@@ -189,16 +243,16 @@
       <div class="more-wrap"><button class="viewmore" id="view_saved">View all ▸</button></div>
     </div>
 
-    <!-- routes -->
-    <div class="card col-4">
-      <h3>Top Education Routes<button class="dlbtn" id="dl_routes">⬇ PDF</button></h3>
-      <table id="tbl_routes"><thead><tr><th>Route ID</th><th class="num">Clicks</th></tr></thead><tbody></tbody></table>
+    <!-- routes by career -->
+    <div class="card col-12">
+      <h3>Education Routes by Career<button class="dlbtn" id="dl_routes">⬇ PDF</button></h3>
+      <table id="tbl_routes"><thead><tr><th>Career</th><th class="num">Course</th><th class="num">Apprenticeship</th><th class="num">Job</th><th class="num">Total</th></tr></thead><tbody></tbody></table>
       <div class="more-wrap"><button class="viewmore" id="view_routes">View all ▸</button></div>
     </div>
-    <!-- providers -->
-    <div class="card col-4">
-      <h3>Top Provider Links<button class="dlbtn" id="dl_providers">⬇ PDF</button></h3>
-      <table id="tbl_providers"><thead><tr><th>Provider</th><th class="num">Clicks</th></tr></thead><tbody></tbody></table>
+    <!-- provider link clicks by title (card) -->
+    <div class="card col-8">
+      <h3>Provider Link Clicks by Title<button class="dlbtn" id="dl_providers">⬇ PDF</button></h3>
+      <table id="tbl_providers"><thead><tr><th>Title</th><th>Career</th><th>Route</th><th class="num">Clicks</th></tr></thead><tbody></tbody></table>
       <div class="more-wrap"><button class="viewmore" id="view_providers">View all ▸</button></div>
     </div>
     <!-- consent leads -->
@@ -211,7 +265,7 @@
     <!-- like vs skip table -->
     <div class="card col-6">
       <h3>Like vs Skip (per career)<button class="dlbtn" id="dl_ratio">⬇ PDF</button></h3>
-      <table id="tbl_ratio"><thead><tr><th>Career</th><th class="num">Right</th><th class="num">Left</th><th class="num">Like %</th></tr></thead><tbody></tbody></table>
+      <table id="tbl_ratio"><thead><tr><th>Career</th><th class="num">Right</th><th class="num">Left</th><th class="num">Like %</th><th class="num">Dislike %</th></tr></thead><tbody></tbody></table>
       <div class="more-wrap"><button class="viewmore" id="view_ratio">View all ▸</button></div>
     </div>
     <!-- popular by location -->
@@ -240,18 +294,19 @@
             <input type="search" id="u_search" placeholder="username or email…">
           </div>
           <div class="fld">
-            <label>Active from</label>
+            <label>Joined from</label>
             <input type="date" id="u_from">
           </div>
           <div class="fld">
-            <label>Active to</label>
+            <label>Joined to</label>
             <input type="date" id="u_to">
           </div>
           <button class="btn-primary" id="u_apply">Apply</button>
           <button class="btn-ghost" id="u_clear">Clear</button>
+          <button class="dlbtn" id="u_pdf">⬇ PDF</button>
         </div>
         <table id="tbl_users">
-          <thead><tr><th>User</th><th>Email</th><th class="num">Events</th><th>Last active</th></tr></thead>
+          <thead><tr><th>User</th><th>Email</th><th class="num">Events</th><th>Joined</th><th>Last active</th></tr></thead>
           <tbody></tbody>
         </table>
         <div class="pager"><span class="info" id="u_info"></span>
@@ -274,6 +329,7 @@
           </div>
           <button class="btn-primary" id="d_apply">Apply</button>
           <button class="btn-ghost" id="d_clear">Clear</button>
+          <button class="dlbtn" id="d_pdf">⬇ PDF</button>
         </div>
         <div class="chips" id="d_chips"></div>
         <table id="tbl_timeline">
@@ -302,16 +358,9 @@
             <label>Search</label>
             <input type="search" id="c_search" placeholder="career name or category…">
           </div>
-          <div class="fld">
-            <label>Active from</label>
-            <input type="date" id="c_from">
-          </div>
-          <div class="fld">
-            <label>Active to</label>
-            <input type="date" id="c_to">
-          </div>
           <button class="btn-primary" id="c_apply">Apply</button>
           <button class="btn-ghost" id="c_clear">Clear</button>
+          <button class="dlbtn" id="c_pdf">⬇ PDF</button>
         </div>
         <table id="tbl_careers">
           <thead><tr><th>Career</th><th>Category</th><th class="num">Events</th></tr></thead>
@@ -335,7 +384,7 @@
         <div class="statgrid" id="cd_stats"></div>
         <h4 style="margin:6px 0 8px;color:var(--navy);font-size:13px">Education routes clicked</h4>
         <table id="tbl_croutes">
-          <thead><tr><th>Route ID</th><th class="num">Clicks</th></tr></thead>
+          <thead><tr><th>Route</th><th class="num">Clicks</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -381,6 +430,7 @@
         <div class="fld"><label>To</label><input type="date" id="e_to"></div>
         <button class="btn-primary" id="e_apply">Apply</button>
         <button class="btn-ghost" id="e_clear">Clear</button>
+        <button class="dlbtn" id="e_pdf">⬇ PDF</button>
       </div>
       <table id="tbl_events">
         <thead><tr><th>When</th><th>Action</th><th>Career</th><th>User</th><th>Email</th><th>Details</th></tr></thead>
@@ -389,6 +439,19 @@
       <div class="pager"><span class="info" id="e_info"></span>
         <button id="e_prev" disabled>‹ Prev</button><button id="e_next" disabled>Next ›</button></div>
     </div>
+  </div>
+</div>
+
+<!-- floating hover popup: users who viewed/saved the hovered career -->
+<div id="cu_pop" class="cu-pop"></div>
+
+<!-- shared per-section date-range filter popover -->
+<div id="winpop" class="winpop">
+  <div class="winpop-fld"><label>From</label><input type="date" id="winpop_from"></div>
+  <div class="winpop-fld"><label>To</label><input type="date" id="winpop_to"></div>
+  <div class="winpop-act">
+    <button class="btn-primary" id="winpop_apply">Apply</button>
+    <button class="btn-ghost" id="winpop_clear">Clear</button>
   </div>
 </div>
 
@@ -402,6 +465,9 @@ let charts = {};
 function showErr(msg){ const e=$("err"); e.textContent=msg; e.style.display="block"; }
 function hideErr(){ $("err").style.display="none"; }
 function fmt(n){ return (n==null)?"–":Number(n).toLocaleString(); }
+function escAttr(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+// route_id now holds a route TYPE string ("course"/"apprenticeship"/"job")
+function routeLabel(rid){ if(rid==null||rid==="") return "–"; const s=String(rid); return s.charAt(0).toUpperCase()+s.slice(1); }
 
 async function getJSON(path){
   const r = await fetch(BASE+path, {headers:{"Accept":"application/json"}, credentials:"same-origin"});
@@ -412,7 +478,7 @@ async function getJSON(path){
 
 function destroy(name){ if(charts[name]){ charts[name].destroy(); delete charts[name]; } }
 
-function barChart(canvasId, name, labels, data, color){
+function barChart(canvasId, name, labels, data, color, hoverKey){
   destroy(name);
   const cv = $(canvasId);
   // Grow the fixed-height WRAPPER (not the canvas) so Chart.js fills it
@@ -425,7 +491,15 @@ function barChart(canvasId, name, labels, data, color){
     type:"bar",
     data:{labels, datasets:[{data, backgroundColor:color, borderRadius:6, maxBarThickness:34}]},
     options:{indexAxis:"y", plugins:{legend:{display:false}},
-      scales:{x:{beginAtZero:true,ticks:{precision:0}}}, responsive:true, maintainAspectRatio:false}
+      scales:{x:{beginAtZero:true,ticks:{precision:0}}}, responsive:true, maintainAspectRatio:false,
+      onHover: hoverKey ? (evt, els)=>{
+        cv.style.cursor = (els && els.length) ? "pointer" : "default";
+        // Show on a bar; do NOT hide on the empty plot area — that would kill the
+        // popup while the cursor crosses the gap toward it. Hiding is handled by
+        // mouseleave of the chart box / popup instead.
+        if(els && els.length){ cuCancelHide(); showCareerUsers(hoverKey, els[0].index, evt); }
+      } : undefined,
+      onClick: hoverKey ? (evt, els)=>{ if(els && els.length) showCareerUsers(hoverKey, els[0].index, evt); } : undefined}
   });
 }
 
@@ -439,59 +513,224 @@ function rowsTable(tblId, rows, cells, emptyMsg){
   rows.forEach(r=>{ const tr=document.createElement("tr"); tr.innerHTML=cells(r); tb.appendChild(tr); });
 }
 
-async function load(){
-  hideErr();
-  const days = $("days").value;
+/* ===== Per-section date window (each section below the KPI row) ===== */
+// The KPI row (first row) is intentionally all-time and has no control.
+const SECTIONS = ["ts","swipe","viewed","saved","routes","providers","leads","ratio","loc"];
+const secRange = {};  // section key -> {from, to} (custom date interval)
+function rangeArgs(k){
+  const r = secRange[k] || {}; const p = [];
+  if(r.from) p.push("date_from="+r.from);
+  if(r.to)   p.push("date_to="+r.to);
+  return p.join("&");
+}
+function daysQS(k){ const a = rangeArgs(k); return a ? ("&"+a) : ""; }   // &-suffix form
+function rangeLabel(k){ const r = secRange[k]||{}; return (r.from||r.to) ? ((r.from||"…")+" → "+(r.to||"…")) : "All time"; }
+
+function injectSectionWindows(){
+  SECTIONS.forEach(k=>{
+    const dl = $("dl_"+k); if(!dl || $("winbtn_"+k)) return;
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "winbtn"; b.id = "winbtn_"+k; b.title = "Filter by date range";
+    b.innerHTML = "🗓 Dates";
+    b.addEventListener("click", (e)=> openWinPop(k, e.currentTarget));
+    dl.parentNode.insertBefore(b, dl);
+  });
+}
+
+function updateWinBtn(k){
+  const b = $("winbtn_"+k); if(!b) return;
+  const active = !!(secRange[k] && (secRange[k].from || secRange[k].to));
+  b.classList.toggle("active", active);
+  b.innerHTML = active ? ("🗓 " + rangeLabel(k)) : "🗓 Dates";
+}
+
+/* ---- shared date-range popover (one element reused by every section) ---- */
+let winPopKey = null;
+function openWinPop(k, btn){
+  winPopKey = k;
+  const r = secRange[k] || {};
+  $("winpop_from").value = r.from || "";
+  $("winpop_to").value = r.to || "";
+  const pop = $("winpop");
+  pop.classList.add("show");
+  const rc = btn.getBoundingClientRect();
+  const w = pop.offsetWidth || 232;
+  let x = rc.right - w; if(x < 8) x = 8;
+  if(rc.right > window.innerWidth-8) x = window.innerWidth - w - 8;
+  pop.style.left = Math.max(8, x) + "px";
+  pop.style.top = (rc.bottom + 6) + "px";
+}
+function closeWinPop(){ $("winpop").classList.remove("show"); winPopKey = null; }
+function applyWinPop(){
+  if(!winPopKey) return;
+  const k = winPopKey;
+  secRange[k] = { from: $("winpop_from").value, to: $("winpop_to").value };
+  closeWinPop(); updateWinBtn(k); reloadSection(k);
+}
+function clearWinPop(){
+  if(!winPopKey) return;
+  const k = winPopKey;
+  delete secRange[k];
+  closeWinPop(); updateWinBtn(k); reloadSection(k);
+}
+$("winpop_apply").addEventListener("click", applyWinPop);
+$("winpop_clear").addEventListener("click", clearWinPop);
+document.addEventListener("mousedown",(e)=>{
+  const p = $("winpop");
+  if(p.classList.contains("show") && !p.contains(e.target) && !(e.target.closest && e.target.closest(".winbtn"))) closeWinPop();
+});
+
+/* ===================== LOADING SKELETONS ===================== */
+function skelRows(tblId, cols, n){
+  const t = $(tblId); const tb = t && t.querySelector("tbody"); if(!tb) return;
+  let html = "";
+  for(let i=0;i<(n||7);i++){
+    html += "<tr>" + Array.from({length:cols}).map((_,c)=>
+      `<td><span class="skel skel-line" style="width:${c===0?'62%':'34%'}"></span></td>`).join("") + "</tr>";
+  }
+  tb.innerHTML = html;
+}
+function showChartSkel(parentId){
+  const box = $(parentId); if(!box) return;
+  box.style.position = "relative";
+  let s = box.querySelector(".chart-skel");
+  if(!s){ s = document.createElement("div"); s.className = "chart-skel skel"; box.appendChild(s); }
+  s.style.display = "block";
+}
+function hideChartSkel(parentId){
+  const box = $(parentId); const s = box && box.querySelector(".chart-skel");
+  if(s) s.style.display = "none";
+}
+function skelKpis(){
+  ["k_users","k_careers","k_views","k_swipes","k_right","k_left","k_saves"].forEach(id=>{
+    const el = $(id); if(el) el.innerHTML = '<span class="skel skel-kpi"></span>';
+  });
+}
+function showAllSkeletons(){
+  skelKpis();
+  ["wrap_ts","wrap_swipe","box_viewed","box_saved"].forEach(showChartSkel);
+  skelRows("tbl_routes",5); skelRows("tbl_providers",4); skelRows("tbl_leads",2);
+  skelRows("tbl_ratio",5); skelRows("tbl_location",3);
+}
+// skeleton for a hover popup (title + shimmer user rows)
+function cuSkel(pop, title){
+  let html = `<div class="cu-title">${title||""}<span class="cu-count"><span class="skel skel-line" style="width:110px"></span></span></div><div class="cu-list">`;
+  for(let i=0;i<5;i++){
+    html += '<div class="cu-user"><div class="cu-u-name"><span class="skel skel-line" style="width:70%"></span></div>'+
+            '<div class="cu-u-email"><span class="skel skel-line" style="width:50%"></span></div>'+
+            '<div class="cu-u-count"><span class="skel skel-line" style="width:22px"></span></div></div>';
+  }
+  pop.innerHTML = html + '</div>';
+}
+// skeleton rows in the View-all sheet table while it loads
+function sheetSkel(){ skelRows("sheet-table", 6, 12); }
+
+function clearSectionCache(k){
+  cuHide(true);
+  if(k==="viewed"||k==="saved") cuData[k]={};
+  else if(k==="ratio") Object.keys(ratioCache).forEach(x=>delete ratioCache[x]);
+  else if(k==="routes") Object.keys(routeCache).forEach(x=>delete routeCache[x]);
+  else if(k==="providers") Object.keys(cardCache).forEach(x=>delete cardCache[x]);
+  else if(k==="leads") Object.keys(leadCache).forEach(x=>delete leadCache[x]);
+  else if(k==="loc") Object.keys(cityCache).forEach(x=>delete cityCache[x]);
+  else if(k==="swipe"){ delete swipeDirCache["right"]; delete swipeDirCache["left"]; }
+}
+
+function reloadSection(k){
+  clearSectionCache(k);
+  if(k==="ts") return reloadTs();
+  if(k==="swipe") return reloadDonut();
+  if(k==="viewed") return loadTopCareers("viewed","career_viewed",chViewed,"chart_viewed","#1f6fb2",true);
+  if(k==="saved") return loadTopCareers("saved","career_saved",chSaved,"chart_saved","#3b8fd6",true);
+  if(k==="routes") return loadTable("routes","/routes-by-career/","tbl_routes",rowRoutes,5,true,routeRow);
+  if(k==="providers") return loadTable("providers","/provider-cards/","tbl_providers",rowProviders,4,true,providerRow);
+  if(k==="leads") return loadTable("leads","/consent-leads/","tbl_leads",rowLeads,2,true,leadRow);
+  if(k==="ratio") return loadTable("ratio","/like-vs-skip/","tbl_ratio",rowRatio,5,true,ratioRow);
+  if(k==="loc") return loadTable("loc","/by-location/","tbl_location",rowLoc,3,true,locRow);
+}
+
+async function reloadDonut(){
+  showChartSkel("wrap_swipe");
   try{
-    // KPIs
-    const ov = await getJSON(`/overview/?days=${days}`);
-    $("k_users").textContent = fmt(ov.total_users);
-    $("k_careers").textContent = fmt(ov.total_careers);
-    $("k_views").textContent = fmt(ov.total_career_views);
-    $("k_swipes").textContent = fmt(ov.total_swipes);
-    $("k_right").textContent = fmt(ov.total_right_swipes);
-    $("k_left").textContent = fmt(ov.total_left_swipes);
-    $("k_saves").textContent = fmt(ov.total_saves);
+  const ov = await getJSON(`/overview/?${rangeArgs("swipe")}`);
+  destroy("swipe");
+  charts.swipe = new Chart($("chart_swipe"), {
+    type:"doughnut",
+    data:{labels:["Right (like)","Left (skip)"],
+          datasets:[{data:[ov.total_right_swipes, ov.total_left_swipes],
+                     backgroundColor:["#1e9e6a","#d8504d"]}]},
+    options:{plugins:{legend:{position:"bottom"}}, cutout:"62%", responsive:true, maintainAspectRatio:false,
+      onHover:(evt, els)=>{
+        $("chart_swipe").style.cursor = (els && els.length) ? "pointer" : "default";
+        if(els && els.length){ cuCancelHide(); showSwipeDir(els[0].index===0?"right":"left", evt); }
+      },
+      onClick:(evt, els)=>{ if(els && els.length) showSwipeDir(els[0].index===0?"right":"left", evt); }}
+  });
+  } finally { hideChartSkel("wrap_swipe"); }
+}
 
-    // right vs left donut
-    destroy("swipe");
-    charts.swipe = new Chart($("chart_swipe"), {
-      type:"doughnut",
-      data:{labels:["Right (like)","Left (skip)"],
-            datasets:[{data:[ov.total_right_swipes, ov.total_left_swipes],
-                       backgroundColor:["#1e9e6a","#d8504d"]}]},
-      options:{plugins:{legend:{position:"bottom"}}, cutout:"62%", responsive:true, maintainAspectRatio:false}
-    });
+async function reloadTs(){
+  showChartSkel("wrap_ts");
+  try{
+  const ts = await getJSON(`/timeseries/?${rangeArgs("ts")}`);
+  destroy("ts");
+  charts.ts = new Chart($("chart_ts"), {
+    type:"line",
+    data:{labels: ts.results.map(r=>r.date),
+          datasets:[{data: ts.results.map(r=>r.count), label:"events",
+            borderColor:"#1f6fb2", backgroundColor:"rgba(31,111,178,.12)",
+            fill:true, tension:.3, pointRadius:2}]},
+    options:{plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true,ticks:{precision:0}}},
+             responsive:true, maintainAspectRatio:false}
+  });
+  } finally { hideChartSkel("wrap_ts"); }
+}
 
-    // timeseries
-    const ts = await getJSON(`/timeseries/?days=${days}`);
-    destroy("ts");
-    charts.ts = new Chart($("chart_ts"), {
-      type:"line",
-      data:{labels: ts.results.map(r=>r.date),
-            datasets:[{data: ts.results.map(r=>r.count), label:"events",
-              borderColor:"#1f6fb2", backgroundColor:"rgba(31,111,178,.12)",
-              fill:true, tension:.3, pointRadius:2}]},
-      options:{plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true,ticks:{precision:0}}},
-               responsive:true, maintainAspectRatio:false}
-    });
+async function loadKpis(){
+  const ov = await getJSON(`/overview/`);
+  $("k_users").textContent = fmt(ov.total_users);
+  $("k_careers").textContent = fmt(ov.total_careers);
+  $("k_views").textContent = fmt(ov.total_career_views);
+  $("k_swipes").textContent = fmt(ov.total_swipes);
+  $("k_right").textContent = fmt(ov.total_right_swipes);
+  $("k_left").textContent = fmt(ov.total_left_swipes);
+  $("k_saves").textContent = fmt(ov.total_saves);
+}
 
-    // ranked sections — paginated with "View more" (reset to first page on reload)
-    await loadTopCareers("viewed", "career_viewed", chViewed, "chart_viewed", "#1f6fb2", true);
-    await loadTopCareers("saved", "career_saved", chSaved, "chart_saved", "#3b8fd6", true);
-    await loadTable("routes", "/routes/", "tbl_routes", rowRoutes, 2, true);
-    await loadTable("providers", "/providers/", "tbl_providers", rowProviders, 2, true);
-    await loadTable("leads", "/consent-leads/", "tbl_leads", rowLeads, 2, true);
-    await loadTable("ratio", "/like-vs-skip/", "tbl_ratio", rowRatio, 4, true);
-    await loadTable("loc", "/by-location/", "tbl_location", rowLoc, 3, true);
-
+async function load(){
+  const rb = $("refresh"); rb.classList.add("loading"); rb.disabled = true;
+  hideErr();
+  injectSectionWindows();
+  showAllSkeletons();
+  try{
+    // Fire every section in parallel so the whole board fills in fast.
+    await Promise.allSettled([
+      loadKpis(),
+      reloadDonut(),
+      reloadTs(),
+      loadTopCareers("viewed", "career_viewed", chViewed, "chart_viewed", "#1f6fb2", true),
+      loadTopCareers("saved", "career_saved", chSaved, "chart_saved", "#3b8fd6", true),
+      loadTable("routes", "/routes-by-career/", "tbl_routes", rowRoutes, 5, true, routeRow),
+      loadTable("providers", "/provider-cards/", "tbl_providers", rowProviders, 4, true, providerRow),
+      loadTable("leads", "/consent-leads/", "tbl_leads", rowLeads, 2, true, leadRow),
+      loadTable("ratio", "/like-vs-skip/", "tbl_ratio", rowRatio, 5, true, ratioRow),
+      loadTable("loc", "/by-location/", "tbl_location", rowLoc, 3, true, locRow),
+    ]);
   }catch(e){ showErr(e.message); }
+  finally{ rb.classList.remove("loading"); rb.disabled = false; }
 }
 
 /* ===================== RANKED SECTIONS: View more ===================== */
 const STEP = 10;
 const secOff = {viewed:0, saved:0, routes:0, providers:0, leads:0, ratio:0, loc:0};
-let chViewed = {labels:[], data:[]}, chSaved = {labels:[], data:[]};
+let chViewed = {labels:[], data:[], ids:[]}, chSaved = {labels:[], data:[], ids:[]};
+// per-career user lists cached for the hover popup (career_id -> career row)
+const cuStore = {viewed:chViewed, saved:chSaved};
+const cuData = {viewed:{}, saved:{}};
+const cuActivity = {viewed:"career_viewed", saved:"career_saved"};
+const cuVerb = {viewed:"viewed", saved:"saved"};
+const cuLabel = {viewed:"Views", saved:"Saves"};
+let cuPopTag = "", cuHideTimer = null;
 
 function toggleMore(key, loaded, total){
   const more = $("more_"+key), less = $("less_"+key);
@@ -504,34 +743,410 @@ function toggleMore(key, loaded, total){
 }
 
 async function loadTopCareers(key, activity, store, canvasId, color, reset){
-  if(reset){ secOff[key]=0; store.labels=[]; store.data=[]; }
-  const r = await getJSON(`/top/${activity}/?offset=${secOff[key]}&limit=${STEP}`);
-  (r.results||[]).forEach(x=>{ store.labels.push(x.jobname||("#"+x.career_id)); store.data.push(x.count); });
-  secOff[key] += (r.results||[]).length;
-  barChart(canvasId, key, store.labels, store.data, color);
-  toggleMore(key, secOff[key], r.total||0);
+  if(reset){
+    secOff[key]=0; store.labels=[]; store.data=[]; store.ids=[];
+    cuData[key]={}; cuHide(true); showChartSkel("box_"+key);
+  }
+  try{
+    // Light call: just career + count to draw the chart fast. The per-career user
+    // lists are fetched lazily on hover (see showCareerUsers), like Like vs Skip.
+    const r = await getJSON(`/top/${activity}/?offset=${secOff[key]}&limit=${STEP}${daysQS(key)}`);
+    (r.results||[]).forEach(x=>{
+      store.labels.push(x.jobname||("#"+x.career_id));
+      store.data.push(x.count);
+      store.ids.push(x.career_id);
+    });
+    secOff[key] += (r.results||[]).length;
+    barChart(canvasId, key, store.labels, store.data, color, key);
+    toggleMore(key, secOff[key], r.total||0);
+  } finally { hideChartSkel("box_"+key); }
 }
 
-async function loadTable(key, url, tblId, rowHtml, cols, reset){
+/* ============ HOVER POPUP (who viewed/saved the hovered career) =========== */
+function cuHide(immediate){
+  clearTimeout(cuHideTimer);
+  if(immediate){ $("cu_pop").classList.remove("show"); cuPopTag=""; return; }
+  cuHideTimer = setTimeout(()=>{ $("cu_pop").classList.remove("show"); cuPopTag=""; }, 320);
+}
+function cuScheduleHide(){ cuHide(false); }
+function cuCancelHide(){ clearTimeout(cuHideTimer); }
+
+// position the popup beside the hovered point (right if room, else left)
+function cuPlace(pop, evt){
+  const ev = (evt && (evt.native || evt)) || {};
+  const pad = 16, w = pop.offsetWidth || 380, h = pop.offsetHeight || 360;
+  let x = (ev.clientX!=null ? ev.clientX : 0) + pad;
+  let y = (ev.clientY!=null ? ev.clientY : 0) - 24;
+  if(x + w > window.innerWidth - 8) x = (ev.clientX||0) - w - pad;  // flip to the left
+  if(x < 8) x = 8;
+  if(y + h > window.innerHeight - 8) y = window.innerHeight - h - 8;
+  if(y < 8) y = 8;
+  pop.style.left = x + "px"; pop.style.top = y + "px";
+}
+
+function renderCareerUsersPop(pop, key, cid, label, career){
+  const verb = cuVerb[key], users = (career && career.users) || [];
+  let html = `<div class="cu-title">${career.jobname||label||("#"+cid)}`+
+             `<span class="cu-count">${fmt(career.count)} ${verb} · ${fmt(users.length)} user${users.length===1?"":"s"}</span></div>`;
+  if(!users.length){ html += '<div class="cu-hint">No identified users.</div>'; }
+  else {
+    html += '<div class="cu-list">' + users.map(u=>
+      `<div class="cu-user" data-uid="${u.user_id}" data-name="${escAttr(u.username||("#"+u.user_id))}" data-email="${escAttr(u.email||"")}">`+
+        `<div class="cu-u-name">${u.username||("#"+u.user_id)}</div>`+
+        `<div class="cu-u-email">${u.email||"–"}</div>`+
+        `<div class="cu-u-count">${fmt(u.count)}</div>`+
+      `</div>`).join("") + '</div>';
+  }
+  pop.innerHTML = html;
+  pop.querySelectorAll(".cu-user").forEach(el=>{
+    el.addEventListener("click", ()=>{ cuHide(true); openUserModalDetail(+el.dataset.uid, el.dataset.name, el.dataset.email); });
+  });
+}
+
+async function showCareerUsers(key, idx, evt){
+  const store = cuStore[key], cid = store.ids[idx], label = store.labels[idx];
+  const tag = key + ":" + cid, pop = $("cu_pop");
+  // already showing this exact bar — keep it where it is so the cursor can reach it
+  if(cuPopTag === tag && pop.classList.contains("show")) return;
+  cuPopTag = tag;
+  if(cuData[key][cid]){ renderCareerUsersPop(pop, key, cid, label, cuData[key][cid]); pop.classList.add("show"); cuPlace(pop, evt); return; }
+  // lazy fetch this career's users — show a loading shell first
+  cuSkel(pop, label||("#"+cid));
+  pop.classList.add("show"); cuPlace(pop, evt);
+  try{
+    const data = await getJSON(`/career-users/${cuActivity[key]}/${cid}/?${rangeArgs(key)}`);
+    cuData[key][cid] = data;
+    if(cuPopTag !== tag) return;          // cursor already moved to another bar
+    renderCareerUsersPop(pop, key, cid, label, data);
+    cuPlace(pop, evt);
+  }catch(e){
+    if(cuPopTag===tag) pop.innerHTML = `<div class="cu-title">${label||("#"+cid)}</div><div class="cu-hint">${e.message}</div>`;
+  }
+}
+
+// keep the popup open while the cursor is inside it; hide on leave
+$("cu_pop").addEventListener("mouseenter", cuCancelHide);
+$("cu_pop").addEventListener("mouseleave", cuScheduleHide);
+["box_viewed","box_saved","chart_swipe"].forEach(id=>{ const b=$(id); if(b) b.addEventListener("mouseleave", cuScheduleHide); });
+
+/* ==== HOVER POPUP for "Like vs Skip" table: users with right/left swipes ==== */
+const ratioCache = {};
+
+function ratioRow(tr, x){
+  if(x.career_id==null) return;
+  tr.classList.add("row-link");
+  const name = x.jobname || ("#"+x.career_id);
+  tr.addEventListener("mouseenter", (e)=>{ cuCancelHide(); showRatioUsers(x.career_id, name, e); });
+  tr.addEventListener("mouseleave", cuScheduleHide);
+}
+
+function renderRatioPop(pop, name, data){
+  const users = (data && data.users) || [];
+  let html = `<div class="cu-title">${name}`+
+             `<span class="cu-count"><span class="rt">${fmt(data.right)} right</span> · `+
+             `<span class="lf">${fmt(data.left)} left</span> · ${fmt(users.length)} user${users.length===1?"":"s"}</span></div>`;
+  if(!users.length){ html += '<div class="cu-hint">No identified users.</div>'; }
+  else {
+    html += '<div class="cu-list">' + users.map(u=>
+      `<div class="cu-user" data-uid="${u.user_id}" data-name="${escAttr(u.username||("#"+u.user_id))}" data-email="${escAttr(u.email||"")}">`+
+        `<div class="cu-u-name">${u.username||("#"+u.user_id)}</div>`+
+        `<div class="cu-u-email">${u.email||"–"}</div>`+
+        `<div class="cu-u-count"><span class="rt">${fmt(u.right)}</span> / <span class="lf">${fmt(u.left)}</span></div>`+
+      `</div>`).join("") + '</div>';
+  }
+  pop.innerHTML = html;
+  pop.querySelectorAll(".cu-user").forEach(el=>{
+    el.addEventListener("click", ()=>{ cuHide(true); openUserModalDetail(+el.dataset.uid, el.dataset.name, el.dataset.email); });
+  });
+}
+
+/* ===== HOVER POPUP for "Popular Careers by Location": users in that city ===== */
+const cityCache = {};
+
+function locRow(tr, x){
+  if(!x.city) return;
+  tr.classList.add("row-link");
+  tr.addEventListener("mouseenter", (e)=>{ cuCancelHide(); showCityUsers(x.city, e); });
+  tr.addEventListener("mouseleave", cuScheduleHide);
+}
+
+function renderCityPop(pop, city, data){
+  const users = (data && data.users) || [];
+  let html = `<div class="cu-title">${city}`+
+             `<span class="cu-count">${fmt(data.city_views)} views · ${fmt(users.length)} user${users.length===1?"":"s"} in this city</span></div>`;
+  if(!users.length){ html += '<div class="cu-hint">No users.</div>'; }
+  else {
+    html += '<div class="cu-list">' + users.map(u=>
+      `<div class="cu-user" data-uid="${u.user_id}" data-name="${escAttr(u.username||("#"+u.user_id))}" data-email="${escAttr(u.email||"")}">`+
+        `<div class="cu-u-name">${u.username||("#"+u.user_id)}</div>`+
+        `<div class="cu-u-email">${u.email||"–"}</div>`+
+        `<div class="cu-u-count">${fmt(u.count)}</div>`+
+      `</div>`).join("") + '</div>';
+  }
+  pop.innerHTML = html;
+  pop.querySelectorAll(".cu-user").forEach(el=>{
+    el.addEventListener("click", ()=>{ cuHide(true); openUserModalDetail(+el.dataset.uid, el.dataset.name, el.dataset.email); });
+  });
+}
+
+async function showCityUsers(city, evt){
+  const tag = "city:"+city, pop = $("cu_pop");
+  if(cuPopTag===tag && pop.classList.contains("show")) return;
+  cuPopTag = tag;
+  if(cityCache[city]){ renderCityPop(pop, city, cityCache[city]); pop.classList.add("show"); cuPlace(pop, evt); return; }
+  cuSkel(pop, city);
+  pop.classList.add("show"); cuPlace(pop, evt);
+  try{
+    const data = await getJSON(`/city-users/?city=${encodeURIComponent(city)}${daysQS("loc")}`);
+    cityCache[city] = data;
+    if(cuPopTag!==tag) return;
+    renderCityPop(pop, city, data); cuPlace(pop, evt);
+  }catch(e){
+    if(cuPopTag===tag) pop.innerHTML = `<div class="cu-title">${city}</div><div class="cu-hint">${e.message}</div>`;
+  }
+}
+
+/* ===== HOVER POPUP for "Provider Link Clicks by Title": users who clicked ===== */
+const cardCache = {};
+
+function providerRow(tr, x){
+  if(!x.card) return;
+  tr.classList.add("row-link");
+  tr.addEventListener("mouseenter", (e)=>{ cuCancelHide(); showCardUsers(x, e); });
+  tr.addEventListener("mouseleave", cuScheduleHide);
+}
+
+function renderCardPop(pop, x, data){
+  const users = (data && data.users) || [];
+  const cname = x.jobname||("#"+x.career_id), route = routeLabel(x.route_id);
+  let html = `<div class="cu-title">${x.card||"–"}`+
+             `<span class="cu-count">${cname} · ${route} · ${fmt(data.clicks)} clicks · ${fmt(users.length)} user${users.length===1?"":"s"}</span></div>`;
+  if(!users.length){ html += '<div class="cu-hint">No identified users.</div>'; }
+  else {
+    html += '<div class="cu-list">' + users.map(u=>
+      `<div class="cu-user" data-uid="${u.user_id}" data-name="${escAttr(u.username||("#"+u.user_id))}" data-email="${escAttr(u.email||"")}">`+
+        `<div class="cu-u-name">${u.username||("#"+u.user_id)}</div>`+
+        `<div class="cu-u-email">${u.email||"–"}</div>`+
+        `<div class="cu-u-count">${fmt(u.clicks)}</div>`+
+      `</div>`).join("") + '</div>';
+  }
+  pop.innerHTML = html;
+  pop.querySelectorAll(".cu-user").forEach(el=>{
+    el.addEventListener("click", ()=>{ cuHide(true); openUserModalDetail(+el.dataset.uid, el.dataset.name, el.dataset.email); });
+  });
+}
+
+async function showCardUsers(x, evt){
+  const ck = (x.card||"")+"|"+(x.career_id||"")+"|"+(x.route_id||"");
+  const tag = "card:"+ck, pop = $("cu_pop");
+  if(cuPopTag===tag && pop.classList.contains("show")) return;
+  cuPopTag = tag;
+  if(cardCache[ck]){ renderCardPop(pop, x, cardCache[ck]); pop.classList.add("show"); cuPlace(pop, evt); return; }
+  cuSkel(pop, x.card||"–");
+  pop.classList.add("show"); cuPlace(pop, evt);
+  try{
+    const qp = new URLSearchParams({card:x.card||""});
+    if(x.career_id) qp.set("career_id", x.career_id);
+    if(x.route_id) qp.set("route", x.route_id);
+    const pr = secRange["providers"]||{};
+    if(pr.from) qp.set("date_from", pr.from);
+    if(pr.to) qp.set("date_to", pr.to);
+    const data = await getJSON(`/card-users/?${qp.toString()}`);
+    cardCache[ck] = data;
+    if(cuPopTag!==tag) return;
+    renderCardPop(pop, x, data); cuPlace(pop, evt);
+  }catch(e){
+    if(cuPopTag===tag) pop.innerHTML = `<div class="cu-title">${x.card||"–"}</div><div class="cu-hint">${e.message}</div>`;
+  }
+}
+
+/* ===== HOVER POPUP for the Right/Left donut: careers + users per direction ===== */
+const swipeDirCache = {};
+
+function renderSwipeDirPop(pop, direction, data){
+  const careers = (data && data.results) || [];
+  const verb = direction==="right" ? "Right swipes (likes)" : "Left swipes (skips)";
+  const totUsers = careers.reduce((n,c)=> n + ((c.users||[]).length), 0);
+  let html = `<div class="cu-title">${verb}`+
+             `<span class="cu-count">${fmt(careers.length)} career${careers.length===1?"":"s"} · ${fmt(totUsers)} user row${totUsers===1?"":"s"}</span></div>`;
+  if(!careers.length){ html += '<div class="cu-hint">No data.</div>'; }
+  else {
+    careers.forEach(c=>{
+      const cname = c.jobname||("#"+c.career_id), users = c.users||[];
+      html += `<div class="cu-grp"><span>${cname}</span><span class="n">${fmt(c.count)}</span></div>`;
+      if(!users.length){ html += '<div class="cu-hint">No identified users.</div>'; return; }
+      html += '<div class="cu-list">' + users.map(u=>
+        `<div class="cu-user" data-uid="${u.user_id}" data-name="${escAttr(u.username||("#"+u.user_id))}" data-email="${escAttr(u.email||"")}">`+
+          `<div class="cu-u-name">${u.username||("#"+u.user_id)}</div>`+
+          `<div class="cu-u-email">${u.email||"–"}</div>`+
+          `<div class="cu-u-count">${fmt(u.count)}</div>`+
+        `</div>`).join("") + '</div>';
+    });
+  }
+  pop.innerHTML = html;
+  pop.querySelectorAll(".cu-user").forEach(el=>{
+    el.addEventListener("click", ()=>{ cuHide(true); openUserModalDetail(+el.dataset.uid, el.dataset.name, el.dataset.email); });
+  });
+}
+
+async function showSwipeDir(direction, evt){
+  const tag = "swipedir:"+direction, pop = $("cu_pop");
+  if(cuPopTag===tag && pop.classList.contains("show")) return;
+  cuPopTag = tag;
+  if(swipeDirCache[direction]){ renderSwipeDirPop(pop, direction, swipeDirCache[direction]); pop.classList.add("show"); cuPlace(pop, evt); return; }
+  cuSkel(pop, direction==="right"?"Right swipes (likes)":"Left swipes (skips)");
+  pop.classList.add("show"); cuPlace(pop, evt);
+  try{
+    const data = await getJSON(`/swipe-direction/${direction}/?offset=0&limit=100000${daysQS("swipe")}`);
+    swipeDirCache[direction] = data;
+    if(cuPopTag!==tag) return;
+    renderSwipeDirPop(pop, direction, data); cuPlace(pop, evt);
+  }catch(e){
+    if(cuPopTag===tag) pop.innerHTML = `<div class="cu-title">Swipes</div><div class="cu-hint">${e.message}</div>`;
+  }
+}
+
+/* ===== HOVER POPUP for "Careers Generating Leads": users who generated leads ===== */
+const leadCache = {};
+
+function leadRow(tr, x){
+  if(x.career_id==null) return;
+  tr.classList.add("row-link");
+  const name = x.jobname||("#"+x.career_id);
+  tr.addEventListener("mouseenter", (e)=>{ cuCancelHide(); showLeadUsers(x.career_id, name, e); });
+  tr.addEventListener("mouseleave", cuScheduleHide);
+}
+
+function renderLeadPop(pop, name, data){
+  const users = (data && data.users) || [];
+  let html = `<div class="cu-title">${name}`+
+             `<span class="cu-count">${fmt(data.leads)} leads · ${fmt(users.length)} user${users.length===1?"":"s"}</span></div>`;
+  if(!users.length){ html += '<div class="cu-hint">No identified users.</div>'; }
+  else {
+    html += '<div class="cu-list">' + users.map(u=>
+      `<div class="cu-user" data-uid="${u.user_id}" data-name="${escAttr(u.username||("#"+u.user_id))}" data-email="${escAttr(u.email||"")}">`+
+        `<div class="cu-u-name">${u.username||("#"+u.user_id)}</div>`+
+        `<div class="cu-u-email">${u.email||"–"}</div>`+
+        `<div class="cu-u-count">${fmt(u.leads)}</div>`+
+      `</div>`).join("") + '</div>';
+  }
+  pop.innerHTML = html;
+  pop.querySelectorAll(".cu-user").forEach(el=>{
+    el.addEventListener("click", ()=>{ cuHide(true); openUserModalDetail(+el.dataset.uid, el.dataset.name, el.dataset.email); });
+  });
+}
+
+async function showLeadUsers(cid, name, evt){
+  const tag = "lead:"+cid, pop = $("cu_pop");
+  if(cuPopTag===tag && pop.classList.contains("show")) return;
+  cuPopTag = tag;
+  if(leadCache[cid]){ renderLeadPop(pop, name, leadCache[cid]); pop.classList.add("show"); cuPlace(pop, evt); return; }
+  cuSkel(pop, name);
+  pop.classList.add("show"); cuPlace(pop, evt);
+  try{
+    const data = await getJSON(`/lead-users/${cid}/?${rangeArgs("leads")}`);
+    leadCache[cid] = data;
+    if(cuPopTag!==tag) return;
+    renderLeadPop(pop, name, data); cuPlace(pop, evt);
+  }catch(e){
+    if(cuPopTag===tag) pop.innerHTML = `<div class="cu-title">${name}</div><div class="cu-hint">${e.message}</div>`;
+  }
+}
+
+/* ===== HOVER POPUP for "Education Routes by Career": users + course/app/job ===== */
+const routeCache = {};
+
+function routeRow(tr, x){
+  if(x.career_id==null) return;
+  tr.classList.add("row-link");
+  const name = x.jobname||("#"+x.career_id);
+  tr.addEventListener("mouseenter", (e)=>{ cuCancelHide(); showRouteUsers(x.career_id, name, e); });
+  tr.addEventListener("mouseleave", cuScheduleHide);
+}
+
+function renderRoutePop(pop, name, data){
+  const users = (data && data.users) || [];
+  let html = `<div class="cu-title">${name}`+
+             `<span class="cu-count">course ${fmt(data.course)} · apprenticeship ${fmt(data.apprenticeship)} · job ${fmt(data.job)} · ${fmt(users.length)} user${users.length===1?"":"s"}</span></div>`;
+  if(!users.length){ html += '<div class="cu-hint">No identified users.</div>'; }
+  else {
+    html += '<div class="cu-list">' + users.map(u=>
+      `<div class="cu-user" data-uid="${u.user_id}" data-name="${escAttr(u.username||("#"+u.user_id))}" data-email="${escAttr(u.email||"")}">`+
+        `<div class="cu-u-name">${u.username||("#"+u.user_id)}</div>`+
+        `<div class="cu-u-email">${u.email||"–"}</div>`+
+        `<div class="cu-u-count" title="course / apprenticeship / job">${fmt(u.course)} / ${fmt(u.apprenticeship)} / ${fmt(u.job)}</div>`+
+      `</div>`).join("") + '</div>';
+  }
+  pop.innerHTML = html;
+  pop.querySelectorAll(".cu-user").forEach(el=>{
+    el.addEventListener("click", ()=>{ cuHide(true); openUserModalDetail(+el.dataset.uid, el.dataset.name, el.dataset.email); });
+  });
+}
+
+async function showRouteUsers(cid, name, evt){
+  const tag = "route:"+cid, pop = $("cu_pop");
+  if(cuPopTag===tag && pop.classList.contains("show")) return;
+  cuPopTag = tag;
+  if(routeCache[cid]){ renderRoutePop(pop, name, routeCache[cid]); pop.classList.add("show"); cuPlace(pop, evt); return; }
+  cuSkel(pop, name);
+  pop.classList.add("show"); cuPlace(pop, evt);
+  try{
+    const data = await getJSON(`/route-users/${cid}/?${rangeArgs("routes")}`);
+    routeCache[cid] = data;
+    if(cuPopTag!==tag) return;
+    renderRoutePop(pop, name, data); cuPlace(pop, evt);
+  }catch(e){
+    if(cuPopTag===tag) pop.innerHTML = `<div class="cu-title">${name}</div><div class="cu-hint">${e.message}</div>`;
+  }
+}
+
+async function showRatioUsers(cid, name, evt){
+  const tag = "ratio:"+cid, pop = $("cu_pop");
+  if(cuPopTag===tag && pop.classList.contains("show")) return;
+  cuPopTag = tag;
+  if(ratioCache[cid]){ renderRatioPop(pop, name, ratioCache[cid]); pop.classList.add("show"); cuPlace(pop, evt); return; }
+  // async fetch — show a loading shell first
+  cuSkel(pop, name);
+  pop.classList.add("show"); cuPlace(pop, evt);
+  try{
+    const data = await getJSON(`/swipe-users/${cid}/?${rangeArgs("ratio")}`);
+    ratioCache[cid] = data;
+    if(cuPopTag!==tag) return;            // cursor already moved to another row
+    renderRatioPop(pop, name, data);
+    cuPlace(pop, evt);
+  }catch(e){
+    if(cuPopTag===tag) pop.innerHTML = `<div class="cu-title">${name}</div><div class="cu-hint">${e.message}</div>`;
+  }
+}
+
+async function loadTable(key, url, tblId, rowHtml, cols, reset, onRow){
   if(reset) secOff[key]=0;
   const tb = $(tblId).querySelector("tbody");
-  if(reset) tb.innerHTML="";
-  const r = await getJSON(`${url}?offset=${secOff[key]}&limit=${STEP}`);
-  const rows = r.results||[];
-  if(reset && !rows.length){ tb.innerHTML=`<tr><td colspan="${cols}" class="empty">No data yet</td></tr>`; }
-  rows.forEach(x=>{ const tr=document.createElement("tr"); tr.innerHTML=rowHtml(x); tb.appendChild(tr); });
-  secOff[key] += rows.length;
-  toggleMore(key, secOff[key], r.total||0);
+  if(reset) skelRows(tblId, cols);   // shimmer placeholder while fetching
+  try{
+    const r = await getJSON(`${url}?offset=${secOff[key]}&limit=${STEP}${daysQS(key)}`);
+    const rows = r.results||[];
+    if(reset) tb.innerHTML="";        // clear the skeleton before rendering
+    if(reset && !rows.length){ tb.innerHTML=`<tr><td colspan="${cols}" class="empty">No data yet</td></tr>`; }
+    rows.forEach(x=>{ const tr=document.createElement("tr"); tr.innerHTML=rowHtml(x); if(onRow) onRow(tr, x); tb.appendChild(tr); });
+    secOff[key] += rows.length;
+    toggleMore(key, secOff[key], r.total||0);
+  }catch(e){ tb.innerHTML=`<tr><td colspan="${cols}" class="empty">${e.message}</td></tr>`; }
 }
 
-const rowRoutes = r=>`<td>Route ${r.route_id}</td><td class="num">${fmt(r.count)}</td>`;
-const rowProviders = r=>`<td>${r.provider}</td><td class="num">${fmt(r.count)}</td>`;
+const rowRoutes = r=>`<td>${r.jobname||("#"+r.career_id)}</td>`+
+  `<td class="num">${fmt(r.course)}</td><td class="num">${fmt(r.apprenticeship)}</td>`+
+  `<td class="num">${fmt(r.job)}</td><td class="num"><b>${fmt(r.total)}</b></td>`;
+const rowProviders = r=>`<td>${r.card||"–"}</td><td>${r.jobname||("#"+r.career_id)}</td>`+
+  `<td>${routeLabel(r.route_id)}</td><td class="num"><b>${fmt(r.clicks)}</b></td>`;
 const rowLeads = r=>`<td>${r.jobname||("#"+r.career_id)}</td><td class="num">${fmt(r.leads)}</td>`;
 const rowRatio = r=>{
   const pct = r.like_ratio==null ? "–" : Math.round(r.like_ratio*100)+"%";
+  const dis = r.like_ratio==null ? "–" : Math.round((1-r.like_ratio)*100)+"%";
   const cls = r.like_ratio==null ? "" : (r.like_ratio>=0.5?"ratio-pos":"ratio-neg");
   return `<td>${r.jobname||("#"+r.career_id)}</td><td class="num">${fmt(r.right)}</td>`+
-         `<td class="num">${fmt(r.left)}</td><td class="num ${cls}">${pct}</td>`;
+         `<td class="num">${fmt(r.left)}</td><td class="num ${cls}">${pct}</td>`+
+         `<td class="num ratio-neg">${dis}</td>`;
 };
 const rowLoc = r=>`<td>${r.city}</td><td>${r.jobname||"–"}</td><td class="num">${fmt(r.count)}</td>`;
 
@@ -540,6 +1155,8 @@ const rowLoc = r=>`<td>${r.city}</td><td>${r.jobname||"–"}</td><td class="num"
   const b = $("view_"+k);
   if(b) b.addEventListener("click", ()=> openSheet(k));
 });
+// donut "View all": careers + users for BOTH directions (reuses the grouped swipe sheet)
+if($("view_swipe")) $("view_swipe").addEventListener("click", ()=> openSheet("ratio"));
 
 /* ===================== PDF DOWNLOAD (per section) ===================== */
 function renderPdf(title, head, body, subtitle){
@@ -562,60 +1179,351 @@ function renderPdf(title, head, body, subtitle){
 
 // Single source of truth for each section's title/columns/rows (fetches ALL rows).
 async function getSectionData(key){
-  const days = $("days").value;
   const ALL = "offset=0&limit=100000";
   switch(key){
     case "ts": {
-      const d = await getJSON(`/timeseries/?days=${days}`);
-      return {title:"Activity by Date", sub:`Last ${days} days`, head:["Date","Events"],
+      const d = await getJSON(`/timeseries/?${rangeArgs("ts")}`);
+      return {title:"Activity by Date", sub:rangeLabel("ts"), head:["Date","Events"],
               rows:d.results.map(r=>[r.date, fmt(r.count)])};
     }
     case "swipe": {
-      const o = await getJSON(`/overview/?days=${days}`);
-      return {title:"Right vs Left Swipes", sub:`Last ${days} days`, head:["Action","Count"],
+      const o = await getJSON(`/overview/?${rangeArgs("swipe")}`);
+      return {title:"Right vs Left Swipes", sub:rangeLabel("swipe"), head:["Action","Count"],
               rows:[["Right swipes (likes)", fmt(o.total_right_swipes)],
                     ["Left swipes (skips)", fmt(o.total_left_swipes)],
                     ["Total swipes", fmt(o.total_swipes)]]};
     }
-    case "viewed": {
-      const d = await getJSON(`/top/career_viewed/?${ALL}`);
-      return {title:"Most Viewed Careers", sub:`${d.total} careers`, head:["#","Career","Views"],
-              rows:d.results.map((r,i)=>[i+1, r.jobname||("#"+r.career_id), fmt(r.count)])};
-    }
-    case "saved": {
-      const d = await getJSON(`/top/career_saved/?${ALL}`);
-      return {title:"Most Saved Careers", sub:`${d.total} careers`, head:["#","Career","Saves"],
-              rows:d.results.map((r,i)=>[i+1, r.jobname||("#"+r.career_id), fmt(r.count)])};
-    }
+    case "viewed": return groupedSection("viewed", "Most Viewed Careers");
+    case "saved":  return groupedSection("saved",  "Most Saved Careers");
     case "routes": {
-      const d = await getJSON(`/routes/?${ALL}`);
-      return {title:"Top Education Routes", sub:`${d.total} routes`, head:["Route ID","Clicks"],
-              rows:d.results.map(r=>["Route "+r.route_id, fmt(r.count)])};
+      // grouped: each career with the users who clicked its routes (course/app/job)
+      const d = await getJSON(`/route-careers/?${ALL}${daysQS("routes")}`);
+      const rows = [];
+      (d.results||[]).forEach(c=>{
+        const cname = c.jobname||("#"+c.career_id);
+        const users = c.users||[];
+        if(!users.length){ rows.push([cname, "—", "—", fmt(c.course), fmt(c.apprenticeship), fmt(c.job)]); return; }
+        users.forEach((u,i)=> rows.push([
+          i===0?cname:"", u.username||("#"+u.user_id), u.email||"–", fmt(u.course), fmt(u.apprenticeship), fmt(u.job)
+        ]));
+      });
+      return {title:"Education Routes by Career — by user", sub:`${d.total} careers`,
+              head:["Career","User","Email","Course","Apprenticeship","Job"], rows};
     }
     case "providers": {
-      const d = await getJSON(`/providers/?${ALL}`);
-      return {title:"Top Provider Links", sub:`${d.total} providers`, head:["Provider","Clicks"],
-              rows:d.results.map(r=>[r.provider, fmt(r.count)])};
+      // grouped: each titled card with the users who clicked it
+      const d = await getJSON(`/provider-card-users/?${ALL}${daysQS("providers")}`);
+      const rows = [];
+      (d.results||[]).forEach(c=>{
+        const users = c.users||[];
+        const route = routeLabel(c.route_id), cname = c.jobname||("#"+c.career_id);
+        if(!users.length){ rows.push([c.card||"–", cname, route, "—", "—", fmt(c.clicks)]); return; }
+        users.forEach((u,i)=> rows.push([
+          i===0?(c.card||"–"):"", i===0?cname:"", i===0?route:"",
+          u.username||("#"+u.user_id), u.email||"–", fmt(u.clicks)
+        ]));
+      });
+      return {title:"Provider Link Clicks by Title — by user", sub:`${d.total} titles`,
+              head:["Title","Career","Route","User","Email","Clicks"], rows};
     }
     case "leads": {
-      const d = await getJSON(`/consent-leads/?${ALL}`);
-      return {title:"Careers Generating Leads", sub:`${d.total} careers`, head:["Career","Leads"],
-              rows:d.results.map(r=>[r.jobname||("#"+r.career_id), fmt(r.leads)])};
+      // grouped: each career with the users who generated leads
+      const d = await getJSON(`/lead-careers/?${ALL}${daysQS("leads")}`);
+      const rows = [];
+      (d.results||[]).forEach(c=>{
+        const cname = c.jobname||("#"+c.career_id);
+        const users = c.users||[];
+        if(!users.length){ rows.push([cname, "—", "—", fmt(c.leads)]); return; }
+        users.forEach((u,i)=> rows.push([
+          i===0?cname:"", u.username||("#"+u.user_id), u.email||"–", fmt(u.leads)
+        ]));
+      });
+      return {title:"Careers Generating Leads — by user", sub:`${d.total} careers`,
+              head:["Career","User","Email","Leads"], rows};
     }
     case "ratio": {
-      const d = await getJSON(`/like-vs-skip/?${ALL}`);
-      return {title:"Like vs Skip per Career", sub:`${d.total} careers`,
-              head:["Career","Right","Left","Like %"],
-              rows:d.results.map(r=>[r.jobname||("#"+r.career_id), fmt(r.right), fmt(r.left),
-                r.like_ratio==null?"–":Math.round(r.like_ratio*100)+"%"])};
+      // grouped: each career with all its swiping users (right/left)
+      const d = await getJSON(`/swipe-careers/?${ALL}${daysQS("ratio")}`);
+      const rows = [];
+      (d.results||[]).forEach(c=>{
+        const cname = c.jobname||("#"+c.career_id);
+        const users = c.users||[];
+        if(!users.length){ rows.push([cname, "—", "—", fmt(c.right), fmt(c.left)]); return; }
+        users.forEach((u,i)=> rows.push([
+          i===0?cname:"", u.username||("#"+u.user_id), u.email||"–", fmt(u.right), fmt(u.left)
+        ]));
+      });
+      return {title:"Like vs Skip per Career — by user", sub:`${d.total} careers`,
+              head:["Career","User","Email","Right","Left"], rows};
     }
     case "loc": {
-      const d = await getJSON(`/by-location/?${ALL}`);
-      return {title:"Popular Careers by Location", sub:`${d.total} cities`,
-              head:["City","Top Career","Views"],
-              rows:d.results.map(r=>[r.city, r.jobname||"–", fmt(r.count)])};
+      // grouped: each city with the users living there (and their view counts)
+      const d = await getJSON(`/location-users/?${ALL}${daysQS("loc")}`);
+      const rows = [];
+      (d.results||[]).forEach(c=>{
+        const users = c.users||[];
+        if(!users.length){ rows.push([c.city, "—", "—", fmt(c.city_views)]); return; }
+        users.forEach((u,i)=> rows.push([
+          i===0?c.city:"", u.username||("#"+u.user_id), u.email||"–", fmt(u.count)
+        ]));
+      });
+      return {title:"Popular Careers by Location — by user", sub:`${d.total} cities`,
+              head:["City","User","Email","Views"], rows};
     }
   }
+}
+
+// Fetch ALL careers (each with all its users) for the grouped "View all" / PDF.
+async function fetchGrouped(key){
+  return getJSON(`/career-users/${cuActivity[key]}/?offset=0&limit=100000${daysQS(key)}`);
+}
+
+// Flat rows for the grouped PDF: one row per (career, user); career shown once.
+async function groupedSection(key, title){
+  const d = await fetchGrouped(key);
+  const rows = [];
+  (d.results||[]).forEach(c=>{
+    const cname = c.jobname||("#"+c.career_id);
+    const users = c.users||[];
+    if(!users.length){ rows.push([cname, "—", "—", fmt(c.count)]); return; }
+    users.forEach((u,i)=> rows.push([
+      i===0?cname:"", u.username||("#"+u.user_id), u.email||"–", fmt(u.count)
+    ]));
+  });
+  return {title, sub:`${d.total} careers`, head:["Career","User","Email",cuLabel[key]], rows};
+}
+
+// Grouped, clickable "View all" sheet: each career with the users who acted on it.
+async function openSheetGrouped(key){
+  $("sheet-chart-wrap").style.display = "none";
+  $("sheet-table").style.display = "";
+  $("sheet-title").textContent = "Loading…"; $("sheet-sub").textContent = "";
+  $("sheet-table").querySelector("thead").innerHTML = "";
+  $("sheet").style.display = "flex";
+  sheetSkel();
+  const d = await fetchGrouped(key);
+  const verb = cuVerb[key], cap = cuLabel[key];
+  $("sheet-title").textContent = (key==="viewed"?"Most Viewed Careers":"Most Saved Careers") + " — by user";
+  $("sheet-sub").textContent = `${d.total} careers · click a user to open their activity`;
+  $("sheet-table").querySelector("thead").innerHTML =
+    `<tr><th>Career</th><th>User</th><th>Email</th><th class="num">${cap}</th></tr>`;
+  const tb = $("sheet-table").querySelector("tbody");
+  if(!(d.results||[]).length){ tb.innerHTML = `<tr><td colspan="4" class="empty">No data yet</td></tr>`; return; }
+  let html = "";
+  d.results.forEach(c=>{
+    const cname = c.jobname||("#"+c.career_id);
+    const users = c.users||[];
+    if(!users.length){
+      html += `<tr><td><b>${cname}</b></td><td class="empty" colspan="3">No identified users (${fmt(c.count)} ${verb})</td></tr>`;
+      return;
+    }
+    users.forEach((u,i)=>{
+      html += `<tr class="row-link cu-row" data-uid="${u.user_id}" data-name="${escAttr(u.username||("#"+u.user_id))}" data-email="${escAttr(u.email||"")}">`+
+        `<td>${i===0?("<b>"+cname+"</b> <span class=\"muted\">("+fmt(c.count)+" "+verb+")</span>"):""}</td>`+
+        `<td><b>${u.username||("#"+u.user_id)}</b></td>`+
+        `<td class="muted">${u.email||"–"}</td>`+
+        `<td class="num">${fmt(u.count)}</td></tr>`;
+    });
+  });
+  tb.innerHTML = html;
+  tb.querySelectorAll(".cu-row").forEach(el=>{
+    el.addEventListener("click", ()=> openUserModalDetail(+el.dataset.uid, el.dataset.name, el.dataset.email));
+  });
+}
+
+// Grouped, clickable "View all" sheet for Like vs Skip: each career with the
+// users who swiped on it (per-user right/left). Click a user -> their activity.
+async function openSheetGroupedSwipe(){
+  $("sheet-chart-wrap").style.display = "none";
+  $("sheet-table").style.display = "";
+  $("sheet-title").textContent = "Loading…"; $("sheet-sub").textContent = "";
+  $("sheet-table").querySelector("thead").innerHTML = "";
+  $("sheet").style.display = "flex";
+  sheetSkel();
+  const d = await getJSON(`/swipe-careers/?offset=0&limit=100000${daysQS("ratio")}`);
+  $("sheet-title").textContent = "Like vs Skip per Career — by user";
+  $("sheet-sub").textContent = `${d.total} careers · click a user to open their activity`;
+  $("sheet-table").querySelector("thead").innerHTML =
+    `<tr><th>Career</th><th>User</th><th>Email</th><th class="num">Right</th><th class="num">Left</th></tr>`;
+  const tb = $("sheet-table").querySelector("tbody");
+  if(!(d.results||[]).length){ tb.innerHTML = `<tr><td colspan="5" class="empty">No data yet</td></tr>`; return; }
+  let html = "";
+  d.results.forEach(c=>{
+    const cname = c.jobname||("#"+c.career_id);
+    const users = c.users||[];
+    const pct = c.like_ratio==null ? "" : " · "+Math.round(c.like_ratio*100)+"% like";
+    if(!users.length){
+      html += `<tr><td><b>${cname}</b></td><td class="empty" colspan="4">No identified users (${fmt(c.right)} right / ${fmt(c.left)} left)</td></tr>`;
+      return;
+    }
+    users.forEach((u,i)=>{
+      html += `<tr class="row-link cu-row" data-uid="${u.user_id}" data-name="${escAttr(u.username||("#"+u.user_id))}" data-email="${escAttr(u.email||"")}">`+
+        `<td>${i===0?("<b>"+cname+"</b> <span class=\"muted\">("+fmt(c.right)+" / "+fmt(c.left)+pct+")</span>"):""}</td>`+
+        `<td><b>${u.username||("#"+u.user_id)}</b></td>`+
+        `<td class="muted">${u.email||"–"}</td>`+
+        `<td class="num rt">${fmt(u.right)}</td>`+
+        `<td class="num lf">${fmt(u.left)}</td></tr>`;
+    });
+  });
+  tb.innerHTML = html;
+  tb.querySelectorAll(".cu-row").forEach(el=>{
+    el.addEventListener("click", ()=> openUserModalDetail(+el.dataset.uid, el.dataset.name, el.dataset.email));
+  });
+}
+
+// Grouped, clickable "View all" sheet for Popular Careers by Location: each
+// city with the users living there. Click a user -> their activity.
+async function openSheetGroupedCity(){
+  $("sheet-chart-wrap").style.display = "none";
+  $("sheet-table").style.display = "";
+  $("sheet-title").textContent = "Loading…"; $("sheet-sub").textContent = "";
+  $("sheet-table").querySelector("thead").innerHTML = "";
+  $("sheet").style.display = "flex";
+  sheetSkel();
+  const d = await getJSON(`/location-users/?offset=0&limit=100000${daysQS("loc")}`);
+  $("sheet-title").textContent = "Popular Careers by Location — by user";
+  $("sheet-sub").textContent = `${d.total} cities · click a user to open their activity`;
+  $("sheet-table").querySelector("thead").innerHTML =
+    `<tr><th>City</th><th>User</th><th>Email</th><th class="num">Views</th></tr>`;
+  const tb = $("sheet-table").querySelector("tbody");
+  if(!(d.results||[]).length){ tb.innerHTML = `<tr><td colspan="4" class="empty">No data yet</td></tr>`; return; }
+  let html = "";
+  d.results.forEach(c=>{
+    const users = c.users||[];
+    if(!users.length){
+      html += `<tr><td><b>${c.city}</b></td><td class="empty" colspan="3">No users (${fmt(c.city_views)} views)</td></tr>`;
+      return;
+    }
+    users.forEach((u,i)=>{
+      html += `<tr class="row-link cu-row" data-uid="${u.user_id}" data-name="${escAttr(u.username||("#"+u.user_id))}" data-email="${escAttr(u.email||"")}">`+
+        `<td>${i===0?("<b>"+c.city+"</b> <span class=\"muted\">("+fmt(c.city_views)+" views)</span>"):""}</td>`+
+        `<td><b>${u.username||("#"+u.user_id)}</b></td>`+
+        `<td class="muted">${u.email||"–"}</td>`+
+        `<td class="num">${fmt(u.count)}</td></tr>`;
+    });
+  });
+  tb.innerHTML = html;
+  tb.querySelectorAll(".cu-row").forEach(el=>{
+    el.addEventListener("click", ()=> openUserModalDetail(+el.dataset.uid, el.dataset.name, el.dataset.email));
+  });
+}
+
+// Grouped, clickable "View all" sheet for Education Routes by Career: each
+// career with the users who clicked its routes (course/apprenticeship/job).
+async function openSheetGroupedRoute(){
+  $("sheet-chart-wrap").style.display = "none";
+  $("sheet-table").style.display = "";
+  $("sheet-title").textContent = "Loading…"; $("sheet-sub").textContent = "";
+  $("sheet-table").querySelector("thead").innerHTML = "";
+  $("sheet").style.display = "flex";
+  sheetSkel();
+  const d = await getJSON(`/route-careers/?offset=0&limit=100000${daysQS("routes")}`);
+  $("sheet-title").textContent = "Education Routes by Career — by user";
+  $("sheet-sub").textContent = `${d.total} careers · click a user to open their activity`;
+  $("sheet-table").querySelector("thead").innerHTML =
+    `<tr><th>Career</th><th>User</th><th>Email</th><th class="num">Course</th><th class="num">Apprenticeship</th><th class="num">Job</th></tr>`;
+  const tb = $("sheet-table").querySelector("tbody");
+  if(!(d.results||[]).length){ tb.innerHTML = `<tr><td colspan="6" class="empty">No data yet</td></tr>`; return; }
+  let html = "";
+  d.results.forEach(c=>{
+    const cname = c.jobname||("#"+c.career_id);
+    const users = c.users||[];
+    if(!users.length){
+      html += `<tr><td><b>${cname}</b></td><td class="empty" colspan="5">No identified users (${fmt(c.total)} clicks)</td></tr>`;
+      return;
+    }
+    users.forEach((u,i)=>{
+      html += `<tr class="row-link cu-row" data-uid="${u.user_id}" data-name="${escAttr(u.username||("#"+u.user_id))}" data-email="${escAttr(u.email||"")}">`+
+        `<td>${i===0?("<b>"+cname+"</b> <span class=\"muted\">("+fmt(c.total)+" clicks)</span>"):""}</td>`+
+        `<td><b>${u.username||("#"+u.user_id)}</b></td>`+
+        `<td class="muted">${u.email||"–"}</td>`+
+        `<td class="num">${fmt(u.course)}</td>`+
+        `<td class="num">${fmt(u.apprenticeship)}</td>`+
+        `<td class="num">${fmt(u.job)}</td></tr>`;
+    });
+  });
+  tb.innerHTML = html;
+  tb.querySelectorAll(".cu-row").forEach(el=>{
+    el.addEventListener("click", ()=> openUserModalDetail(+el.dataset.uid, el.dataset.name, el.dataset.email));
+  });
+}
+
+// Grouped, clickable "View all" sheet for Provider Link Clicks by Title: each
+// titled card with the users who clicked it. Click a user -> their activity.
+async function openSheetGroupedCard(){
+  $("sheet-chart-wrap").style.display = "none";
+  $("sheet-table").style.display = "";
+  $("sheet-title").textContent = "Loading…"; $("sheet-sub").textContent = "";
+  $("sheet-table").querySelector("thead").innerHTML = "";
+  $("sheet").style.display = "flex";
+  sheetSkel();
+  const d = await getJSON(`/provider-card-users/?offset=0&limit=100000${daysQS("providers")}`);
+  $("sheet-title").textContent = "Provider Link Clicks by Title — by user";
+  $("sheet-sub").textContent = `${d.total} titles · click a user to open their activity`;
+  $("sheet-table").querySelector("thead").innerHTML =
+    `<tr><th>Title</th><th>Career</th><th>Route</th><th>User</th><th>Email</th><th class="num">Clicks</th></tr>`;
+  const tb = $("sheet-table").querySelector("tbody");
+  if(!(d.results||[]).length){ tb.innerHTML = `<tr><td colspan="6" class="empty">No data yet</td></tr>`; return; }
+  let html = "";
+  d.results.forEach(c=>{
+    const cname = c.jobname||("#"+c.career_id), route = routeLabel(c.route_id);
+    const users = c.users||[];
+    if(!users.length){
+      html += `<tr><td><b>${c.card||"–"}</b></td><td>${cname}</td><td>${route}</td><td class="empty" colspan="3">No identified users (${fmt(c.clicks)} clicks)</td></tr>`;
+      return;
+    }
+    users.forEach((u,i)=>{
+      html += `<tr class="row-link cu-row" data-uid="${u.user_id}" data-name="${escAttr(u.username||("#"+u.user_id))}" data-email="${escAttr(u.email||"")}">`+
+        `<td>${i===0?("<b>"+(c.card||"–")+"</b>"):""}</td>`+
+        `<td>${i===0?cname:""}</td>`+
+        `<td>${i===0?route:""}</td>`+
+        `<td><b>${u.username||("#"+u.user_id)}</b></td>`+
+        `<td class="muted">${u.email||"–"}</td>`+
+        `<td class="num">${fmt(u.clicks)}</td></tr>`;
+    });
+  });
+  tb.innerHTML = html;
+  tb.querySelectorAll(".cu-row").forEach(el=>{
+    el.addEventListener("click", ()=> openUserModalDetail(+el.dataset.uid, el.dataset.name, el.dataset.email));
+  });
+}
+
+// Grouped, clickable "View all" sheet for Careers Generating Leads: each career
+// with the users who generated leads. Click a user -> their activity.
+async function openSheetGroupedLead(){
+  $("sheet-chart-wrap").style.display = "none";
+  $("sheet-table").style.display = "";
+  $("sheet-title").textContent = "Loading…"; $("sheet-sub").textContent = "";
+  $("sheet-table").querySelector("thead").innerHTML = "";
+  $("sheet").style.display = "flex";
+  sheetSkel();
+  const d = await getJSON(`/lead-careers/?offset=0&limit=100000${daysQS("leads")}`);
+  $("sheet-title").textContent = "Careers Generating Leads — by user";
+  $("sheet-sub").textContent = `${d.total} careers · click a user to open their activity`;
+  $("sheet-table").querySelector("thead").innerHTML =
+    `<tr><th>Career</th><th>User</th><th>Email</th><th class="num">Leads</th></tr>`;
+  const tb = $("sheet-table").querySelector("tbody");
+  if(!(d.results||[]).length){ tb.innerHTML = `<tr><td colspan="4" class="empty">No data yet</td></tr>`; return; }
+  let html = "";
+  d.results.forEach(c=>{
+    const cname = c.jobname||("#"+c.career_id);
+    const users = c.users||[];
+    if(!users.length){
+      html += `<tr><td><b>${cname}</b></td><td class="empty" colspan="3">No identified users (${fmt(c.leads)} leads)</td></tr>`;
+      return;
+    }
+    users.forEach((u,i)=>{
+      html += `<tr class="row-link cu-row" data-uid="${u.user_id}" data-name="${escAttr(u.username||("#"+u.user_id))}" data-email="${escAttr(u.email||"")}">`+
+        `<td>${i===0?("<b>"+cname+"</b> <span class=\"muted\">("+fmt(c.leads)+" leads)</span>"):""}</td>`+
+        `<td><b>${u.username||("#"+u.user_id)}</b></td>`+
+        `<td class="muted">${u.email||"–"}</td>`+
+        `<td class="num">${fmt(u.leads)}</td></tr>`;
+    });
+  });
+  tb.innerHTML = html;
+  tb.querySelectorAll(".cu-row").forEach(el=>{
+    el.addEventListener("click", ()=> openUserModalDetail(+el.dataset.uid, el.dataset.name, el.dataset.email));
+  });
 }
 
 let sheetKey = null, sheetChart = null;
@@ -626,7 +1534,9 @@ async function openSheetChart(key){
   $("sheet-table").style.display = "none";
   $("sheet-title").textContent = "Loading…"; $("sheet-sub").textContent = "";
   $("sheet").style.display = "flex";
-  const d = await getJSON(`/timeseries/?days=3650`);
+  showChartSkel("sheet-chart-wrap");
+  try{
+  const d = await getJSON(`/timeseries/?${rangeArgs("ts")}`);
   $("sheet-title").textContent = "Activity by Date — full history";
   $("sheet-sub").textContent = `${d.results.length} days`;
   if(sheetChart){ sheetChart.destroy(); sheetChart = null; }
@@ -639,19 +1549,26 @@ async function openSheetChart(key){
     options:{plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true,ticks:{precision:0}}},
              responsive:true, maintainAspectRatio:false}
   });
+  } finally { hideChartSkel("sheet-chart-wrap"); }
 }
 
 async function openSheet(key){
   try{
     sheetKey = key;
     if(key === "ts"){ await openSheetChart(key); return; }
+    if(key === "viewed" || key === "saved"){ await openSheetGrouped(key); return; }
+    if(key === "ratio"){ await openSheetGroupedSwipe(); return; }
+    if(key === "loc"){ await openSheetGroupedCity(); return; }
+    if(key === "routes"){ await openSheetGroupedRoute(); return; }
+    if(key === "providers"){ await openSheetGroupedCard(); return; }
+    if(key === "leads"){ await openSheetGroupedLead(); return; }
     // table mode
     $("sheet-chart-wrap").style.display = "none";
     $("sheet-table").style.display = "";
     $("sheet-title").textContent = "Loading…"; $("sheet-sub").textContent = "";
     $("sheet-table").querySelector("thead").innerHTML = "";
-    $("sheet-table").querySelector("tbody").innerHTML = "";
     $("sheet").style.display = "flex";
+    sheetSkel();
     const {title, sub, head, rows} = await getSectionData(key);
     $("sheet-title").textContent = title;
     $("sheet-sub").textContent = sub || `${rows.length} rows`;
@@ -670,18 +1587,30 @@ async function downloadReport(key){
   }catch(e){ showErr("PDF download failed: "+e.message); }
 }
 
+// PDF button loading animation (spins the icon + disables while generating)
+function pdfBtnLoading(btn, on){
+  if(!btn) return;
+  if(on){ btn.dataset.orig = btn.innerHTML; btn.classList.add("loading"); btn.disabled = true;
+          btn.innerHTML = '<span class="ricon">↻</span> PDF'; }
+  else { btn.classList.remove("loading"); btn.disabled = false;
+         if(btn.dataset.orig!=null) btn.innerHTML = btn.dataset.orig; }
+}
+async function pdfRun(btn, fn){
+  pdfBtnLoading(btn, true);
+  try{ await fn(); } finally{ pdfBtnLoading(btn, false); }
+}
+
 // header PDF buttons + sheet controls
 ["ts","swipe","viewed","saved","routes","providers","leads","ratio","loc"].forEach(k=>{
   const b = $("dl_"+k);
-  if(b) b.addEventListener("click", ()=> downloadReport(k));
+  if(b) b.addEventListener("click", ()=> pdfRun(b, ()=> downloadReport(k)));
 });
 $("sheet-close").addEventListener("click", ()=> $("sheet").style.display="none");
 $("sheet").addEventListener("click", (e)=>{ if(e.target===$("sheet")) $("sheet").style.display="none"; });
-$("sheet-pdf").addEventListener("click", ()=>{ if(sheetKey) downloadReport(sheetKey); });
+$("sheet-pdf").addEventListener("click", ()=>{ if(sheetKey) pdfRun($("sheet-pdf"), ()=> downloadReport(sheetKey)); });
 document.addEventListener("keydown", (e)=>{ if(e.key==="Escape") $("sheet").style.display="none"; });
 
 $("refresh").addEventListener("click", load);
-$("days").addEventListener("change", load);
 load();
 
 /* ===================== PAGINATION HELPERS ===================== */
@@ -708,7 +1637,7 @@ function dt(iso){ if(!iso) return "–"; const d=new Date(iso); return d.toLocal
 
 async function loadUsers(){
   const tb = $("tbl_users").querySelector("tbody");
-  tb.innerHTML = '<tr><td colspan="4" class="empty">Loading…</td></tr>';
+  skelRows("tbl_users", 5);
   const params = new URLSearchParams();
   if($("u_search").value.trim()) params.set("q", $("u_search").value.trim());
   if($("u_from").value) params.set("date_from", $("u_from").value);
@@ -718,23 +1647,24 @@ async function loadUsers(){
     const data = await getJSON(`/users/?${params.toString()}`);
     const rows = data.results || [];
     renderPager("u", usersOffset, data.total||0, rows.length);
-    if(!rows.length){ tb.innerHTML='<tr><td colspan="4" class="empty">No users found</td></tr>'; return; }
+    if(!rows.length){ tb.innerHTML='<tr><td colspan="5" class="empty">No users found</td></tr>'; return; }
     tb.innerHTML="";
     rows.forEach(u=>{
       const tr=document.createElement("tr");
       tr.className="row-link";
       tr.innerHTML = `<td><b>${u.username||("#"+u.id)}</b></td><td class="muted">${u.email||"–"}</td>`+
                      `<td class="num"><span class="badge">${fmt(u.event_count)}</span></td>`+
+                     `<td class="muted">${dateOnly(u.date_joined)}</td>`+
                      `<td class="muted">${dt(u.last_active)}</td>`;
       tr.addEventListener("click", ()=> openUser(u.id, u.username||("#"+u.id), u.email||""));
       tb.appendChild(tr);
     });
-  }catch(e){ tb.innerHTML=`<tr><td colspan="4" class="empty">${e.message}</td></tr>`; }
+  }catch(e){ tb.innerHTML=`<tr><td colspan="5" class="empty">${e.message}</td></tr>`; }
 }
 
 async function loadUserDetail(){
   const tb = $("tbl_timeline").querySelector("tbody");
-  tb.innerHTML = '<tr><td colspan="5" class="empty">Loading…</td></tr>';
+  skelRows("tbl_timeline", 5);
   const params = new URLSearchParams();
   if($("d_from").value) params.set("date_from", $("d_from").value);
   if($("d_to").value) params.set("date_to", $("d_to").value);
@@ -759,7 +1689,7 @@ async function loadUserDetail(){
       tr.innerHTML = `<td class="muted">${dt(a.created_at)}</td>`+
                      `<td class="ev-type">${a.activity_type.replace(/_/g,' ')}</td>`+
                      `<td>${a.career||"–"}</td>`+
-                     `<td>${a.route_id!=null?("Route "+a.route_id):"–"}</td>`+
+                     `<td>${routeLabel(a.route_id)}</td>`+
                      `<td class="muted">${a.activity_value||"–"}</td>`;
       tb.appendChild(tr);
     });
@@ -773,8 +1703,60 @@ function openUser(id, name, email){
   loadUserDetail();
 }
 
+// Open the users modal straight into a single user's activity page (used by the
+// chart hover side-panel and the "View all" grouped sheet).
+function openUserModalDetail(id, name, email){
+  $("sheet").style.display = "none";   // sheet sits above the users modal; close it first
+  openModal();
+  openUser(id, name, email);
+}
+
+/* ---- PDF: All Users list (respects search + Joined date interval) ---- */
+async function downloadUsersPdf(){
+  try{
+    const params = new URLSearchParams();
+    const q = $("u_search").value.trim(), from = $("u_from").value, to = $("u_to").value;
+    if(q) params.set("q", q);
+    if(from) params.set("date_from", from);
+    if(to) params.set("date_to", to);
+    params.set("offset", 0); params.set("limit", 100000);
+    const data = await getJSON(`/users/?${params.toString()}`);
+    const rows = (data.results||[]).map(u=>[
+      u.username||("#"+u.id), u.email||"–", fmt(u.event_count),
+      dateOnly(u.date_joined), u.last_active?dt(u.last_active):"–"
+    ]);
+    let sub = `${fmt(data.total)} users`;
+    if(from||to) sub += `  ·  joined ${from||"…"} → ${to||"…"}`;
+    if(q) sub += `  ·  search “${q}”`;
+    renderPdf("All Users", ["User","Email","Events","Joined","Last active"], rows, sub);
+  }catch(e){ showErr("PDF download failed: "+e.message); }
+}
+
+/* ---- PDF: one user's full activity (respects the From/To date filter) ---- */
+async function downloadUserActivityPdf(){
+  if(!currentUserId) return;
+  try{
+    const params = new URLSearchParams();
+    const from = $("d_from").value, to = $("d_to").value;
+    if(from) params.set("date_from", from);
+    if(to) params.set("date_to", to);
+    params.set("limit", 100000);   // full timeline, not the 200 on-screen cap
+    const data = await getJSON(`/user/${currentUserId}/?${params.toString()}`);
+    const rows = (data.timeline||[]).map(a=>[
+      dt(a.created_at), a.activity_type.replace(/_/g,' '),
+      a.career||"–", a.route_id!=null?routeLabel(a.route_id):"–", a.activity_value||"–"
+    ]);
+    const who = data.username || ("User #"+currentUserId);
+    let sub = `${who} · ${fmt(data.total_events)} events`;
+    if(from||to) sub += `  ·  ${from||"…"} → ${to||"…"}`;
+    renderPdf("User Activity — "+who, ["When","Activity","Career","Route","Value"], rows, sub);
+  }catch(e){ showErr("PDF download failed: "+e.message); }
+}
+
 // wire up
 $("card_users").addEventListener("click", ()=>{ usersOffset=0; openModal(); showUsersView(); loadUsers(); });
+$("u_pdf").addEventListener("click", ()=> pdfRun($("u_pdf"), downloadUsersPdf));
+$("d_pdf").addEventListener("click", ()=> pdfRun($("d_pdf"), downloadUserActivityPdf));
 $("modal-close").addEventListener("click", closeModal);
 modal.addEventListener("click", (e)=>{ if(e.target===modal) closeModal(); });
 $("u_apply").addEventListener("click", ()=>{ usersOffset=0; loadUsers(); });
@@ -798,11 +1780,9 @@ function showCDetailView(){ $("view-careers").style.display="none"; $("view-cdet
 
 async function loadCareers(){
   const tb = $("tbl_careers").querySelector("tbody");
-  tb.innerHTML = '<tr><td colspan="3" class="empty">Loading…</td></tr>';
+  skelRows("tbl_careers", 3);
   const params = new URLSearchParams();
   if($("c_search").value.trim()) params.set("q", $("c_search").value.trim());
-  if($("c_from").value) params.set("date_from", $("c_from").value);
-  if($("c_to").value) params.set("date_to", $("c_to").value);
   params.set("offset", careersOffset); params.set("limit", PAGE);
   try{
     const data = await getJSON(`/careers/?${params.toString()}`);
@@ -822,7 +1802,9 @@ async function loadCareers(){
 }
 
 async function loadCareerDetail(){
-  const sg = $("cd_stats"); sg.innerHTML='<div class="empty">Loading…</div>';
+  const sg = $("cd_stats"); sg.innerHTML = Array.from({length:8}).map(()=>
+    '<div class="stat"><span class="skel skel-line" style="width:55%"></span>'+
+    '<span class="skel skel-line" style="width:38%;height:20px;margin-top:6px"></span></div>').join("");
   const rb = $("tbl_croutes").querySelector("tbody"); rb.innerHTML="";
   const params = new URLSearchParams();
   if($("cd_from").value) params.set("date_from", $("cd_from").value);
@@ -847,7 +1829,7 @@ async function loadCareerDetail(){
     const routes = data.routes || [];
     if(!routes.length){ rb.innerHTML='<tr><td colspan="2" class="empty">No route clicks</td></tr>'; }
     else routes.forEach(r=>{ const tr=document.createElement("tr");
-      tr.innerHTML=`<td>Route ${r.route_id}</td><td class="num">${fmt(r.count)}</td>`; rb.appendChild(tr); });
+      tr.innerHTML=`<td>${routeLabel(r.route_id)}</td><td class="num">${fmt(r.count)}</td>`; rb.appendChild(tr); });
   }catch(e){ sg.innerHTML=`<div class="empty">${e.message}</div>`; }
 }
 
@@ -858,11 +1840,30 @@ function openCareer(id, name, cat){
   loadCareerDetail();
 }
 
+/* ---- PDF: All Careers list (respects search) ---- */
+async function downloadCareersPdf(){
+  try{
+    const params = new URLSearchParams();
+    const q = $("c_search").value.trim();
+    if(q) params.set("q", q);
+    params.set("offset", 0); params.set("limit", 100000);
+    const data = await getJSON(`/careers/?${params.toString()}`);
+    const rows = (data.results||[]).map(c=>{
+      const cat = [c.career_type, c.sub_type].filter(Boolean).join(" · ") || "–";
+      return [c.jobname||("#"+c.id), cat, fmt(c.event_count)];
+    });
+    let sub = `${fmt(data.total)} careers`;
+    if(q) sub += `  ·  search “${q}”`;
+    renderPdf("All Careers", ["Career","Category","Events"], rows, sub);
+  }catch(e){ showErr("PDF download failed: "+e.message); }
+}
+
 $("card_careers").addEventListener("click", ()=>{ careersOffset=0; openCModal(); showCareersView(); loadCareers(); });
+$("c_pdf").addEventListener("click", ()=> pdfRun($("c_pdf"), downloadCareersPdf));
 $("cmodal-close").addEventListener("click", closeCModal);
 cmodal.addEventListener("click", (e)=>{ if(e.target===cmodal) closeCModal(); });
 $("c_apply").addEventListener("click", ()=>{ careersOffset=0; loadCareers(); });
-$("c_clear").addEventListener("click", ()=>{ $("c_search").value=""; $("c_from").value=""; $("c_to").value=""; careersOffset=0; loadCareers(); });
+$("c_clear").addEventListener("click", ()=>{ $("c_search").value=""; careersOffset=0; loadCareers(); });
 $("c_search").addEventListener("keydown", (e)=>{ if(e.key==="Enter"){ careersOffset=0; loadCareers(); } });
 $("c_prev").addEventListener("click", ()=>{ careersOffset=Math.max(0,careersOffset-PAGE); loadCareers(); });
 $("c_next").addEventListener("click", ()=>{ careersOffset+=PAGE; loadCareers(); });
@@ -880,7 +1881,7 @@ function closeEModal(){ emodal.style.display="none"; }
 
 async function loadEvents(){
   const tb = $("tbl_events").querySelector("tbody");
-  tb.innerHTML = '<tr><td colspan="6" class="empty">Loading…</td></tr>';
+  skelRows("tbl_events", 6);
   const params = new URLSearchParams();
   if(currentEventTypes) params.set("types", currentEventTypes);
   if($("e_search").value.trim()) params.set("q", $("e_search").value.trim());
@@ -894,7 +1895,7 @@ async function loadEvents(){
     if(!rows.length){ tb.innerHTML='<tr><td colspan="6" class="empty">No events found</td></tr>'; return; }
     tb.innerHTML="";
     rows.forEach(a=>{
-      const details = a.activity_value || (a.route_id!=null ? ("Route "+a.route_id) : "–");
+      const details = a.activity_value || (a.route_id!=null ? routeLabel(a.route_id) : "–");
       const tr=document.createElement("tr");
       tr.innerHTML = `<td class="muted">${dt(a.created_at)}</td>`+
                      `<td class="ev-type">${a.activity_type.replace(/_/g,' ')}</td>`+
@@ -928,6 +1929,30 @@ $("e_search").addEventListener("keydown", (e)=>{ if(e.key==="Enter"){ eventsOffs
 $("e_prev").addEventListener("click", ()=>{ eventsOffset=Math.max(0,eventsOffset-PAGE); loadEvents(); });
 $("e_next").addEventListener("click", ()=>{ eventsOffset+=PAGE; loadEvents(); });
 document.addEventListener("keydown", (e)=>{ if(e.key==="Escape") closeEModal(); });
+
+/* ---- PDF: event feed for the KPI cards (respects type + search + date filter) ---- */
+async function downloadEventsPdf(){
+  try{
+    const params = new URLSearchParams();
+    if(currentEventTypes) params.set("types", currentEventTypes);
+    const q = $("e_search").value.trim(), from = $("e_from").value, to = $("e_to").value;
+    if(q) params.set("q", q);
+    if(from) params.set("date_from", from);
+    if(to) params.set("date_to", to);
+    params.set("offset", 0); params.set("limit", 100000);
+    const data = await getJSON(`/events/?${params.toString()}`);
+    const rows = (data.results||[]).map(a=>{
+      const details = a.activity_value || (a.route_id!=null ? routeLabel(a.route_id) : "–");
+      return [dt(a.created_at), a.activity_type.replace(/_/g,' '), a.career||"–",
+              a.username||("#"+(a.user_id||'?')), a.email||"–", details];
+    });
+    let sub = `${fmt(data.total)} events`;
+    if(from||to) sub += `  ·  ${from||"…"} → ${to||"…"}`;
+    if(q) sub += `  ·  search “${q}”`;
+    renderPdf(currentEventTitle||"Events", ["When","Action","Career","User","Email","Details"], rows, sub);
+  }catch(e){ showErr("PDF download failed: "+e.message); }
+}
+$("e_pdf").addEventListener("click", ()=> pdfRun($("e_pdf"), downloadEventsPdf));
 </script>
 </body>
 </html>

@@ -23,6 +23,14 @@ CAREER_UNEXPLORED = "career_unexplored"
 ROUTE_VIEWED = "route_viewed"
 ROUTE_CLICKED = "route_clicked"
 
+# ---- Education-route types (the value carried in UserActivity.route_id for
+# route_viewed / route_clicked events). The frontend sends one of these so we
+# can report which section of a career a user landed on. ----
+ROUTE_COURSE = "course"
+ROUTE_APPRENTICESHIP = "apprenticeship"
+ROUTE_JOB = "job"
+ROUTE_TYPES = (ROUTE_COURSE, ROUTE_APPRENTICESHIP, ROUTE_JOB)
+
 # ---- Provider / lead interactions ----
 PROVIDER_LINK_CLICKED = "provider_link_clicked"
 CONNECT_BUTTON_CLICKED = "connect_button_clicked"
