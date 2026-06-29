@@ -21,7 +21,7 @@ click-repl==0.3.0
 cloudinary==1.44.1
 cloudscraper==1.2.71
 cryptography
-# cuda-bindings==13.2.0          # GPU/CUDA — not installable on DigitalOcean App Platform
+# cuda-bindings==13.2.0          # GPU/CUDA — not installable on DigitalOcean App Platform only to reflect the change.
 # cuda-pathfinder==1.5.0         # GPU/CUDA — not installable on DigitalOcean App Platform
 # cuda-toolkit==13.0.2           # GPU/CUDA — not installable on DigitalOcean App Platform
 distro==1.9.0
