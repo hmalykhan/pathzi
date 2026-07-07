@@ -1109,6 +1109,134 @@ def popular_careers_by_location(offset=0, limit=10, date_from=None, date_to=None
     return {"total": total, "results": results}
 
 
+def searched_careers(offset=0, limit=10, date_from=None, date_to=None):
+    """
+    Careers searched by users, each paired with the location they searched in.
+    The searched city is read from the event's activity_value (set by the
+    frontend at search time). One row per (career, city), ranked by search count
+    (most-searched first, to match the other ranked tables).
+    Returns {total, results:[{career_id, jobname, city, count}]}.
+    """
+    base = (
+        UserActivity.objects.filter(
+            activity_type=C.SEARCHED_CAREER, career__isnull=False
+        )
+        .exclude(activity_value__isnull=True)
+        .exclude(activity_value="")
+    )
+    base = _range(base, "created_at", date_from, date_to)
+
+    rows = list(
+        base.values("career_id", "career__jobname", "activity_value")
+        .annotate(count=Count("id"))
+        .order_by("-count", "career__jobname")
+    )
+    total = len(rows)
+    results = [
+        {
+            "career_id": r["career_id"],
+            "jobname": r["career__jobname"],
+            "city": r["activity_value"],
+            "count": r["count"],
+        }
+        for r in rows[offset:offset + limit]
+    ]
+    return {"total": total, "results": results}
+
+
+def _searched_base(date_from=None, date_to=None):
+    """searched_career events with a career and a non-empty searched location."""
+    base = (
+        UserActivity.objects.filter(
+            activity_type=C.SEARCHED_CAREER, career__isnull=False
+        )
+        .exclude(activity_value__isnull=True)
+        .exclude(activity_value="")
+    )
+    return _range(base, "created_at", date_from, date_to)
+
+
+def searched_career_users(career_id, city, date_from=None, date_to=None, users_limit=2000):
+    """
+    Users who searched one career in one location, with how many times each did.
+    Powers the lazy hover popup on the Searched Careers table.
+    Single query. Returns {career_id, city, count, users:[...]}.
+    """
+    rows = list(
+        _searched_base(date_from, date_to)
+        .filter(career_id=career_id, activity_value=city)
+        .exclude(user__isnull=True)
+        .values("user_id", "user__username", "user__email")
+        .annotate(count=Count("id"), last_at=Max("created_at"))
+    )
+    users = sorted(
+        (
+            {
+                "user_id": r["user_id"],
+                "username": r["user__username"],
+                "email": r["user__email"],
+                "count": r["count"],
+                "last_at": r["last_at"].isoformat() if r["last_at"] else None,
+            }
+            for r in rows
+        ),
+        key=lambda u: u["count"],
+        reverse=True,
+    )
+    return {
+        "career_id": career_id,
+        "city": city,
+        "count": sum(r["count"] for r in rows),
+        "users": users[:users_limit],
+    }
+
+
+def searched_career_engagement_users(offset=0, limit=10, date_from=None, date_to=None, users_per_group=2000):
+    """
+    (career, city) pairs ranked by search count, each with the users who searched
+    it (and how many times). Powers the grouped "View all" sheet / PDF for the
+    Searched Careers section. Single group-by (career, city, user) query.
+    Returns {total, results:[{career_id, jobname, city, count, users:[...]}]}.
+    """
+    rows = (
+        _searched_base(date_from, date_to)
+        .values("career_id", "career__jobname", "activity_value",
+                "user_id", "user__username", "user__email")
+        .annotate(count=Count("id"), last_at=Max("created_at"))
+    )
+    groups = {}
+    for r in rows:
+        key = (r["career_id"], r["activity_value"])
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = {
+                "career_id": r["career_id"],
+                "jobname": r["career__jobname"],
+                "city": r["activity_value"],
+                "count": 0,
+                "users": [],
+            }
+        g["count"] += r["count"]
+        if r["user_id"] is not None:
+            g["users"].append(
+                {
+                    "user_id": r["user_id"],
+                    "username": r["user__username"],
+                    "email": r["user__email"],
+                    "count": r["count"],
+                    "last_at": r["last_at"].isoformat() if r["last_at"] else None,
+                }
+            )
+    out = sorted(groups.values(), key=lambda g: g["count"], reverse=True)
+    for g in out:
+        g["users"].sort(key=lambda u: u["count"], reverse=True)
+        g["users"] = g["users"][:users_per_group]
+    total = len(out)
+    if offset or limit < total:
+        out = out[offset:offset + limit]
+    return {"total": total, "results": out}
+
+
 def _city_views_base(date_from=None, date_to=None):
     """Career-view events with an identifiable user city (shared by the two below)."""
     base = (

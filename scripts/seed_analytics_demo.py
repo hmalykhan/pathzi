@@ -82,10 +82,13 @@ def seed():
 
         batch = []
 
-        def add(activity_type, career, route_id=None, val=None, user=None, card=None):
+        def add(activity_type, career, route_id=None, val=None, user=None, card=None, meta=None):
             # Spread activity across ALL users so the user list is populated;
             # located users (with a city) still get plenty by chance, keeping
             # the location chart populated.
+            md = {"demo": True}
+            if meta:
+                md.update(meta)
             batch.append(
                 UserActivity(
                     user=user or random.choice(users),
@@ -94,7 +97,7 @@ def seed():
                     activity_type=activity_type,
                     activity_value=val,
                     card=card,
-                    metadata={"demo": True},
+                    metadata=md,
                 )
             )
 
@@ -119,6 +122,13 @@ def seed():
             add(C.PROVIDER_LINK_CLICKED, random.choices(careers, weights=weights, k=1)[0],
                 route_id=route, val=random.choice(providers),
                 card=random.choice(CARD_TITLES[route]))
+
+        # Career searches: the user searches a career in a location. The
+        # searched location goes in activity_value (string) + metadata (structured).
+        for _ in range(random.randint(5, 12)):
+            city = random.choice(cities)
+            add(C.SEARCHED_CAREER, random.choices(careers, weights=weights, k=1)[0],
+                val=city, user=random.choice(located_users), meta={"city": city})
 
         created = UserActivity.objects.bulk_create(batch)
         # auto_now_add overrides created_at, so backdate this day's rows.

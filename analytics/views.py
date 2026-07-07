@@ -570,6 +570,57 @@ class PopularByLocationReportAPI(APIView):
         )
 
 
+class SearchedCareersReportAPI(APIView):
+    """Careers searched by users, paired with the searched location. Ranked by count."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request):
+        return Response(
+            reports.searched_careers(
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 10),
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
+
+
+class SearchedCareerUsersAPI(APIView):
+    """Users who searched one career in one location (lazy hover popup). ?career_id=&city="""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request):
+        return Response(
+            reports.searched_career_users(
+                career_id=_int(request, "career_id", 0),
+                city=request.query_params.get("city") or "",
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
+
+
+class SearchedCareerEngagementUsersAPI(APIView):
+    """(career, city) pairs each with the users who searched them (grouped View all)."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []  # staff-only reports; dashboard fires ~9 calls/load
+
+    def get(self, request):
+        return Response(
+            reports.searched_career_engagement_users(
+                offset=_int(request, "offset", 0),
+                limit=_int(request, "limit", 10),
+                date_from=_date(request, "date_from"),
+                date_to=_date(request, "date_to"),
+            )
+        )
+
+
 class CityUsersAPI(APIView):
     """Users living in one city, with their career-view counts (lazy hover)."""
 

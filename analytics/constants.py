@@ -13,6 +13,12 @@ CAREER_VIEWED = "career_viewed"
 CAREER_SWIPED_RIGHT = "career_swiped_right"
 CAREER_SWIPED_LEFT = "career_swiped_left"
 
+# ---- Career search (frontend-fired) ----
+# Fired when the user searches for a career. The frontend sends the career_id
+# and the searched location (location string in activity_value; optional
+# structured detail in metadata).
+SEARCHED_CAREER = "searched_career"
+
 # ---- State-changing actions (backend-fired) ----
 CAREER_SAVED = "career_saved"
 CAREER_UNSAVED = "career_unsaved"
@@ -46,6 +52,7 @@ ACTIVITY_TYPES = (
     CAREER_VIEWED,
     CAREER_SWIPED_RIGHT,
     CAREER_SWIPED_LEFT,
+    SEARCHED_CAREER,
     CAREER_SAVED,
     CAREER_UNSAVED,
     CAREER_EXPLORED,
