@@ -935,7 +935,8 @@ class CareersView(viewsets.ModelViewSet):
             "sub_type",
             "jobname",
             "job_description",
-            "dg_image_url"
+            "dg_image_url",
+            "salary"
         )
         logger.debug("[TIME] queryset preparation: %.3fs", time.time() - t2)
 
@@ -961,7 +962,8 @@ class CareersView(viewsets.ModelViewSet):
                 "sub_type",
                 "jobname",
                 "job_description",
-                "dg_image_url"
+                "dg_image_url",
+                "salary"
             ).order_by(preserved_order)
 
             logger.debug("[TIME] reorder queryset: %.3fs", time.time() - t3)
