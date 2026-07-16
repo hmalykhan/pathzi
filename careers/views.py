@@ -1052,7 +1052,8 @@ class CareersView(viewsets.ModelViewSet):
             "sub_type",          # ✔ maps to category
             "jobname",           # ✔ maps to subcategory
             "job_description",
-            "dg_image_url"
+            "dg_image_url",
+            "salary"
         )
 
         # 🔥 Apply slicing / pagination
