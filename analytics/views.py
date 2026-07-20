@@ -22,9 +22,10 @@ def analytics_dashboard(request):
 
 from . import constants as C
 from . import reports
+from accounts.models import UserProfile
 from .models import ProviderLead
 from .permissions import IsStaffUser
-from .serializers import ActivityBatchSerializer, ConsentSerializer
+from .serializers import ActivityBatchSerializer, ConnectionSerializer, ConsentSerializer
 from .services import log_activity, queue_events, sanitize_metadata
 from .throttles import AnalyticsIngestThrottle
 
@@ -85,12 +86,47 @@ class ActivityIngestAPI(APIView):
         return Response({"status": True, "queued": queued}, status=status.HTTP_202_ACCEPTED)
 
 
+def _lead_item_fields(route_type, item):
+    """
+    Derive the route-item details for a lead (card name, subcategory, salary/cost,
+    provider name/type) from a resolved course/apprenticeship/job, so the frontend
+    only needs to send route_type + route_item_id.
+    """
+    subcategory = getattr(item, "subcategory", "") or ""
+    if route_type == "course":
+        return {
+            "card_name": getattr(item, "course_name", "") or "",
+            "subcategory": subcategory,
+            "salary_or_cost": getattr(item, "cost", "") or "",
+            "provider_name": getattr(item, "college_name", "") or getattr(item, "awarding_organization", ""),
+            "provider_type": "college",
+        }
+    if route_type == "apprenticeship":
+        return {
+            "card_name": getattr(item, "title", "") or "",
+            "subcategory": subcategory,
+            "salary_or_cost": getattr(item, "wage", "") or "",
+            "provider_name": getattr(item, "employer_name", "") or getattr(item, "training_provider", ""),
+            "provider_type": "employer",
+        }
+    if route_type == "job":
+        return {
+            "card_name": getattr(item, "title", "") or "",
+            "subcategory": subcategory,
+            "salary_or_cost": getattr(item, "salary", "") or "",
+            "provider_name": getattr(item, "company", "") or "",
+            "provider_type": "company",
+        }
+    return {"card_name": "", "subcategory": "", "salary_or_cost": "", "provider_name": "", "provider_type": ""}
+
+
 class ConsentAPI(APIView):
     """
-    Records explicit consent to be contacted by a provider. Writes a
-    ProviderLead row SYNCHRONOUSLY (so the consent timestamp is provable),
-    and also logs an anonymous consent_given event into UserActivity.
-    Contact data lives only in ProviderLead — never in analytics metadata.
+    Records explicit consent to be contacted by a provider. The frontend sends
+    only route_type + route_item_id + consented; provider name/type are fetched
+    from the resolved route item and contact email from the authenticated user.
+    Writes a ProviderLead row SYNCHRONOUSLY (so the consent timestamp is provable)
+    and logs an anonymous consent_given event into UserActivity.
     """
 
     permission_classes = [IsAuthenticated]
@@ -100,22 +136,46 @@ class ConsentAPI(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
+        route_type = data["route_type"]
+        item = data["route_item"]  # already resolved by the serializer
+        consented = data.get("consented", False)
+
+        # Route-item details (card, subcategory, salary/cost, provider).
+        f = _lead_item_fields(route_type, item)
+
+        # Lead contact details from the authenticated user + their profile.
+        user = request.user
+        profile = UserProfile.objects.filter(appuser=user).first()
+
         lead = ProviderLead.objects.create(
-            user=request.user,
-            career_id=data.get("career_id"),
-            provider_name=data["provider_name"],
-            provider_type=data.get("provider_type", ""),
-            contact_email=data["contact_email"],
+            user=user,
+            route_type=route_type,
+            route_item_id=data["route_item_id"],
+            consented=consented,
+            name=(user.get_full_name() or user.get_username() or "").strip(),
+            contact_email=user.email or "",
+            address=getattr(profile, "address", "") or "",
+            city=getattr(profile, "city", "") or "",
+            card_name=f["card_name"],
+            subcategory=f["subcategory"],
+            salary_or_cost=f["salary_or_cost"],
+            provider_name=f["provider_name"],
+            provider_type=f["provider_type"],
         )
 
-        # Anonymous analytics trail — NO email/contact data in metadata.
+        # Anonymous analytics trail — NO name/email/contact data in metadata.
         log_activity(
-            user=request.user,
+            user=user,
             activity_type=C.CONSENT_GIVEN,
-            career=data.get("career_id"),
+            route_id=route_type,
             metadata={
-                "provider_name": data["provider_name"],
-                "provider_type": data.get("provider_type", ""),
+                "provider_name": f["provider_name"],
+                "provider_type": f["provider_type"],
+                "route_type": route_type,
+                "route_item_id": data["route_item_id"],
+                "card_name": f["card_name"],
+                "subcategory": f["subcategory"],
+                "consented": consented,
             },
         )
 
@@ -123,11 +183,30 @@ class ConsentAPI(APIView):
             {
                 "status": True,
                 "message": "Consent recorded.",
-                "lead_id": lead.id,
+                "consent_id": lead.id,
+                "route_type": lead.route_type,
+                "provider_name": lead.provider_name,
                 "consent_at": lead.consent_at,
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class MyConnectionsAPI(APIView):
+    """
+    Returns ALL of the logged-in user's connections (ProviderLead rows) with the
+    full stored data. Powers the user's "connected" list on the frontend.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # Only genuinely connected rows (consented=True). consented defaults to
+        # False; the frontend sets it True on connect, so unconsented/disconnected
+        # rows are excluded from the user's connected list.
+        leads = ProviderLead.objects.filter(user=request.user, consented=True)  # newest first (model ordering)
+        data = ConnectionSerializer(leads, many=True).data
+        return Response({"status": True, "count": len(data), "results": data})
 
 
 # ---------------------------------------------------------------------------

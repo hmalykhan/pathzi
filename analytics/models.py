@@ -94,9 +94,37 @@ class ProviderLead(models.Model):
         related_name="provider_leads",
     )
 
+    # Which route the lead is for. IDs overlap across the three tables (the same
+    # id can be a Course AND a Job), so we store the type AND the id together —
+    # the id alone is ambiguous and can't be resolved back to a provider record.
+    ROUTE_COURSE = "course"
+    ROUTE_APPRENTICESHIP = "apprenticeship"
+    ROUTE_JOB = "job"
+    ROUTE_CHOICES = [
+        (ROUTE_COURSE, "Course"),
+        (ROUTE_APPRENTICESHIP, "Apprenticeship"),
+        (ROUTE_JOB, "Job"),
+    ]
+    route_type = models.CharField(
+        max_length=20, choices=ROUTE_CHOICES, blank=True, default=""
+    )
+    route_item_id = models.PositiveIntegerField(null=True, blank=True)
+
+    # Explicit consent flag sent by the frontend (true = agreed to be contacted).
+    consented = models.BooleanField(default=False)
+
+    # --- Lead contact details (fetched server-side from the user + profile) ---
+    name = models.CharField(max_length=255, blank=True, default="")
+    contact_email = models.EmailField(blank=True, default="")
+    address = models.CharField(max_length=300, blank=True, default="")
+    city = models.CharField(max_length=200, blank=True, default="")
+
+    # --- Route item details (fetched server-side from the resolved item) ---
+    card_name = models.CharField(max_length=500, blank=True, default="")   # course/job/apprenticeship title
+    subcategory = models.CharField(max_length=255, blank=True, default="")
+    salary_or_cost = models.CharField(max_length=255, blank=True, default="")  # job/appr salary or course cost
     provider_name = models.CharField(max_length=255, blank=True, default="")
     provider_type = models.CharField(max_length=64, blank=True, default="")
-    contact_email = models.EmailField(blank=True, default="")
 
     consent_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
@@ -105,6 +133,7 @@ class ProviderLead(models.Model):
         indexes = [
             models.Index(fields=["provider_name"]),
             models.Index(fields=["user", "consent_at"]),
+            models.Index(fields=["route_type", "route_item_id"]),
         ]
         ordering = ("-consent_at",)
 

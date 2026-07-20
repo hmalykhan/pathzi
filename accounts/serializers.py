@@ -56,6 +56,13 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
         allow_empty=True
     )
 
+    # qualification as list of strings
+    qualification = serializers.ListField(
+        child=serializers.CharField(max_length=200),
+        required=False,
+        allow_empty=True
+    )
+
     class Meta:
         model = UserProfile
         fields = [
@@ -66,6 +73,7 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
             "discipline",
             "education_level",
             "category",
+            "qualification",
             "address",
             "city",
             "zip_code",
@@ -80,6 +88,20 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
 
     # 🔐 clean category
     def validate_category(self, value):
+        cleaned, seen = [], set()
+        for item in value or []:
+            item = (item or "").strip()
+            if not item:
+                continue
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(item)
+        return cleaned
+
+    # 🔐 clean qualification (trim + dedupe, same as category)
+    def validate_qualification(self, value):
         cleaned, seen = [], set()
         for item in value or []:
             item = (item or "").strip()
@@ -131,6 +153,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
         allow_empty=True
     )
 
+    qualification = FlexibleStringListField(
+        child=serializers.CharField(max_length=200),
+        required=False,
+        allow_empty=True
+    )
+
     report = FlexibleStringListField(
         child=serializers.CharField(),
         required=False,
@@ -142,6 +170,19 @@ class UserProfileSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
     def validate_category(self, value):
+        cleaned, seen = [], set()
+        for item in value or []:
+            item = (item or "").strip()
+            if not item:
+                continue
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(item)
+        return cleaned
+
+    def validate_qualification(self, value):
         cleaned, seen = [], set()
         for item in value or []:
             item = (item or "").strip()

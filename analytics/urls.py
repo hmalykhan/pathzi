@@ -9,6 +9,7 @@ from .views import (
     CareersListAPI,
     CityUsersAPI,
     ConsentAPI,
+    MyConnectionsAPI,
     CareerLeadUsersAPI,
     ConsentLeadsReportAPI,
     EventsListAPI,
@@ -41,6 +42,7 @@ urlpatterns = [
     # ---- Public (frontend) ----
     path("activity/", ActivityIngestAPI.as_view(), name="analytics-activity"),
     path("consent/", ConsentAPI.as_view(), name="analytics-consent"),
+    path("connections/", MyConnectionsAPI.as_view(), name="analytics-connections"),
 
     # ---- Admin dashboard (staff-only HTML page) ----
     path("dashboard/", analytics_dashboard, name="analytics-dashboard"),

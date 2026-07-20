@@ -8,9 +8,20 @@ Input validation for the public analytics endpoints.
 
 from rest_framework import serializers
 
-from careers.models import Career
+from apprenticeship.models import Apprenticeship
+from courses.models import Course
+from jobs.models import Job
 
 from .constants import ACTIVITY_TYPES, ROUTE_TYPES
+from .models import ProviderLead
+
+# Maps a route type to the model whose id the lead points at. IDs overlap across
+# these tables, so a lead is only resolvable as (route_type, route_item_id).
+ROUTE_MODELS = {
+    "course": Course,
+    "apprenticeship": Apprenticeship,
+    "job": Job,
+}
 
 # Max events accepted in a single /activity/ request (matches the plan).
 MAX_EVENTS_PER_BATCH = 200
@@ -87,13 +98,67 @@ class ActivityBatchSerializer(serializers.Serializer):
 
 
 class ConsentSerializer(serializers.Serializer):
-    career_id = serializers.IntegerField(required=False, allow_null=True)
-    provider_name = serializers.CharField(max_length=255)
-    provider_type = serializers.CharField(max_length=64, required=False, allow_blank=True, default="")
-    contact_email = serializers.EmailField()
+    """
+    The frontend sends ONLY these three fields. Everything else (provider name,
+    provider type, contact email) is fetched server-side from the resolved route
+    item and the authenticated user.
+    """
 
-    def validate_career_id(self, value):
-        # Synchronous write — a dangling FK would raise, so validate up front.
-        if value is not None and not Career.objects.filter(id=value).exists():
-            raise serializers.ValidationError(f"Career {value} does not exist.")
-        return value
+    # Which route the consent is for (course / apprenticeship / job) + its id.
+    route_type = serializers.CharField()
+    route_item_id = serializers.IntegerField()
+    # Consent flag from the frontend (true = agreed to be contacted). Default false.
+    consented = serializers.BooleanField(required=False, default=False)
+
+    def validate_route_type(self, value):
+        # Normalise: lowercase, trim, and accept plural spellings (jobs -> job).
+        v = (value or "").strip().lower()
+        if v.endswith("s"):
+            v = v[:-1]
+        if v not in ROUTE_MODELS:
+            raise serializers.ValidationError(
+                f"route_type must be one of {list(ROUTE_MODELS)} (got '{value}')."
+            )
+        return v
+
+    def validate(self, attrs):
+        # Resolve the item in its own table (ids overlap across tables, so we
+        # look up only the matching one) and stash it for the view to read
+        # provider info from — no extra query needed downstream.
+        model = ROUTE_MODELS[attrs["route_type"]]
+        obj = model.objects.filter(id=attrs["route_item_id"]).first()
+        if obj is None:
+            raise serializers.ValidationError(
+                {"route_item_id": f"{attrs['route_type']} {attrs['route_item_id']} does not exist."}
+            )
+        attrs["route_item"] = obj
+        return attrs
+
+
+class ConnectionSerializer(serializers.ModelSerializer):
+    """
+    Full row of a user's connection (ProviderLead) for GET /analytics/connections/.
+    Exposes every stored field so the frontend can render the connected list.
+    """
+
+    consent_id = serializers.IntegerField(source="id", read_only=True)
+    email = serializers.EmailField(source="contact_email", read_only=True)
+
+    class Meta:
+        model = ProviderLead
+        fields = [
+            "consent_id",
+            "name",
+            "email",
+            "address",
+            "city",
+            "route_type",
+            "route_item_id",
+            "card_name",
+            "subcategory",
+            "salary_or_cost",
+            "provider_name",
+            "provider_type",
+            "consented",
+            "consent_at",
+        ]

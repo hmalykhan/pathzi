@@ -35,6 +35,7 @@ class UserProfile(models.Model):
     is_apple_private_email = models.BooleanField(default=False)
 
     category = models.JSONField(default=list, blank=True)  # list of strings
+    qualification = models.JSONField(default=list, blank=True)  # list of strings
 
     report_status = models.BooleanField(default=False)
     report = models.JSONField(default=list, blank=True)  # list of (long) strings
@@ -55,6 +56,7 @@ class UserProfile(models.Model):
                 raise ValidationError({field_name: f"Each item in {field_name} must be a string."})
 
         validate_string_list(self.category, "category")
+        validate_string_list(self.qualification, "qualification")
         validate_string_list(self.report, "report")
 
 
