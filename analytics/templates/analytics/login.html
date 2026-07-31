@@ -1,0 +1,67 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · Pathzi Analytics</title>
+<style>
+  :root{
+    --navy:#0f2e4f; --blue:#1f6fb2; --blue2:#3b8fd6; --bg:#f4f6fa;
+    --card:#ffffff; --ink:#1f2733; --muted:#7a8699; --line:#e5e9f0; --red:#d8504d;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+       color:var(--ink);background:
+         radial-gradient(1200px 600px at 50% -200px, rgba(31,111,178,.28), transparent 60%),
+         linear-gradient(180deg,#eef3f9,#f4f6fa);
+       display:flex;align-items:center;justify-content:center;padding:24px}
+  .login-card{width:100%;max-width:400px;background:var(--card);border:1px solid var(--line);
+              border-radius:16px;box-shadow:0 24px 60px rgba(15,30,54,.18);overflow:hidden}
+  .login-head{background:linear-gradient(120deg,var(--navy),var(--blue));color:#fff;padding:26px 28px}
+  .login-head h1{margin:0;font-size:22px;letter-spacing:.2px}
+  .login-head .sub{margin-top:4px;font-size:13px;opacity:.85}
+  .login-body{padding:26px 28px 30px}
+  .fld{margin-bottom:16px}
+  .fld label{display:block;font-size:11.5px;font-weight:700;color:var(--muted);
+             text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+  .fld input{width:100%;padding:11px 13px;font-size:14px;color:var(--ink);
+             border:1px solid var(--line);border-radius:10px;background:#fff}
+  .fld input:focus{outline:none;border-color:var(--blue2);box-shadow:0 0 0 3px rgba(31,111,178,.14)}
+  .btn{width:100%;margin-top:6px;padding:12px;font-size:15px;font-weight:700;color:#fff;cursor:pointer;
+       border:none;border-radius:10px;background:linear-gradient(120deg,var(--navy),var(--blue))}
+  .btn:hover{filter:brightness(1.06)}
+  .err{background:#fdecec;border:1px solid #f5c6c6;color:var(--red);border-radius:10px;
+       padding:10px 12px;font-size:13px;margin-bottom:16px;line-height:1.45}
+  .foot{text-align:center;color:var(--muted);font-size:12px;margin-top:16px}
+</style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="login-head">
+      <h1>Pathzi Analytics</h1>
+      <div class="sub">Staff sign-in · Career engagement dashboard</div>
+    </div>
+    <form class="login-body" method="post" action="{% url 'login' %}">
+      {% csrf_token %}
+      {% if form.non_field_errors %}
+        <div class="err">{{ form.non_field_errors|join:" " }}</div>
+      {% endif %}
+      <div class="fld">
+        <label for="id_username">Username</label>
+        <input type="text" name="username" id="id_username" autofocus autocomplete="username"
+               value="{{ form.username.value|default:'' }}" required>
+        {% if form.username.errors %}<div class="err" style="margin-top:8px">{{ form.username.errors|join:" " }}</div>{% endif %}
+      </div>
+      <div class="fld">
+        <label for="id_password">Password</label>
+        <input type="password" name="password" id="id_password" autocomplete="current-password" required>
+        {% if form.password.errors %}<div class="err" style="margin-top:8px">{{ form.password.errors|join:" " }}</div>{% endif %}
+      </div>
+      <input type="hidden" name="next" value="{{ next }}">
+      <button class="btn" type="submit">Sign in</button>
+      <div class="foot">Access is limited to staff accounts.</div>
+    </form>
+  </div>
+</body>
+</html>

@@ -7,7 +7,7 @@ Public analytics endpoints (frontend-fired).
 
 import logging
 
-from django.contrib.admin.views.decorators import staff_member_required
+from django.contrib.auth.decorators import user_passes_test
 from django.shortcuts import render
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -15,13 +15,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 
-@staff_member_required
+@user_passes_test(lambda u: u.is_active and u.is_staff, login_url="/login/")
 def analytics_dashboard(request):
     """Staff-only HTML dashboard that visualises the /analytics/admin/ reports."""
     return render(request, "analytics/dashboard.html")
 
 from . import constants as C
 from . import reports
+from . import warehouse
 from accounts.models import UserProfile
 from .models import ProviderLead
 from .permissions import IsStaffUser
@@ -732,3 +733,50 @@ class LocationEngagementUsersAPI(APIView):
                 date_to=_date(request, "date_to"),
             )
         )
+
+
+class WarehouseListAPI(APIView):
+    """Paginated browse of a scraped dataset (courses / apprenticeships / jobs)."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []
+
+    def get(self, request, dataset):
+        if dataset not in warehouse.DATASETS:
+            return Response({"detail": "Unknown dataset."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            warehouse.warehouse_list(
+                dataset,
+                q=request.query_params.get("q") or None,
+                city=request.query_params.get("city") or None,
+                offset=_int(request, "offset", 0),
+                limit=min(_int(request, "limit", 50), 200),
+            )
+        )
+
+
+class WarehouseDetailAPI(APIView):
+    """Full record for one row in a scraped dataset."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []
+
+    def get(self, request, dataset, obj_id):
+        if dataset not in warehouse.DATASETS:
+            return Response({"detail": "Unknown dataset."}, status=status.HTTP_404_NOT_FOUND)
+        data = warehouse.warehouse_detail(dataset, obj_id)
+        if not data:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(data)
+
+
+class WarehouseCitiesAPI(APIView):
+    """Distinct city list for a dataset (populates the city dropdown)."""
+
+    permission_classes = [IsStaffUser]
+    throttle_classes = []
+
+    def get(self, request, dataset):
+        if dataset not in warehouse.DATASETS:
+            return Response({"detail": "Unknown dataset."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(warehouse.warehouse_cities(dataset))

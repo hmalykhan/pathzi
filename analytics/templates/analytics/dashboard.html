@@ -27,8 +27,11 @@
   .controls select,.controls button{
     border:none;border-radius:8px;padding:9px 12px;font-size:13px;cursor:pointer}
   .controls select{background:#ffffff;color:var(--ink)}
-  .controls button{background:rgba(255,255,255,.18);color:#fff;font-weight:600}
+  .controls button{background:rgba(255,255,255,.18);color:#fff;font-weight:600;
+    height:38px;padding:0 14px;display:inline-flex;align-items:center;gap:4px;box-sizing:border-box;line-height:1}
   .controls button:hover{background:rgba(255,255,255,.30)}
+  .controls form{display:inline-flex;margin:0}
+  .controls .ricon{display:inline-block}
   main{padding:24px clamp(28px,4vw,64px);max-width:1720px;margin:0 auto}
   .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:24px}
   .kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 18px 16px;
@@ -81,8 +84,9 @@
   .toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:14px}
   .toolbar .fld{display:flex;flex-direction:column;gap:3px}
   .toolbar label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
-  .toolbar input{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px}
+  .toolbar input,.toolbar select{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px;background:#fff;color:var(--ink)}
   .toolbar input[type=search]{min-width:220px}
+  .toolbar select{min-width:200px;max-width:240px;cursor:pointer}
   .toolbar button{border:none;border-radius:8px;padding:9px 14px;font-size:13px;font-weight:600;cursor:pointer}
   .btn-primary{background:var(--blue);color:#fff}
   .btn-ghost{background:#eef2f7;color:var(--ink)}
@@ -177,6 +181,39 @@
   @keyframes spin{to{transform:rotate(360deg)}}
   .dlbtn.loading{opacity:.9;cursor:default}
   .dlbtn.loading .ricon{display:inline-block;animation:spin .7s linear infinite}
+  /* data warehouse */
+  .dw-card{background:linear-gradient(135deg,#eaf3fb,#f5f9fd);border-color:#d4e6f6}
+  .dw-card .value{color:var(--blue)}
+  .dwtabs{display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--line)}
+  .dwtab{padding:9px 18px;font-size:14px;font-weight:600;color:var(--muted);cursor:pointer;
+         border:none;background:none;border-bottom:2px solid transparent;margin-bottom:-1px}
+  .dwtab:hover{color:var(--ink)}
+  .dwtab.active{color:var(--blue);border-bottom-color:var(--blue)}
+  .dwtab .cnt{font-size:11px;color:var(--muted);margin-left:5px}
+  #dwmodal .modal{max-width:1200px}
+  .dw-full-btn{width:auto !important;height:auto !important;padding:7px 12px;font-size:12.5px;
+               font-weight:600;white-space:nowrap}
+  /* smooth expand/shrink between windowed and full-screen */
+  #dwmodal{transition:padding .26s ease-out}
+  #dwmodal .modal{transition:max-width .26s ease-out, border-radius .26s ease-out;will-change:max-width}
+  #dwmodal .modal-body{transition:max-height .26s ease-out;contain:content}
+  #dwmodal.dw-full{padding:0}
+  #dwmodal.dw-full .modal{max-width:100%;width:100%;border-radius:0}
+  #dwmodal.dw-full .modal-body{max-height:calc(100vh - 66px)}
+  /* fixed layout => columns aren't recomputed each animation frame (kills the lag) */
+  #tbl_dw{table-layout:fixed;width:100%}
+  #tbl_dw th:nth-child(1),#tbl_dw td:nth-child(1){width:34%}
+  #tbl_dw th:nth-child(2),#tbl_dw td:nth-child(2){width:24%}
+  #tbl_dw th:nth-child(3),#tbl_dw td:nth-child(3){width:15%}
+  #tbl_dw th:nth-child(4),#tbl_dw td:nth-child(4){width:10%}
+  #tbl_dw th:nth-child(5),#tbl_dw td:nth-child(5){width:17%}
+  #tbl_dw td{white-space:normal;word-break:break-word}
+  .dw-det-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 22px;margin-top:6px}
+  .dw-det-grid .full{grid-column:1/3}
+  .dw-fld{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-bottom:1px solid #f0f2f5}
+  .dw-fld .k{font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+  .dw-fld .v{font-size:13.5px;color:var(--ink);white-space:pre-wrap;word-break:break-word;line-height:1.5}
+  .dw-fld .v a{color:var(--blue)}
   .skel{position:relative;overflow:hidden;background:#e9edf3;border-radius:6px}
   .skel::after{content:"";position:absolute;inset:0;transform:translateX(-100%);
     background:linear-gradient(90deg,transparent,rgba(255,255,255,.65),transparent);
@@ -199,6 +236,9 @@
   </div>
   <div class="controls">
     <button id="refresh"><span class="ricon">↻</span> Refresh</button>
+    <form method="post" action="{% url 'logout' %}" style="display:inline;margin:0">{% csrf_token %}
+      <button id="logout" type="submit" title="Sign out"><span class="ricon">⎋</span> Logout</button>
+    </form>
   </div>
 </header>
 
@@ -207,6 +247,7 @@
 
   <!-- KPI CARDS -->
   <div class="kpis" id="kpis">
+    <div class="kpi clickable dw-card" id="card_warehouse"><div class="label">Data Warehouse</div><div class="value small" style="font-size:20px">🗄 Browse</div><div class="hint">▸ courses · apprenticeships · jobs</div></div>
     <div class="kpi clickable" id="card_users"><div class="label">Total Users</div><div class="value" id="k_users">–</div><div class="hint">▸ click to view users</div></div>
     <div class="kpi clickable" id="card_careers"><div class="label">Total Careers</div><div class="value" id="k_careers">–</div><div class="hint">▸ click to view careers</div></div>
     <div class="kpi clickable" id="card_views"><div class="label">Career Views</div><div class="value" id="k_views">–</div><div class="hint">▸ view list</div></div>
@@ -444,6 +485,45 @@
       </table>
       <div class="pager"><span class="info" id="e_info"></span>
         <button id="e_prev" disabled>‹ Prev</button><button id="e_next" disabled>Next ›</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== DATA WAREHOUSE MODAL ===================== -->
+<div class="modal-overlay" id="dwmodal">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="dwmodal-title">Data Warehouse</h2>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="dw-full" class="dw-full-btn" title="Toggle full screen">⤢ Full preview</button>
+        <button id="dwmodal-close" title="Close">✕</button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <!-- VIEW 1: dataset list -->
+      <div id="dw-list-view">
+        <div class="dwtabs">
+          <button class="dwtab active" data-ds="courses">Courses</button>
+          <button class="dwtab" data-ds="apprenticeships">Apprenticeships</button>
+          <button class="dwtab" data-ds="jobs">Jobs</button>
+        </div>
+        <div class="toolbar">
+          <div class="fld"><label>Search</label><input type="search" id="dw_search" placeholder="name, provider, category…"></div>
+          <div class="fld"><label>City</label><select id="dw_city"><option value="">All cities</option></select></div>
+          <button class="btn-primary" id="dw_apply">Apply</button>
+          <button class="btn-ghost" id="dw_clear">Clear</button>
+        </div>
+        <table id="tbl_dw"><thead></thead><tbody></tbody></table>
+        <div class="pager"><span class="info" id="dw_info"></span>
+          <button id="dw_prev" disabled>‹ Prev</button><button id="dw_next" disabled>Next ›</button></div>
+      </div>
+      <!-- VIEW 2: single record detail -->
+      <div id="dw-detail-view" style="display:none">
+        <button class="back" id="dw-detail-back">← Back to list</button>
+        <h3 id="dw_d_title" style="margin:4px 0 2px;color:var(--navy)">Record</h3>
+        <div class="muted" id="dw_d_sub" style="font-size:13px;margin-bottom:6px"></div>
+        <div class="dw-det-grid" id="dw_d_body"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -1721,6 +1801,121 @@ $("sheet-close").addEventListener("click", ()=> $("sheet").style.display="none")
 $("sheet").addEventListener("click", (e)=>{ if(e.target===$("sheet")) $("sheet").style.display="none"; });
 $("sheet-pdf").addEventListener("click", ()=>{ if(sheetKey) pdfRun($("sheet-pdf"), ()=> downloadReport(sheetKey)); });
 document.addEventListener("keydown", (e)=>{ if(e.key==="Escape") $("sheet").style.display="none"; });
+
+/* ===================== DATA WAREHOUSE ===================== */
+const DW = {
+  ds: "courses", offset: 0, PAGE: 50,
+  cols: {
+    courses: [["course_name","Name"],["college_name","Provider"],["cost","Cost"],["course_qualification_level","Level"],["city","City"]],
+    apprenticeships: [["title","Title"],["employer_name","Employer"],["wage","Wage"],["duration","Duration"],["city","City"]],
+    jobs: [["title","Title"],["company","Company"],["salary","Salary"],["job_type","Type"],["city","City"]],
+  },
+  labels: { courses:"Courses", apprenticeships:"Apprenticeships", jobs:"Jobs" },
+};
+const DW_LONG = new Set(["course_description","who_this_course_is_for","entry_reeq","requirement_summery",
+  "summary_text","what_youll_do_items","essential_qualifications","skills_items","about_employer",
+  "listing_snippet","summary_intro","summary_bullets","what_youll_do","skills_youll_need","address",
+  "where_youll_work_address","cost_description","wage_extra","location_summary"]);
+const DW_URL = new Set(["course_url","website","image_url","vacancy_url","employer_website","job_url","apply_url"]);
+const dwmodal = $("dwmodal");
+const dwCities = {};   // dataset -> [cities] (cached)
+
+function fillCitySel(cities){
+  $("dw_city").innerHTML = '<option value="">All cities</option>' +
+    cities.map(c=>`<option value="${escAttr(c)}">${escAttr(c)}</option>`).join("");
+}
+async function populateDWCities(ds){
+  const sel = $("dw_city");
+  if(dwCities[ds]){ fillCitySel(dwCities[ds]); return; }
+  sel.innerHTML = '<option value="">Loading cities…</option>'; sel.disabled = true;
+  try{
+    const data = await getJSON(`/warehouse/${ds}/cities/`);
+    dwCities[ds] = data.cities || [];
+    fillCitySel(dwCities[ds]);
+  }catch(e){ sel.innerHTML = '<option value="">All cities</option>'; }
+  finally{ sel.disabled = false; }
+}
+
+function showDWList(){ $("dw-list-view").style.display="block"; $("dw-detail-view").style.display="none"; }
+function showDWDetail(){ $("dw-list-view").style.display="none"; $("dw-detail-view").style.display="block"; }
+function setDWTab(ds){ document.querySelectorAll(".dwtab").forEach(t=> t.classList.toggle("active", t.dataset.ds===ds)); }
+function openDW(){ dwmodal.style.display="flex"; showDWList(); DW.ds="courses"; DW.offset=0; setDWTab("courses");
+  $("dw_search").value="";
+  // clear the per-session cache so cities are recomputed live from the DB each open
+  Object.keys(dwCities).forEach(k=>delete dwCities[k]);
+  populateDWCities("courses"); loadDW(); }
+function closeDW(){ dwmodal.style.display="none"; dwmodal.classList.remove("dw-full"); $("dw-full").innerHTML="⤢ Full preview"; }
+function toggleDWFull(){ const on=dwmodal.classList.toggle("dw-full"); $("dw-full").innerHTML = on ? "⤡ Exit full" : "⤢ Full preview"; }
+
+async function loadDW(){
+  const cols = DW.cols[DW.ds];
+  $("tbl_dw").querySelector("thead").innerHTML = "<tr>" + cols.map(c=>`<th>${c[1]}</th>`).join("") + "</tr>";
+  skelRows("tbl_dw", cols.length);
+  const params = new URLSearchParams();
+  const q=$("dw_search").value.trim(), city=$("dw_city").value.trim();
+  if(q) params.set("q", q);
+  if(city) params.set("city", city);
+  params.set("offset", DW.offset); params.set("limit", DW.PAGE);
+  const tb = $("tbl_dw").querySelector("tbody");
+  try{
+    const data = await getJSON(`/warehouse/${DW.ds}/?${params.toString()}`);
+    const rows = data.results||[];
+    renderPager("dw", DW.offset, data.total||0, rows.length);
+    if(!rows.length){ tb.innerHTML=`<tr><td colspan="${cols.length}" class="empty">No records found</td></tr>`; return; }
+    tb.innerHTML="";
+    rows.forEach(r=>{
+      const tr=document.createElement("tr"); tr.className="row-link";
+      tr.innerHTML = cols.map((c,i)=> i===0
+        ? `<td><b>${escAttr(r[c[0]])||("#"+r.id)}</b></td>`
+        : `<td class="muted">${escAttr(r[c[0]])||"–"}</td>`).join("");
+      tr.addEventListener("click", ()=> openDWDetail(r.id, r[cols[0][0]]));
+      tb.appendChild(tr);
+    });
+  }catch(e){ tb.innerHTML=`<tr><td colspan="${cols.length}" class="empty">${e.message}</td></tr>`; }
+}
+
+function renderDWDetail(d){
+  let html="";
+  Object.keys(d).forEach(k=>{
+    if(k==="id") return;
+    const v = d[k];
+    if(v==null || v==="") return;
+    const label = k.replace(/_/g," ").replace(/\b\w/g, m=>m.toUpperCase());
+    const val = DW_URL.has(k)
+      ? `<a href="${escAttr(v)}" target="_blank" rel="noopener">${escAttr(v)}</a>`
+      : escAttr(String(v));
+    const full = DW_LONG.has(k) || DW_URL.has(k);
+    html += `<div class="dw-fld${full?' full':''}"><span class="k">${label}</span><span class="v">${val}</span></div>`;
+  });
+  return html || '<div class="dw-fld full"><span class="v">No details.</span></div>';
+}
+
+async function openDWDetail(id, title){
+  showDWDetail();
+  $("dw_d_title").textContent = title || ("#"+id);
+  $("dw_d_sub").textContent = DW.labels[DW.ds] + " · #" + id;
+  const body = $("dw_d_body");
+  body.innerHTML = '<div class="dw-fld full"><span class="skel skel-line" style="width:45%"></span></div>'+
+                   '<div class="dw-fld full"><span class="skel skel-line" style="width:70%"></span></div>';
+  try{
+    const d = await getJSON(`/warehouse/${DW.ds}/${id}/`);
+    body.innerHTML = renderDWDetail(d);
+  }catch(e){ body.innerHTML = `<div class="dw-fld full"><span class="v">${escAttr(e.message)}</span></div>`; }
+}
+
+$("card_warehouse").addEventListener("click", openDW);
+$("dw-full").addEventListener("click", toggleDWFull);
+$("dwmodal-close").addEventListener("click", closeDW);
+dwmodal.addEventListener("click", (e)=>{ if(e.target===dwmodal) closeDW(); });
+document.querySelectorAll(".dwtab").forEach(t=> t.addEventListener("click", ()=>{ DW.ds=t.dataset.ds; DW.offset=0; setDWTab(DW.ds); showDWList(); populateDWCities(DW.ds); loadDW(); }));
+$("dw_apply").addEventListener("click", ()=>{ DW.offset=0; loadDW(); });
+$("dw_clear").addEventListener("click", ()=>{ $("dw_search").value=""; $("dw_city").value=""; DW.offset=0; loadDW(); });
+$("dw_search").addEventListener("keydown", (e)=>{ if(e.key==="Enter"){ DW.offset=0; loadDW(); } });
+$("dw_city").addEventListener("change", ()=>{ DW.offset=0; loadDW(); });
+$("dw_prev").addEventListener("click", ()=>{ DW.offset=Math.max(0,DW.offset-DW.PAGE); loadDW(); });
+$("dw_next").addEventListener("click", ()=>{ DW.offset+=DW.PAGE; loadDW(); });
+$("dw-detail-back").addEventListener("click", showDWList);
+document.addEventListener("keydown",(e)=>{ if(e.key==="Escape" && dwmodal.style.display==="flex") closeDW(); });
 
 $("refresh").addEventListener("click", load);
 load();

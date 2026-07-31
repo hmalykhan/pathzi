@@ -35,6 +35,9 @@ from .views import (
     TopCareersReportAPI,
     UserReportAPI,
     UsersListAPI,
+    WarehouseCitiesAPI,
+    WarehouseDetailAPI,
+    WarehouseListAPI,
     analytics_dashboard,
 )
 
@@ -65,6 +68,9 @@ urlpatterns = [
     path("admin/card-users/", CardClickUsersAPI.as_view(), name="analytics-card-users"),
     path("admin/provider-card-users/", ProviderCardUsersAPI.as_view(), name="analytics-provider-card-users"),
     path("admin/consent-leads/", ConsentLeadsReportAPI.as_view(), name="analytics-consent-leads"),
+    path("admin/warehouse/<str:dataset>/", WarehouseListAPI.as_view(), name="analytics-warehouse-list"),
+    path("admin/warehouse/<str:dataset>/cities/", WarehouseCitiesAPI.as_view(), name="analytics-warehouse-cities"),
+    path("admin/warehouse/<str:dataset>/<int:obj_id>/", WarehouseDetailAPI.as_view(), name="analytics-warehouse-detail"),
     path("admin/lead-users/<int:career_id>/", CareerLeadUsersAPI.as_view(), name="analytics-lead-users"),
     path("admin/lead-careers/", LeadEngagementUsersAPI.as_view(), name="analytics-lead-careers"),
     path("admin/timeseries/", TimeseriesReportAPI.as_view(), name="analytics-timeseries"),

@@ -15,13 +15,22 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
+from django.contrib.auth.views import LoginView, LogoutView
 from django.urls import path, include
+from django.views.generic import RedirectView
 
 from analytics.views import analytics_dashboard
+from analytics.forms import StaffAuthenticationForm
 
 
 urlpatterns = [
-    path('', analytics_dashboard, name='home'),
+    path('', RedirectView.as_view(pattern_name='home', permanent=False)),
+    path('dashboard/', analytics_dashboard, name='home'),
+    path('login/', LoginView.as_view(
+        template_name='analytics/login.html',
+        authentication_form=StaffAuthenticationForm,
+    ), name='login'),
+    path('logout/', LogoutView.as_view(next_page='login'), name='logout'),
     path('admin/', admin.site.urls),
     path('auth/', include('rest_framework.urls', namespace = 'rest_framework')),
     path("api/billing/", include("billing.urls")),
