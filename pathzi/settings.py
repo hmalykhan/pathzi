@@ -196,6 +196,9 @@ REST_FRAMEWORK = {
         # Frontend analytics ingest: each request carries up to 200 events,
         # so a modest request rate still allows high event throughput.
         "analytics": "120/min",
+        # Password-reset code/token guesses (accounts.throttles).
+        "otp_ip": "30/hour",
+        "otp_email": "10/hour",
     },
     # "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     # "PAGE_SIZE": 50,

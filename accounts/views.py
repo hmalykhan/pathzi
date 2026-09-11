@@ -31,6 +31,11 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import CoordinatesSerializer
 
 from .models import PasswordResetOTP, UserProfile, Coordinates
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+from rest_framework.exceptions import Throttled
+from accounts.services import password_reset as pwreset
+from accounts.throttles import OtpEmailThrottle, OtpIPThrottle
 from .serializers import (
     UserSerializer,
     UserProfileSerializer,
@@ -906,6 +911,8 @@ class ResetPasswordAPI(APIView):
 
         user.set_password(new_password)
         user.save()
+        # A password change cancels any pending reset code or token.
+        PasswordResetOTP.objects.filter(user=user).delete()
 
         refresh = RefreshToken.for_user(user)
         logger.info("Password changed successfully: user_id=%s", user.id)
@@ -953,13 +960,8 @@ class ForgotPasswordAPI(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        otp = str(random.randint(100000, 999999))
-
         try:
-            otp_record, _ = PasswordResetOTP.objects.get_or_create(user=user)
-            otp_record.otp = otp
-            otp_record.created_at = timezone.now()
-            otp_record.save()
+            otp = pwreset.issue_otp(user)
         except Exception as e:
             logger.exception(
                 "ForgotPassword: failed saving OTP record user_id=%s email=%s err=%s",
@@ -982,7 +984,12 @@ class ForgotPasswordAPI(APIView):
 
         # ✅ Recommended: DO NOT return JWT tokens here (OTP not verified yet)
         return Response(
-            {"status": True, "message": "OTP sent successfully"},
+            {
+                "status": True,
+                "message": "OTP sent successfully",
+                "code_length": pwreset.OTP_LENGTH,
+                "expires_in": pwreset.OTP_TTL_SECONDS,
+            },
             status=status.HTTP_200_OK,
         )
 
@@ -1004,13 +1011,8 @@ class SetPasswordGoogleAuthAPI(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        otp = str(random.randint(100000, 999999))
-
         try:
-            otp_record, _ = PasswordResetOTP.objects.get_or_create(user=user)
-            otp_record.otp = otp
-            otp_record.created_at = timezone.now()
-            otp_record.save()
+            otp = pwreset.issue_otp(user)
         except Exception as e:
             logger.exception(
                 "SetPasswordGoogleAuthAPI: failed saving OTP user_id=%s err=%s",
@@ -1031,7 +1033,12 @@ class SetPasswordGoogleAuthAPI(APIView):
 
         logger.info("SetPasswordGoogleAuth OTP sent: user_id=%s email=%s", user.id, request.user.email)
         return Response(
-            {"status": True, "message": "OTP sent successfully"},
+            {
+                "status": True,
+                "message": "OTP sent successfully",
+                "code_length": pwreset.OTP_LENGTH,
+                "expires_in": pwreset.OTP_TTL_SECONDS,
+            },
             status=status.HTTP_200_OK,
         )
 
@@ -1097,40 +1104,119 @@ class Otp_Checker(APIView):
         return Response({"status": True, "message": "Correct OTP"}, status=status.HTTP_200_OK)
 
 
-class ForgotPasswordConfirmationOTP(APIView):
+def _reset_error(code, message, http_status=status.HTTP_400_BAD_REQUEST, **extra):
+    """Failure body for the reset endpoints: a stable `code`, plus the text as
+    both `detail` and `message` (older app builds read `message`)."""
+    response = Response(
+        {"status": False, "code": code, "detail": message, "message": message, **extra},
+        status=http_status,
+    )
+    if "retry_after" in extra:
+        response["Retry-After"] = str(extra["retry_after"])
+    return response
+
+
+def _reset_code_error(code, **extra):
+    if code == pwreset.OTP_THROTTLED:
+        return _reset_error(code, pwreset.MESSAGES[code], status.HTTP_429_TOO_MANY_REQUESTS, retry_after=0, **extra)
+    return _reset_error(code, pwreset.MESSAGES[code], **extra)
+
+
+class _ResetRateLimitMixin:
+    """Rate-limited reset endpoints answer 429 in the same shape as their other errors."""
+
+    throttle_classes = [OtpIPThrottle, OtpEmailThrottle]
+    reset_error_extra = {}
+
+    def handle_exception(self, exc):
+        if isinstance(exc, Throttled):
+            return _reset_error(
+                pwreset.OTP_THROTTLED,
+                "Too many attempts. Please try again later.",
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                retry_after=int(exc.wait or 0),
+                **self.reset_error_extra,
+            )
+        return super().handle_exception(exc)
+
+
+class VerifyOtpAPI(_ResetRateLimitMixin, APIView):
+    """
+    POST /accounts/verify_otp/   { "email": "...", "otp": "123456" }
+      200       -> { "valid": true, "reset_token": "rt_...", "expires_in": 600 }
+      400 / 429 -> { "valid": false, "code": "otp_invalid" | "otp_expired" | "otp_throttled", "detail": "..." }
+
+    An unknown email answers exactly like a wrong code, so this can't be used
+    to find out which addresses have accounts.
+    """
+
+    reset_error_extra = {"valid": False}
+
     def post(self, request):
-        email = (request.data.get("email") or "").strip().lower()
-        otp = (request.data.get("otp") or "").strip()
+        email = str(request.data.get("email") or "").strip().lower()
+        otp = str(request.data.get("otp") or "").strip()
+        if not (email and otp):
+            return _reset_error(pwreset.MISSING_FIELDS, pwreset.MESSAGES[pwreset.MISSING_FIELDS], valid=False)
+
+        user = User.objects.filter(email__iexact=email).first()
+        record = PasswordResetOTP.objects.filter(user=user).first() if user else None
+
+        error = pwreset.check_otp(record, otp)
+        if error:
+            return _reset_code_error(error, valid=False)
+
+        token = pwreset.issue_reset_token(record)
+        logger.info("VerifyOtp: reset token issued user_id=%s", user.id)
+        return Response(
+            {"valid": True, "reset_token": token, "expires_in": pwreset.RESET_TOKEN_TTL_SECONDS},
+            status=status.HTTP_200_OK,
+        )
+
+
+class ForgotPasswordConfirmationOTP(_ResetRateLimitMixin, APIView):
+    """
+    POST /accounts/forgot_password_confirmation/
+      { "email", "reset_token", "new_password", "confirm_password" }   <- after verify_otp
+      { "email", "otp",         "new_password", "confirm_password" }   <- older app builds
+    Every failure carries a stable `code` (accounts/services/password_reset.py).
+    """
+
+    def post(self, request):
+        email = str(request.data.get("email") or "").strip().lower()
+        otp = str(request.data.get("otp") or "").strip()
+        token = str(request.data.get("reset_token") or "").strip()
         new_password = request.data.get("new_password")
         confirm_password = request.data.get("confirm_password")
 
-        if not (email and otp and new_password and confirm_password):
-            return Response({"status": False, "message": "Missing fields"}, status=status.HTTP_400_BAD_REQUEST)
-
+        if not (email and (token or otp) and new_password and confirm_password):
+            return _reset_error(pwreset.MISSING_FIELDS, pwreset.MESSAGES[pwreset.MISSING_FIELDS])
         if new_password != confirm_password:
-            return Response({"status": False, "message": "Passwords does not match."}, status=status.HTTP_400_BAD_REQUEST)
+            return _reset_error(pwreset.PASSWORD_MISMATCH, pwreset.MESSAGES[pwreset.PASSWORD_MISMATCH])
+
+        user = User.objects.filter(email__iexact=email).first()
+        record = PasswordResetOTP.objects.filter(user=user).first() if user else None
+
+        if token:
+            error = pwreset.check_reset_token(record, token)
+        elif user is None:
+            return _reset_error(pwreset.OTP_INVALID, "Invalid email")  # wording kept for older builds
+        elif record is None:
+            return _reset_error(pwreset.OTP_EXPIRED, "OTP not requested")  # wording kept for older builds
+        else:
+            error = pwreset.check_otp(record, otp)
+        if error:
+            return _reset_code_error(error)
 
         try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
-            return Response({"status": False, "message": "Invalid email"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            otp_record = PasswordResetOTP.objects.get(user=user)
-        except PasswordResetOTP.DoesNotExist:
-            return Response({"status": False, "message": "OTP not requested"}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not otp_record.is_valid():
-            return Response({"status": False, "message": "OTP expired"}, status=status.HTTP_400_BAD_REQUEST)
-
-        if otp_record.otp != otp:
-            return Response({"status": False, "message": "Incorrect OTP"}, status=status.HTTP_400_BAD_REQUEST)
+            validate_password(new_password, user)
+        except ValidationError as e:
+            return _reset_error(pwreset.PASSWORD_WEAK, " ".join(e.messages))
 
         user.set_password(new_password)
         user.save()
-        otp_record.delete()
+        pwreset.mark_password_reset(record)
 
-        logger.info("ForgotPassword OTP confirmed and password reset: user_id=%s email=%s", user.id, email)
+        logger.info("ForgotPassword reset: user_id=%s via=%s", user.id, "token" if token else "otp")
         return Response({"status": True, "message": "Password reset successful"}, status=status.HTTP_200_OK)
 
 
