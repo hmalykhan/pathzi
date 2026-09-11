@@ -14,9 +14,9 @@ from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 
 from accounts.models import UserProfile
-from careers.models import Career, UserSavedCareer, UserExploredCareer
+from careers.models import Career, UserCareerReport, UserSavedCareer, UserExploredCareer
 from careers.api.permissions import CareerPermission
-from careers.api.serializers import CareerListSerializer, CareerDetailSerializer, CareerFilterSerializer
+from careers.api.serializers import CareerListSerializer, CareerDetailSerializer, CareerFilterSerializer, _empty_my_report
 
 from courses.models import Course
 from courses.api.serializer import CoursesSerializer
@@ -43,6 +43,15 @@ from rest_framework.permissions import IsAuthenticated
 
 from analytics.services import log_activity
 from analytics import constants as analytics_constants
+from careers.services.nearby_routes import (
+    PostcodeNotFound,
+    attach_distances,
+    nearest_route_items,
+    parse_radius_miles,
+    requested_origin,
+    saved_origin,
+)
+from careers.services.career_deck import CARD_FIELDS, guest_deck, unique_careers
 
 logger = logging.getLogger(__name__)
 
@@ -232,14 +241,13 @@ class CareersView(viewsets.ModelViewSet):
     
     def _build_report_map(self, career_ids):
         """
-        Return {career_id: UserSavedCareer} for current user_profile.
+        Return {career_id: UserCareerReport} for current user_profile.
         Used to embed my_report per career without N+1 queries.
         """
         profile = self._profile_cached
         if not profile or not career_ids:
             return {}
-
-        links = UserSavedCareer.objects.filter(
+        links = UserCareerReport.objects.filter(
             user_profile=profile,
             career_id__in=career_ids,
         )
@@ -673,28 +681,27 @@ class CareersView(viewsets.ModelViewSet):
 #         status=status.HTTP_200_OK,
 #     )
 
-    @action(detail=True, methods=["GET", "POST", "PUT"], url_path="report")
+    @action(detail=True, methods=["GET", "POST", "PUT", "DELETE"], url_path="report")
     def report(self, request, pk=None):
+        """
+        The user's report for this career ("saved pathway"), stored on its own:
+        saving a report doesn't save the career, and unsaving the career keeps it.
+          GET         -> { report_status, report, generated_at }  (empty when there is none)
+          POST / PUT  -> create or replace   body: { "report": {...}, "report_status": bool (optional) }
+          DELETE      -> remove it
+        """
         try:
             career_id = int(pk)
         except (TypeError, ValueError):
             raise NotFound()
 
         profile = self._profile_cached or self._get_or_create_profile()
+        reports = UserCareerReport.objects.filter(user_profile=profile, career_id=career_id)
 
-        # GET -> fetch only
         if request.method == "GET":
-            row = UserSavedCareer.objects.filter(
-                user_profile=profile,
-                career_id=career_id
-            ).values("report_status", "report", "generated_at").first()
-
+            row = reports.values("report_status", "report", "generated_at").first()
             if not row:
-                return Response(
-                    {"detail": "Career is not saved. Save career first."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
+                return Response(_empty_my_report(), status=status.HTTP_200_OK)
             return Response(
                 {
                     "report_status": bool(row["report_status"]),
@@ -704,55 +711,43 @@ class CareersView(viewsets.ModelViewSet):
                 status=status.HTTP_200_OK,
             )
 
-        # POST / PUT validation
+        if request.method == "DELETE":
+            deleted, _ = reports.delete()
+            if not deleted:
+                return Response(
+                    {"status": False, "message": "No report for this career."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            cache.delete(get_saved_cache_key(request.user.id))  # /careers/my/ embeds my_report
+            return Response({"status": True, "deleted": True}, status=status.HTTP_200_OK)
+
         if "career_id" in request.data:
             return Response(
                 {"detail": "career_id is not allowed in request body."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
         if "generated_at" in request.data:
             return Response(
                 {"detail": "generated_at is not allowed in request body."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
         if "report" not in request.data:
             return Response(
                 {"detail": "report is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        get_object_or_404(Career, pk=career_id)
 
         report_data = request.data["report"]
-
-        # Accept report_status from frontend, default true
-        report_status = request.data.get("report_status", True)
-        report_status = bool(report_status)
-
+        report_status = bool(request.data.get("report_status", True))
         now = timezone.now()
 
-        with transaction.atomic():
-            obj, created = UserSavedCareer.objects.get_or_create(
-                user_profile=profile,
-                career_id=career_id,
-                defaults={
-                    "report": report_data,
-                    "report_status": report_status,
-                    "generated_at": now,
-                }
-            )
-
-            if not created:
-                UserSavedCareer.objects.filter(id=obj.id).update(
-                    report=report_data,
-                    report_status=report_status,
-                    generated_at=now,
-                )
-
-        cache.delete(get_saved_cache_key(request.user.id))
-        cache.delete(get_list_cache_key(request.user.id))
-
-        self._debounced_embedding_refresh(request.user.id)
+        UserCareerReport.objects.update_or_create(
+            user_profile=profile,
+            career_id=career_id,
+            defaults={"report": report_data, "report_status": report_status, "generated_at": now},
+        )
+        cache.delete(get_saved_cache_key(request.user.id))  # /careers/my/ embeds my_report
 
         return Response(
             {
@@ -762,6 +757,23 @@ class CareersView(viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK,
         )
+
+    @action(detail=False, methods=["GET"], url_path="reports")
+    def reports(self, request):
+        """The user's saved reports ("saved pathways"), newest first."""
+        profile = self._profile_cached or self._get_or_create_profile()
+        links = list(UserCareerReport.objects.filter(user_profile=profile).order_by("-updated_at"))
+        careers = Career.objects.only(*CARD_FIELDS).in_bulk([l.career_id for l in links])
+        links = [l for l in links if l.career_id in careers]
+
+        data = CareerFilterSerializer([careers[l.career_id] for l in links], many=True).data
+        for item, link in zip(data, links):
+            item["my_report"] = {
+                "report_status": link.report_status,
+                "report": link.report or {},
+                "generated_at": link.generated_at,
+            }
+        return Response(data, status=status.HTTP_200_OK)
 
     # def list(self, request, *args, **kwargs):
     #     user = request.user
@@ -930,14 +942,9 @@ class CareersView(viewsets.ModelViewSet):
 
         # 🔥 DEFAULT queryset
         t2 = time.time()
-        careers = qss.only(
-            "id",
-            "sub_type",
-            "jobname",
-            "job_description",
-            "dg_image_url",
-            "salary"
-        )
+        # No cached recommendations yet: the user's categories (or everything),
+        # one card per career - each career is stored once per label it has.
+        careers = unique_careers(qss).only(*CARD_FIELDS)
         logger.debug("[TIME] queryset preparation: %.3fs", time.time() - t2)
 
         if cached_ids is None:
@@ -1024,58 +1031,21 @@ class CareersView(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["GET", "POST"], url_path="filter")
     def filter(self, request):
-        total_start = time.time()
-
-        # 🔥 Get subcategories safely (GET + POST)
+        """
+        Guest career preview. Categories arrive in `subcategories` as display
+        labels (e.g. "Healthcare"). Returns a random list with each career once:
+        up to 50 per picked category, or 30 per category when none are picked.
+        """
         subcategories = request.data.get("subcategories")
         if not subcategories:
             subcategories = request.query_params.getlist("subcategories")
+        if isinstance(subcategories, str):
+            subcategories = [subcategories]
 
-        build_start = time.time()
+        picked = [norm_key(s) for s in subcategories or [] if s]
+        cards = guest_deck([k for k in dict.fromkeys(picked) if k])
 
-        # 🔥 Build queryset
-        if not subcategories:
-            qs = Career.objects.all().order_by("id")
-        else:
-            normalized = [norm_key(s) for s in subcategories if s]
-
-            if not normalized:
-                qs = Career.objects.all().order_by("id")
-            else:
-                qs = Career.objects.filter(
-                    normalized_sub_type__in=normalized
-                ).order_by("id")
-
-        # ✅ FIX: use MODEL fields (not serializer names)
-        qs = qs.only(
-            "id",
-            "sub_type",          # ✔ maps to category
-            "jobname",           # ✔ maps to subcategory
-            "job_description",
-            "dg_image_url",
-            "salary"
-        )
-
-        # 🔥 Apply slicing / pagination
-        # qs = self._slice(qs)
-        # qs = qs[:50]
-
-        logger.debug("Query build time: %.3fs", time.time() - build_start)
-
-        # 🔥 FORCE DB HIT
-        db_start = time.time()
-        data = list(qs)
-        logger.debug("DB fetch time: %.3fs", time.time() - db_start)
-
-        logger.debug("Rows fetched: %d", len(data))
-
-        # 🔥 Serialization
-        ser_start = time.time()
-        serializer = CareerFilterSerializer(data, many=True)
-        logger.debug("Serialization time: %.3fs", time.time() - ser_start)
-
-        logger.debug("TOTAL TIME: %.3fs", time.time() - total_start)
-
+        serializer = CareerFilterSerializer(cards, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def retrieve(self, request, *args, **kwargs):
@@ -1106,94 +1076,66 @@ class CareersView(viewsets.ModelViewSet):
         # Requires Model has fields: city, subcategory
         return Model.objects.filter(subcategory__iexact=sub, city__iexact=city).order_by("-id")
 
-    # @action(detail=True, methods=["GET"])
-    @action(detail=True, methods=["GET","POST"])
+    # -----------------------
+    # Routes into a career: jobs / courses / apprenticeships, nearest first.
+    # Each item carries distance_km / distance_miles from the user.
+    # -----------------------
+    def _route_items(self, request, pk, Model, serializer_class):
+        # A location sent with the request (lat/lng or postcode) overrides the
+        # user's own one for the sorting.
+        try:
+            requested = requested_origin(request)
+        except PostcodeNotFound:
+            return Response({"detail": "Postcode not recognised."}, status=status.HTTP_400_BAD_REQUEST)
+
+        profile = self._profile_cached
+        if not profile:
+            city = (request.data.get("city") or request.query_params.get("city") or "").strip()
+            origin = requested or saved_origin(city=city)
+            if not city and not origin:
+                return Response({"detail": "City is required."}, status=400)
+            career = get_object_or_404(Career.objects.all(), pk=pk)
+        else:
+            city = (getattr(profile, "city", None) or "").strip()
+            origin = requested or saved_origin(profile=profile, city=city)
+            if not city and not origin:
+                return Response({"detail": "User city not set."}, status=400)
+            career = self.get_object()
+
+        jobname = (career.jobname or "").strip()
+        if not jobname:
+            return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if origin:
+            qs = nearest_route_items(
+                Model,
+                jobname=jobname,
+                lat=origin[0],
+                lon=origin[1],
+                radius_miles=parse_radius_miles(request),
+                # Coordinate-less rows are only kept for the user's own city,
+                # which says nothing about a location they sent.
+                city="" if requested else city,
+            )
+        else:
+            # No coordinates for the user or their city: exact city match, no distances.
+            qs = self._only_city_and_subcategory_qs(Model, city=city, jobname=jobname)
+
+        items = list(self._slice(qs))
+        data = serializer_class(items, many=True, context={"request": request}).data
+        return Response(attach_distances(data, items), status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["GET", "POST"])
     def jobs(self, request, pk=None):
-        profile = self._profile_cached
-        if not profile:
-            # return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
-            city = (
-            request.data.get("city")
-            or request.query_params.get("city")
-            )
-            if not city:
-                return Response({"detail": "City is required."}, status=400)
-            career = get_object_or_404(Career.objects.all(), pk=pk)
+        return self._route_items(request, pk, Job, JobsSerializer)
 
-        else :
-            city = (getattr(profile, "city", None) or "").strip()
-            if not city:
-                return Response({"detail": "User city not set."}, status=400)
-            career = self.get_object()
-
-        jobname = (career.jobname or "").strip()
-        if not jobname:
-            return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
-        # qs = self._only_city_and_subcategory_qs(Job, profile=profile, jobname=jobname)
-        qs = self._only_city_and_subcategory_qs(Job, city=city, jobname=jobname)
-        qs = self._slice(qs)
-
-        data = JobsSerializer(list(qs), many=True, context={"request": request}).data
-        return Response(data, status=status.HTTP_200_OK)
-
-    # @action(detail=True, methods=["GET"])
-    @action(detail=True, methods=["GET","POST"])
+    @action(detail=True, methods=["GET", "POST"])
     def courses(self, request, pk=None):
-        profile = self._profile_cached
-        if not profile:
-            # return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
-            city = (
-            request.data.get("city")
-            or request.query_params.get("city")
-            )
-            if not city:
-                return Response({"detail": "City is required."}, status=400)
-            career = get_object_or_404(Career.objects.all(), pk=pk)
-        else:
-            city = (getattr(profile, "city", None) or "").strip()
-            if not city:
-                return Response({"detail": "User city not set."}, status=400)
-            career = self.get_object()
+        return self._route_items(request, pk, Course, CoursesSerializer)
 
-
-        jobname = (career.jobname or "").strip()
-        if not jobname:
-            return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
-        # qs = self._only_city_and_subcategory_qs(Course, profile=profile, jobname=jobname)
-        qs = self._only_city_and_subcategory_qs(Course, city=city, jobname=jobname)
-        qs = self._slice(qs)
-
-        data = CoursesSerializer(list(qs), many=True, context={"request": request}).data
-        return Response(data, status=status.HTTP_200_OK)
-
-    # @action(detail=True, methods=["GET"])
-    @action(detail=True, methods=["GET","POST"])
+    @action(detail=True, methods=["GET", "POST"])
     def apprenticeships(self, request, pk=None):
-        profile = self._profile_cached
-        if not profile:
-            # return Response({"detail": "User profile missing."}, status=status.HTTP_400_BAD_REQUEST)
-            city = (
-            request.data.get("city")
-            or request.query_params.get("city")
-            )
-            if not city:
-                return Response({"detail": "City is required."}, status=400)
-            career = get_object_or_404(Career.objects.all(), pk=pk)
-        else:
-            city = (getattr(profile, "city", None) or "").strip()
-            if not city:
-                return Response({"detail": "User city not set."}, status=400)
-            career = self.get_object()
-
-        jobname = (career.jobname or "").strip()
-        if not jobname:
-            return Response({"detail": "Career subcategory missing."}, status=status.HTTP_400_BAD_REQUEST)
-        # qs = self._only_city_and_subcategory_qs(Apprenticeship, profile=profile, jobname=jobname)
-        qs = self._only_city_and_subcategory_qs(Apprenticeship, city=city, jobname=jobname)
-        qs = self._slice(qs)
-
-        data = ApprenticeshipSerializer(list(qs), many=True, context={"request": request}).data
-        return Response(data, status=status.HTTP_200_OK)
+        return self._route_items(request, pk, Apprenticeship, ApprenticeshipSerializer)
 
 
     # @action(detail=False, methods=["GET"])

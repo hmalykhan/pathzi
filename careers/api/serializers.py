@@ -224,7 +224,7 @@ class CareerListSerializer(serializers.ModelSerializer):
     def get_my_report(self, obj):
         """
         Uses report_map injected by the view to avoid N+1 queries.
-        report_map: {career_id: UserSavedCareer instance} for current user's profile.
+        report_map: {career_id: UserCareerReport instance} for current user's profile.
         """
         report_map = self.context.get("report_map") or {}
         link = report_map.get(obj.id)

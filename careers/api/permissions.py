@@ -9,7 +9,7 @@ class CareerPermission(permissions.BasePermission):
 
         allowed = {
             "save", "my", "unsave",
-            "report", "explore","unexplore","explore_mine" # ✅ add
+            "report", "reports", "explore","unexplore","explore_mine" # ✅ add
         }
 
         guest = {
