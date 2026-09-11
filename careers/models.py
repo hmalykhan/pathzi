@@ -176,3 +176,33 @@ class CareerEmbedding(models.Model):
 
     def __str__(self):
         return f"Embedding<{self.career_id}>"
+
+
+class UserCareerReport(models.Model):
+    """
+    A user's saved report for a career ("saved pathway" in the app).
+
+    Independent of saving the career: a report can exist without the career
+    being saved, and unsaving the career keeps the report. Reports used to
+    live on UserSavedCareer; migration 0013 copied them here.
+    """
+    user_profile = models.ForeignKey(
+        UserProfile, on_delete=models.CASCADE, related_name="career_reports"
+    )
+    career = models.ForeignKey(
+        Career, on_delete=models.CASCADE, related_name="user_reports"
+    )
+
+    report_status = models.BooleanField(default=False)
+    report = models.JSONField(default=dict, blank=True)
+    generated_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "pathzi_user_career_report"
+        unique_together = ("user_profile", "career")
+
+    def __str__(self):
+        return f"{self.user_profile_id} - {self.career_id}"

@@ -6,22 +6,42 @@ from django.core.exceptions import ValidationError
 from pgvector.django import VectorField
 
 
+# How long an emailed reset code stays valid (the email copy says 5 minutes).
+OTP_TTL_SECONDS = 5 * 60
+
+
 class PasswordResetOTP(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     otp = models.CharField(max_length=6)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # Wrong guesses against the current code; capped, then the code is locked.
+    attempts = models.PositiveSmallIntegerField(default=0)
+
+    # Single-use token issued by verify_otp. Only its SHA-256 is stored.
+    reset_token_hash = models.CharField(max_length=64, blank=True, default="")
+    reset_token_expires_at = models.DateTimeField(null=True, blank=True)
+    reset_token_used_at = models.DateTimeField(null=True, blank=True)
+
     def is_valid(self):
-        return self.created_at >= timezone.now() - timedelta(minutes=5)
+        return self.created_at >= timezone.now() - timedelta(seconds=OTP_TTL_SECONDS)
 
 
 class UserProfile(models.Model):
+    class UserType(models.TextChoices):
+        STUDENT = "student", "Student"
+        PARENT_GUARDIAN = "parent_guardian", "Parent or Guardian"
+        CAREER_CHANGER = "career_changer", "Career Changer"
+        RESKILLING = "reskilling", "Reskilling / Upskilling"
+
     status = models.BooleanField(default=False)
     appuser = models.OneToOneField(User, on_delete=models.CASCADE, blank=True, null=True)
 
     age = models.CharField(max_length=200, null=True, blank=True)
     education_level = models.CharField(max_length=200, blank=True)
     discipline = models.CharField(max_length=200, blank=True)
+    # Persona from onboarding ("Who is exploring careers today?"). Skippable, so nullable.
+    user_type = models.CharField(max_length=32, choices=UserType.choices, null=True, blank=True)
     city = models.CharField(max_length=200, blank=True, null=True)
     zip_code = models.CharField(max_length=200, blank=True)
     address = models.CharField(max_length=300, blank=True)
