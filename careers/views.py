@@ -52,6 +52,7 @@ from careers.services.nearby_routes import (
     saved_origin,
 )
 from careers.services.career_deck import CARD_FIELDS, guest_deck, unique_careers
+from careers.services.match_score import match_scores, with_match_scores
 
 logger = logging.getLogger(__name__)
 
@@ -773,7 +774,7 @@ class CareersView(viewsets.ModelViewSet):
                 "report": link.report or {},
                 "generated_at": link.generated_at,
             }
-        return Response(data, status=status.HTTP_200_OK)
+        return Response(with_match_scores(data, match_scores(request.user, [l.career_id for l in links])), status=status.HTTP_200_OK)
 
     # def list(self, request, *args, **kwargs):
     #     user = request.user
@@ -983,7 +984,7 @@ class CareersView(viewsets.ModelViewSet):
         # 🔥 Serialization
         t5 = time.time()
         serializer = CareerFilterSerializer(careers_list, many=True)
-        data = serializer.data
+        data = with_match_scores(serializer.data, match_scores(user, [c.id for c in careers_list]))
         logger.debug("[TIME] serialization: %.3fs", time.time() - t5)
 
         total_time = time.time() - total_start
@@ -1056,7 +1057,8 @@ class CareersView(viewsets.ModelViewSet):
             career,
             context={"request": request, "report_map": report_map},
         )
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        data = {**serializer.data, "match_score": match_scores(request.user, [career.id]).get(career.id)}
+        return Response(data, status=status.HTTP_200_OK)
 
    
     def _only_city_and_subcategory_qs(self, Model, *, city: str, jobname: str):
@@ -1192,7 +1194,7 @@ class CareersView(viewsets.ModelViewSet):
         cached = cache.get(cache_key)
         if cached:
             logger.debug("SAVED CACHE HIT")
-            return Response(cached, status=200)
+            return Response(with_match_scores(cached, match_scores(request.user, [r["id"] for r in cached])), status=200)
 
         logger.debug("SAVED CACHE MISS")
 
@@ -1264,7 +1266,7 @@ class CareersView(viewsets.ModelViewSet):
 
         cache.set(cache_key, data, timeout=60 * 60)
 
-        return Response(data, status=200)
+        return Response(with_match_scores(data, match_scores(request.user, career_ids)), status=200)
     
     # @action(detail=True, methods=["GET","POST"])
     # def save(self, request, pk=None):
@@ -1470,7 +1472,7 @@ class CareersView(viewsets.ModelViewSet):
         cached = cache.get(cache_key)
         if cached:
             logger.debug("EXPLORE CACHE HIT")
-            return Response(cached, status=200)
+            return Response(with_match_scores(cached, match_scores(request.user, [r["id"] for r in cached])), status=200)
 
         logger.debug("EXPLORE CACHE MISS")
 
@@ -1520,7 +1522,7 @@ class CareersView(viewsets.ModelViewSet):
 
         cache.set(cache_key, data, timeout=60 * 60)
 
-        return Response(data, status=200)
+        return Response(with_match_scores(data, match_scores(request.user, career_ids)), status=200)
     
     @action(detail=True, methods=["GET", "POST"])
     def explore(self, request, pk=None):
