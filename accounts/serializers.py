@@ -40,6 +40,11 @@ class CoordinatesSerializer(serializers.ModelSerializer):
         fields = ["id", "title", "latitude", "longitude", "postal_code", "state", "city", "active"]
         read_only_fields = ["id"]
 
+# Profile text columns that are NOT NULL in the DB: a null from the client
+# means "clear it", so it is stored as "".
+PROFILE_NULL_AS_BLANK = ("discipline", "education_level", "address", "zip_code")
+
+
 class UserProfileUpdateSerializer(serializers.ModelSerializer):
     # 🔥 required response fields
     id = serializers.IntegerField(read_only=True)
@@ -53,14 +58,16 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
     category = serializers.ListField(
         child=serializers.CharField(max_length=200),
         required=False,
-        allow_empty=True
+        allow_empty=True,
+        allow_null=True,
     )
 
     # qualification as list of strings
     qualification = serializers.ListField(
         child=serializers.CharField(max_length=200),
         required=False,
-        allow_empty=True
+        allow_empty=True,
+        allow_null=True,
     )
 
     class Meta:
@@ -72,12 +79,14 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
             "age",
             "discipline",
             "education_level",
+            "user_type",
             "category",
             "qualification",
             "address",
             "city",
             "zip_code",
         ]
+        extra_kwargs = {field: {"allow_null": True} for field in PROFILE_NULL_AS_BLANK}
 
     # 🔐 validate appuser (name)
     def validate_appuser(self, value):
@@ -99,6 +108,16 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
             seen.add(key)
             cleaned.append(item)
         return cleaned
+
+    # Skipped question: treat "" the same as null.
+    def validate_user_type(self, value):
+        return value or None
+
+    def validate(self, attrs):
+        for field in PROFILE_NULL_AS_BLANK:
+            if field in attrs and attrs[field] is None:
+                attrs[field] = ""
+        return attrs
 
     # 🔐 clean qualification (trim + dedupe, same as category)
     def validate_qualification(self, value):
