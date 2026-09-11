@@ -21,6 +21,7 @@ from django.views.generic import RedirectView
 
 from analytics.views import analytics_dashboard
 from analytics.forms import StaffAuthenticationForm
+from careers.progress_views import ProgressAPI
 
 
 urlpatterns = [
@@ -43,4 +44,5 @@ urlpatterns = [
     path("geo/", include("geo_search.urls")),
     path("usage-limits/", include("usage_limits.urls")),
     path("analytics/", include("analytics.urls")),
+    path("me/progress/", ProgressAPI.as_view(), name="me-progress"),
 ]
