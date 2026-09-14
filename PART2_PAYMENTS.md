@@ -1,208 +1,341 @@
 # Part 2 — Payments, Trial and Referrals
 
-**For:** the project manager / mobile developer (same person supplying the store accounts and keys)
+**For:** the project manager / mobile developer
 **From:** backend
-**Date:** 2026-09-14
-**Status:** decisions agreed, waiting on store setup and credentials before backend work can finish
+**Version:** 2 — 2026-09-14 (replaces version 1 of the same day)
+**Status:** all decisions settled. Backend Phase 1 starting now; the rest needs the store setup in [section 3](#3-what-we-need-from-you).
 
-This document has three parts:
-
-1. [What was decided](#1-what-was-decided)
-2. [**What we need from you**](#2-what-we-need-from-you) ← the action list
-3. [What the backend will build, and what the app must do](#3-what-the-backend-will-build)
+**Version 2 answers the app-side review and changes several things — please read [section 1](#1-what-changed-since-version-1) before starting any setup.**
 
 ---
 
-## 1. What was decided
+## Contents
 
-| Decision | Detail |
+1. [What changed since version 1](#1-what-changed-since-version-1)
+2. [The agreed design](#2-the-agreed-design)
+3. [**What we need from you**](#3-what-we-need-from-you)
+4. [How a purchase works](#4-how-a-purchase-works)
+5. [The API the app will use](#5-the-api-the-app-will-use)
+6. [What happens when the trial ends](#6-what-happens-when-the-trial-ends)
+7. [What the app must do](#7-what-the-app-must-do)
+8. [Plan and timing](#8-plan-and-timing)
+9. [Still open](#9-still-open)
+
+---
+
+## 1. What changed since version 1
+
+| Change | Detail |
 |---|---|
-| **Payments move to Apple + Google in-app purchase** | Stripe is no longer the payment route for the app. Same features, different provider. |
-| **All payment happens inside the app** | The store's own payment sheet appears in the app. No web page, no browser, no checkout link. The backend never sees card details. |
-| **Free trial: 7 days** | Starts at sign-up, no card needed. Set by the server, so reinstalling the app doesn't reset it. |
-| **Referrals: email only** | No public or shareable code. Every invitation is emailed, carries **its own unique code**, works **once**, and is tied to the invited email address. |
-| **Referrals are unlimited** | A user can invite as many people as they like. No cap. |
-| **A referral counts when the invited person signs up using the code** | New accounts only. Signing in to an existing account earns nothing. |
-| **Each new account can be credited once, to one referrer** | And nobody can use their own code. |
-| **Rewards** | Invitee +14 days, referrer +7 days (please confirm — see [open questions](#5-open-questions)). |
-| **Swipe limits: dropped** | No swipe limit at all. Free use is the 7-day trial, then a subscription. |
-| **Deep links: later** | For now the emailed link opens the app if it's installed, otherwise the person types the code from the email at sign-up. |
+| **RevenueCat is approved** | It handles receipt checking, store notifications, restores, refunds and grace periods for both stores. Saves about 3.5 days and removes the most bug-prone work. |
+| **Credentials now go to RevenueCat, not our server** | The Apple key and Google service account are entered in **RevenueCat's dashboard**. Our server only needs RevenueCat's keys. |
+| **Store notification URLs point at RevenueCat** | Not at us. RevenueCat's docs give the exact URLs. |
+| **No landing page, no deep links for v1** | Messages carry the **code as text** plus store links. Nothing to build on `pathzi.com`. |
+| **Referral codes work differently** | No permanent code. **Every share generates a new unique code**, and the **first account to use it expires it**. |
+| **No email matching, no verification delay** | A code can be used by whoever gets it, and the referrer is credited immediately. |
+| **Rewards fixed** | Invitee **+7 bonus days** (14 with the trial). Referrer **+7 days**. |
+| **After the trial: a free tier, not a locked app** | The home screen shows **only careers the user already explored**. |
+| **Added, from your review** | In-app account deletion, an account UUID for purchase linking, trial + `referral_code` on all three sign-up paths, `is_new_user` from Google/Apple, sandbox notification URL, a trial for accounts that already exist. |
+| **Quarterly plan** | Dropped. |
 
-**Free days are ours, not the stores'.** The trial and referral days are access we grant in our own database, so Apple and Google are not involved in them. The stores only handle **paid** subscriptions.
+### Answers to your confirmation list
+
+| Your item | Answer |
+|---|---|
+| Personal share code plus email invites | ✅ Both, but **every share makes a new single-use code** — no permanent code |
+| No strict email match | ✅ Agreed |
+| Trial + `referral_code` on Google/Apple sign-up, `is_new_user` | ✅ All three paths. Both endpoints already work out internally whether they created the account, so this is a small change |
+| `GET /me/referral` shape | ✅ As you specified, plus a "generate code" call |
+| Temporary `/join` landing page | ❌ Dropped — code as text instead |
+| Extra access fields + trial for existing accounts | ✅ Agreed |
+| Access layer can support a free tier later | ✅ Built that way from the start, and the free tier is now decided |
+| Banking referral and trial days | ✅ Referral days are banked. Trial days need no banking — see [4.3](#43-buying-during-the-trial) |
+| Account UUID for purchase linking | ✅ Agreed |
+| Verify endpoint shape | ⚠️ Simpler with RevenueCat — see [5.4](#54-after-a-purchase) |
+| RevenueCat | ✅ Yes |
 
 ---
 
-## 2. What we need from you
+## 2. The agreed design
 
-### 2.1 Apple — App Store Connect
+| | |
+|---|---|
+| **Payments** | Apple + Google in-app purchase, through RevenueCat. Stripe is retired. |
+| **Where payment happens** | Inside the app, on the store's own payment sheet. No web page, no card data anywhere near us. |
+| **Trial** | 7 days, set by the server at sign-up, no card. Reinstalling doesn't reset it. |
+| **After the trial** | Free tier: only the user's already-explored careers on the home screen. |
+| **Referrals** | Every share creates a new unique code. Single use — first account to use it consumes it. 30-day expiry. Unlimited codes per user. Can't use your own. One referrer per new account. New accounts only. |
+| **Rewards** | Invitee +7 bonus days (14 total with the trial); referrer +7 days. |
+| **Sharing** | Email invitations sent by the backend, or the user copies a code and sends it however they like. |
+| **Swipe limits** | Dropped entirely. The 5-card guest preview stays in the app and needs no API. |
 
-| # | Item | Where to find / do it |
+**Free days are ours.** The trial and referral days live in our database — the stores know nothing about them. The stores only handle paid subscriptions.
+
+---
+
+## 3. What we need from you
+
+### 3.1 RevenueCat
+
+| # | Item | Where |
 |---|---|---|
-| 1 | **Bundle ID** of the app | App Store Connect → your app → App Information |
-| 2 | **Subscription products created** | App Store Connect → your app → Subscriptions: create a subscription group, then one product per plan (see [2.3](#23-the-plans-to-create)) |
-| 3 | **In-App Purchase key** — the `.p8` file | Users and Access → **Integrations → In-App Purchase** → generate a key. The file downloads **once** as `SubscriptionKey_XXXXXXX.p8` — it cannot be downloaded again. |
-| 4 | **Key ID** | Shown next to the key you created (it's also in the file name) |
-| 5 | **Issuer ID** | On the same Integrations → In-App Purchase page |
-| 6 | **Server notification URL set to ours** | Your app → App Information → **App Store Server Notifications** → Production Server URL → choose **Version 2**. I'll give you the URL once Phase 2 starts. Apple allows only one URL, so tell me if something else already uses it. |
-| 7 | **Sandbox tester account** | Users and Access → Sandbox Testers. Needed to test buying without real money. |
-| 8 | **Banking and tax forms completed** | Business → Agreements, Tax and Banking. **Products can't be sold until these are approved — this usually takes the longest, so start it first.** |
+| 1 | **RevenueCat account + a project for Pathzi** | revenuecat.com |
+| 2 | **Public SDK keys** (one for iOS, one for Android) | Project settings → API keys. The app uses these. |
+| 3 | **Secret API key** | Same page. Our backend uses this to double-check subscriptions. |
+| 4 | **Webhook set to our URL + a shared secret** | Integrations → Webhooks. I'll send the URL when Phase 2 starts. |
+| 5 | **Entitlement named `premium`** with both products attached | Entitlements section |
+| 6 | **Apple + Google credentials entered into RevenueCat** | See 3.2 and 3.3 — the files go **into RevenueCat**, not to us |
 
-### 2.2 Google — Play Console + Google Cloud
+### 3.2 Apple — App Store Connect
 
-| # | Item | Where to find / do it |
+| # | Item | Where |
 |---|---|---|
-| 1 | **Package name** of the app | e.g. `com.pathzi.app` |
-| 2 | **Subscription products created** | Play Console → Monetise → Subscriptions: one subscription per plan, each with a base plan (see [2.3](#23-the-plans-to-create)) |
-| 3 | **Service account JSON key** | Google Cloud Console → the project linked to Play → create a service account → create a JSON key. Send me the JSON file. |
-| 4 | **That service account given access in Play Console** | Play Console → Users and permissions → invite the service account email → permissions: **View financial data** and **Manage orders and subscriptions** |
-| 5 | **A Pub/Sub topic** (for change notifications) | Google Cloud Console → Pub/Sub → create a topic. Then in the topic's permissions, add `google-play-developer-notifications@system.gserviceaccount.com` with the role **Pub/Sub Publisher**. |
-| 6 | **The topic name entered in Play Console** | Play Console → Monetise → Monetisation setup → Real-time developer notifications → paste the topic name |
-| 7 | **Licence tester account** | Play Console → Setup → Licence testing. Needed to test buying without real money. |
-| 8 | **Payments profile / banking complete** | Play Console → Setup → Payments profile. **Same as Apple — start early.** |
+| 1 | **Bundle ID confirmed** (`hello.pathzi.co.uk` vs App Store Connect) | It can't change after products are created |
+| 2 | **Subscription products** `pathzi_monthly`, `pathzi_yearly` | Your app → Subscriptions (one group, two products) |
+| 3 | **In-App Purchase key** (`SubscriptionKey_XXXX.p8`) + **Key ID** + **Issuer ID** | Users and Access → Integrations → In-App Purchase. Downloads once. **Upload into RevenueCat.** |
+| 4 | **App Store Server Notifications → RevenueCat's URL**, Version 2, **production *and* sandbox** | Your app → App Information |
+| 5 | **Sandbox tester account** | Users and Access → Sandbox Testers |
+| 6 | **Banking and tax forms approved** | Business → Agreements, Tax and Banking. **Start this first — it takes the longest.** |
 
-### 2.3 The plans to create
+### 3.3 Google — Play Console + Google Cloud
 
-Create the **same two plans in both stores**, and send me the exact product IDs you used.
+| # | Item | Where |
+|---|---|---|
+| 1 | **Package name** (`com.pathzi.app`) | |
+| 2 | **Subscription products** `pathzi_monthly`, `pathzi_yearly` with base plans | Play Console → Monetise → Subscriptions |
+| 3 | **Service account JSON key** | Google Cloud Console → service account → JSON key. **Upload into RevenueCat.** |
+| 4 | **That service account given Play access** | Play Console → Users and permissions → **View financial data** + **Manage orders and subscriptions** |
+| 5 | **Pub/Sub topic for notifications** — RevenueCat's docs give the topic to use | Play Console → Monetisation setup → Real-time developer notifications |
+| 6 | **Licence tester account** | Play Console → Setup → Licence testing |
+| 7 | **Payments profile complete** | Play Console → Setup. **Start early.** |
 
-| Plan | Price shown in the design | Suggested product ID |
+### 3.4 Prices
+
+Set the same two plans in both stores and send the exact product IDs and final prices. The app reads prices from the store, so the backend doesn't hard-code them.
+
+| Plan | Design price | Product ID |
 |---|---|---|
 | Monthly | £9.99 / month | `pathzi_monthly` |
 | Yearly | £29 / year | `pathzi_yearly` |
 
-Notes:
-- Stores use fixed price points, so the final price may be a penny different (for example £28.99). Tell me the exact prices chosen.
-- The current backend has monthly / quarterly / yearly from the Stripe setup. **Quarterly is dropped** unless you want it kept.
-- **Don't add a free trial inside the store products.** Our 7-day trial is handled by us, and having both would give some users 14 days.
+**Don't add a free trial inside the store products** — ours is server-side, and both together would give 14 days.
 
-### 2.4 How to send credentials — please don't email them
+### 3.5 Sending secrets
 
-The `.p8` file and the service account JSON are **secrets**: anyone holding them can read your sales data and subscription records. Please send them through a password manager (1Password, Bitwarden) or an encrypted transfer, not plain email or WhatsApp. They will be stored in the server's `.env`, never in the app or in git.
+The `.p8` file and the service account JSON give access to your sales data. Send them through a password manager or encrypted transfer, never plain email or WhatsApp. Most go into RevenueCat; only RevenueCat's own keys reach our server config.
 
-### 2.5 Checklist to send back
+### 3.6 Checklist to send back
 
 ```
+RevenueCat
+[ ] Project created
+[ ] iOS public SDK key:
+[ ] Android public SDK key:
+[ ] Secret API key (sent securely):
+[ ] Entitlement "premium" created with both products:
+[ ] Webhook URL set (after we send it) + shared secret:
+
 Apple
-[ ] Bundle ID:
-[ ] Product IDs created:
-[ ] SubscriptionKey_XXXX.p8 file (sent securely)
-[ ] Key ID:
-[ ] Issuer ID:
-[ ] Sandbox tester email:
+[ ] Bundle ID confirmed:
+[ ] Products created:
+[ ] .p8 + Key ID + Issuer ID uploaded to RevenueCat:
+[ ] Notification URLs set (production + sandbox):
+[ ] Sandbox tester:
 [ ] Banking/tax status:
-[ ] Server notification URL set (after we send it):
 
 Google
 [ ] Package name:
-[ ] Product IDs created:
-[ ] Service account JSON (sent securely)
-[ ] Service account granted Play permissions: yes/no
-[ ] Pub/Sub topic name:
-[ ] Publisher role granted to google-play-developer-notifications@system.gserviceaccount.com: yes/no
-[ ] Licence tester email:
+[ ] Products created:
+[ ] Service account JSON uploaded to RevenueCat:
+[ ] Play permissions granted:
+[ ] Pub/Sub notifications configured:
+[ ] Licence tester:
 [ ] Payments profile status:
 ```
 
 ---
 
-## 3. What the backend will build
+## 4. How a purchase works
 
-### 3.1 Buying a subscription
+### 4.1 Buying
 
 ```
-1. App shows the paywall with prices read from the store
+1. App shows the paywall, prices read from the store
 2. User taps Subscribe -> the store's payment sheet opens inside the app
-3. Store charges the user and gives the app a receipt
-4. App sends the receipt to us:  POST /api/billing/iap/verify/
-5. We check it directly with Apple/Google: is it real, what was bought, when does it expire?
-6. We save it and unlock access
+3. Apple/Google charge the user
+4. RevenueCat checks the purchase with the store
+5. RevenueCat tells our backend: "this user has premium until <date>"
+6. Our backend updates the user's access
 ```
 
-### 3.2 Keeping it up to date, automatically
+The app does **not** send us receipts — RevenueCat handles that. The app only has to be logged in to RevenueCat as the right user (see [5.4](#54-after-a-purchase)).
 
-Apple and Google send us a message whenever something changes — renewed, cancelled, refunded, payment failed, grace period. We listen and update the user's access. This works even if the user never opens the app.
+### 4.2 Afterwards
+
+RevenueCat tells us about renewals, cancellations, refunds, billing problems and grace periods. If a message is ever missed, our backend can ask RevenueCat directly and correct itself.
+
+### 4.3 Buying during the trial
+
+Access is always **the later of** the trial end and the subscription end, so buying on day 3 loses nothing and no banking is needed.
+
+**Referral days earned while already subscribed** are different — they're banked (`banked_referral_days`) and applied when the subscription ends without renewing.
+
+---
+
+## 5. The API the app will use
+
+### 5.1 Access — the one question that matters
 
 ```
-POST /api/billing/apple/notifications/    <- Apple App Store Server Notifications V2
-POST /api/billing/google/notifications/   <- Google Real-Time Developer Notifications
-```
-
-Their notification only says *something changed*, so we then ask the store for the full state before updating anything.
-
-### 3.3 One place that decides access
-
-Everything — the trial, referral days, an Apple subscription, a Google subscription — feeds one answer the app reads:
-
-```
-GET /api/billing/status/   (or on the profile)
+GET /api/billing/status/
 {
   "has_access": true,
-  "source": "trial",                  // trial | referral | apple | google
+  "source": "trial",                  // trial | referral | subscription | none
   "access_until": "2026-09-21T10:00:00Z",
   "days_remaining": 7,
   "trial_active": true,
-  "plan": null,                        // "pathzi_monthly" once subscribed
+  "trial_days": 7,
+  "plan": null,                       // "pathzi_monthly" | "pathzi_yearly"
+  "store": null,                      // "apple" | "google"
   "auto_renewing": false,
-  "manage_url": "..."                  // opens the store's subscription screen
+  "banked_referral_days": 0,
+  "features": ["recommendations", "routes", "reports", "search"],
+  "account_uuid": "7f3c…",            // used when buying (see 5.4)
+  "manage_url": "…"                   // opens the store's subscription screen
 }
 ```
 
-### 3.4 Referrals
+The same object is included on `GET /accounts/user_profile/`, so the app doesn't need a second call at start-up.
+
+### 5.2 Referrals
 
 ```
-POST /me/referral/invite            { "email": "sara@example.com" }   -> we email a unique code
-GET  /me/referral                   -> invites sent, who joined, days earned, days left
-POST /accounts/signup/              { ..., "referral_code": "PTH-K3M9QZ" }  -> credits both sides
-POST /me/referral/credits/{id}/ack/ -> so "You've earned another week" shows once
+POST /me/referral/codes/            -> { "code": "PTH-9QK2TM", "expires_at": "…" }   // new code per share
+POST /me/referral/invite            { "email": "sara@example.com" }                  // we email a new code
+GET  /me/referral                   -> codes and invites with status, friends joined, days earned, unseen credits
+POST /me/referral/credits/{id}/ack/                                                  // popup shown once
 ```
 
-Rules enforced on the server: one use per code, code tied to the invited email, 30-day expiry, no self-referral, one referrer per new account, unlimited invites.
+`GET /me/referral` returns, per your review: `friends_joined`, `days_earned`, the invite list with `pending | joined | expired`, and `unseen_credits` carrying the real `days_awarded` from the ledger.
 
-### 3.5 What the app needs to do
+### 5.3 Sign-up
+
+All three paths accept `referral_code` and start the 7-day trial:
+
+```
+POST /accounts/signup/        { …, "referral_code": "PTH-9QK2TM" }
+POST /accounts/auth/google/   { "id_token": "…", "referral_code": "…" }   -> also returns "is_new_user"
+POST /accounts/auth/apple/    { "identity_token": "…", "referral_code": "…" } -> also returns "is_new_user"
+```
+
+A code is only applied when the call actually creates a new account.
+
+### 5.4 After a purchase
+
+The app **logs into RevenueCat using `account_uuid`** (from 5.1) as the RevenueCat user ID, and passes it to the store as `appAccountToken` (iOS) / `obfuscatedAccountId` (Android). That's what ties a purchase to the right Pathzi account and stops one subscription unlocking two accounts.
+
+There's a short gap between paying and our webhook arriving. So:
+
+```
+POST /api/billing/refresh/    -> asks RevenueCat now and returns the same object as 5.1
+```
+
+Call it right after a purchase. The app may also unlock immediately from the purchase result and let this confirm it.
+
+### 5.5 Account deletion (Apple requirement)
+
+```
+DELETE /accounts/me/
+```
+If the account still has an active store subscription, the response says so, so the app can tell the user to cancel in the store — deleting the account does not stop Apple or Google billing them.
+
+---
+
+## 6. What happens when the trial ends
+
+Not a locked app — a **limited free tier**:
+
+| Still works | Locked |
+|---|---|
+| Careers the user already explored (the home screen) | New recommendations |
+| Their saved careers and saved pathways | Courses / jobs / apprenticeships for a career |
+| Their progress screen | Search and filter |
+
+This is enforced **on the server**, so an edited app can't unlock it, and the `features` list tells the app what to grey out.
+
+⚠️ **Please confirm the locked column** — particularly whether saved pathways and route lists should stay open.
+
+---
+
+## 7. What the app must do
 
 | # | |
 |---|---|
-| 1 | **StoreKit 2** (iOS) and **Play Billing Library 8 or newer** (Android). Google requires version 8+ for new app updates from 31 August 2026. |
-| 2 | Send the receipt to `POST /api/billing/iap/verify/` after every purchase **and** on app start (so a purchase is never lost). |
-| 3 | Add a **Restore purchases** button (Apple requires it) — it sends the same receipt. |
-| 4 | **Manage subscription** opens the store's own screen; cancelling and changing plan cannot happen inside the app (a store rule, not ours). |
-| 5 | Send `referral_code` with sign-up when the user was invited. |
-| 6 | Stop calling the old Stripe endpoints `/api/billing/subscribe/` and `/api/billing/portal/`. |
-| 7 | Show trial and referral days from `has_access` / `access_until`, not from a hard-coded 7. |
+| 1 | Buy through **RevenueCat's SDK** (StoreKit 2 / Play Billing 8+ underneath) |
+| 2 | **Log into RevenueCat with `account_uuid`** and pass it to the store as `appAccountToken` / `obfuscatedAccountId` |
+| 3 | **Ask our backend for access** (`/api/billing/status/`), not RevenueCat — trial and referral days only exist with us |
+| 4 | Call `POST /api/billing/refresh/` right after a purchase |
+| 5 | Add a **Restore purchases** button (Apple requires it) |
+| 6 | **Manage subscription** opens the store's own screen |
+| 7 | Add a **referral code field** to sign-up, and send `referral_code` on all three paths |
+| 8 | Referral screen: a **generate-code action per share**, the invite list, no "up to 5" limit |
+| 9 | Show trial and referral days from the API, never a hard-coded 7 |
+| 10 | Add **in-app account deletion** |
+| 11 | Remove the old swipe constants and dead billing code |
 
 ---
 
-## 4. Plan and timing
+## 8. Plan and timing
 
 | Phase | What | Days | Needs from you |
 |---|---|---|---|
-| 0 | Store setup, banking, credentials | — | **Section 2** |
-| 1 | 7-day trial + the access layer | 2 | nothing — **can start now** |
-| 2 | Apple: verify receipts, notifications, sandbox testing | 2 | Apple items |
-| 3 | Google: verify receipts, notifications, sandbox testing | 2 | Google items |
-| 4 | Restore on a new phone, refunds, grace periods, duplicate-account protection | 1 | — |
-| 5 | Referrals: invites, codes, credits, the screen's API | 3 | — |
-| 6 | Full testing and handover notes for the app | 1 | test accounts |
+| 1 | Trial, access layer with `features`, account UUID, `is_new_user`, trial for existing accounts | 3 | nothing — **starting now** |
+| 2 | RevenueCat: webhook, entitlement sync, refresh endpoint, sandbox testing | 2 | RevenueCat + store setup |
+| 3 | Purchase linking and duplicate-account protection, refunds, grace periods | 0.5 | test accounts |
+| 4 | Referrals: codes, email invites, ledger, credits, the screen's API, unsubscribe + 30-day cleanup | 3.5 | email wording |
+| 5 | Account deletion | 1 | — |
+| 6 | Testing, migrations, handover notes | 1 | — |
 | | **Total** | **11 days** | |
 
-About **two and a half weeks** of backend work for one developer. **The store banking and tax approvals often take longer than the code, so please start Section 2 now** — Phase 1 runs in parallel and needs nothing from you.
+**Please start section 3 now.** Banking and tax approval usually takes longer than the code, and Phase 2 can't be tested without it.
 
 ---
 
-## 5. Open questions
+## 9. Still open
 
-| # | Question | Why it matters |
-|---|---|---|
-| 1 | **Reward amounts** — invitee +14 days and referrer +7 days, as in the original design? | Fixed in the code and in the invitation email wording |
-| 2 | **Exact prices** after store price points (e.g. £28.99 instead of £29)? | Must match the store products exactly |
-| 3 | **Keep the quarterly plan** or drop it? | It exists from the Stripe setup |
-| 4 | **Wording of the invitation email** — who writes it? | We send it from the backend |
-| 5 | **What happens when the trial ends and the user hasn't subscribed** — read-only app, or paywall on open? | Decides what the access layer returns |
-| 6 | Is there an existing App Store server notification URL in use? | Apple allows only one |
+| # | Question |
+|---|---|
+| 1 | **Confirm the locked list** in [section 6](#6-what-happens-when-the-trial-ends) |
+| 2 | **Invitation email wording** — placeholder text is in use for now (below); send the real copy when ready |
+| 3 | **Final store prices** once the price points are chosen |
+
+### Placeholder invitation email
+
+To be replaced by the PM. Placeholders in `{{ }}`:
+
+```
+Subject: {{ inviter_name }} gave you 14 days of Pathzi
+
+Hi,
+
+{{ inviter_name }} thinks Pathzi could help you find the right career.
+
+Your code:  {{ code }}
+
+1. Install Pathzi:  iOS {{ app_store_url }}   Android {{ play_store_url }}
+2. Enter the code when you sign up
+3. You get 14 days free — 7 day trial plus 7 bonus days
+
+This code works once and expires on {{ expires_at }}.
+
+Don't want these emails? {{ unsubscribe_url }}
+```
 
 ---
 
-## 6. Also worth knowing
+## 10. Also worth knowing
 
-- **Money:** Apple and Google take 15–30% of each payment, against roughly 2–3% with Stripe, and they pay out monthly. That was accepted as the cost of shipping in-app payments.
-- **The old Stripe code stays in the repo** but is no longer the payment path. 376 Stripe test-mode events and 53 billing records exist in the database from earlier testing; they'll be left untouched and simply ignored.
-- **The keys currently in the server config are Stripe *test* keys**, so no real money has moved through it.
+- **Money:** Apple and Google take 15–30% of each payment and pay out monthly. RevenueCat is free up to about $2,500/month of tracked revenue, then roughly 1%.
+- **Data:** RevenueCat processes customer purchase data, so it needs a line in the privacy policy and a processor agreement. Some users are under 18, which is worth a deliberate check.
+- **Invite emails:** an unsubscribe link is included, and invited email addresses are deleted after the 30-day code lifetime.
+- **Stripe:** the code stays in the repo but is no longer the payment path. The 376 test-mode events and 53 billing records in the database are historic test data and are left untouched. No real money ever moved through it — the keys were test keys.
