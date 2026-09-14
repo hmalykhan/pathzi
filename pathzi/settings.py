@@ -303,6 +303,11 @@ GEOAPIFY_DEFAULT_COUNTRY = config("GEOAPIFY_DEFAULT_COUNTRY")
 REVENUECAT_SECRET_KEY = config("REVENUECAT_SECRET_KEY", default="")
 REVENUECAT_WEBHOOK_SECRET = config("REVENUECAT_WEBHOOK_SECRET", default="")
 
+# HMAC signing secret - separate from the Authorization header value above.
+# Verifies X-RevenueCat-Webhook-Signature so a leaked header value alone is
+# not enough to forge a payment event.
+REVENUECAT_SIGNING_SECRET = config("REVENUECAT_SIGNING_SECRET", default="")
+
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = "smtp.sendgrid.net"
 EMAIL_PORT = 587
