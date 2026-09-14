@@ -297,6 +297,12 @@ APPLE_REDIRECT_URI = config("APPLE_REDIRECT_URI")
 GEOAPIFY_API_KEY = config("GEOAPIFY_API_KEY")
 GEOAPIFY_DEFAULT_COUNTRY = config("GEOAPIFY_DEFAULT_COUNTRY")
 
+# RevenueCat (Part 2 payments). Both default to empty so the app still boots
+# before the keys are in place - the webhook and refresh endpoints check for
+# them and refuse politely rather than the whole site failing to start.
+REVENUECAT_SECRET_KEY = config("REVENUECAT_SECRET_KEY", default="")
+REVENUECAT_WEBHOOK_SECRET = config("REVENUECAT_WEBHOOK_SECRET", default="")
+
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = "smtp.sendgrid.net"
 EMAIL_PORT = 587
