@@ -12,6 +12,7 @@ from rest_framework.views import APIView
 from stripe import error as stripe_error
 # this is my file
 
+from billing.services.access import access_for
 from .models import BillingProfile
 from .utils import subscription_period_end_dt
 
@@ -459,6 +460,8 @@ class SubscriptionStatusView(APIView):
                 "plan_id": "free",
                 "pending_plan_id": None,
                 "pending_change_at": None,
+                # Access (trial / referral / subscription) - see billing/services/access.py
+                **access_for(request.user),
             })
 
         # fallback self-heal (webhook should keep DB accurate, but keep this for safety)
@@ -482,6 +485,8 @@ class SubscriptionStatusView(APIView):
             "plan_id": billing.plan_id,
             "pending_plan_id": billing.pending_plan_id,
             "pending_change_at": billing.pending_change_at,
+            # Access (trial / referral / subscription) - see billing/services/access.py
+            **access_for(request.user),
         })
 
 

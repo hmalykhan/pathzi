@@ -31,6 +31,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import CoordinatesSerializer
 
 from .models import PasswordResetOTP, UserProfile, Coordinates
+from billing.services.access import access_for, ensure_account_identity
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from rest_framework.exceptions import Throttled
@@ -285,6 +286,8 @@ class AppleMobileAuthAPI(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+        ensure_account_identity(UserProfile.objects.filter(appuser=user).first())
+
         logger.info(
             "AppleAuth success: user_id=%s email=%s created=%s",
             user.id,
@@ -297,6 +300,7 @@ class AppleMobileAuthAPI(APIView):
                 "status": True,
                 "message": "Apple login successful",
                 "data": {
+                    "is_new_user": created,
                     "token": {
                         "refresh": str(refresh),
                         "access": str(refresh.access_token),
@@ -487,7 +491,8 @@ class SignUpAPI(generics.CreateAPIView):
                     password=data["password"],
                 )
 
-                UserProfile.objects.create(appuser=user, age=0)
+                profile = UserProfile.objects.create(appuser=user, age=0)
+                ensure_account_identity(profile)   # 7-day trial + purchase id
 
         except Exception as e:
             logger.exception("Signup failed (server error): %s", str(e))
@@ -584,7 +589,8 @@ class CurrentUserProfileFastAPI(generics.RetrieveUpdateAPIView):
         profile = self.get_object()
         serializer = self.get_serializer(profile)
 
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        # Access (trial / referral / subscription) so the app needs no second call
+        return Response({**serializer.data, "access": access_for(request.user)}, status=status.HTTP_200_OK)
 
     # ✅ PATCH → update + return same flat structure
     def patch(self, request, *args, **kwargs):
@@ -614,7 +620,7 @@ class CurrentUserProfileFastAPI(generics.RetrieveUpdateAPIView):
 
         # 🔥 Return UPDATED flat profile (same as GET)
         return Response(
-            UserProfileUpdateSerializer(instance).data,
+            {**UserProfileUpdateSerializer(instance).data, "access": access_for(request.user)},
             status=status.HTTP_200_OK
         )
 
@@ -1428,10 +1434,13 @@ class GoogleMobileAuthAPI(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+        ensure_account_identity(UserProfile.objects.filter(appuser=user).first())
+
         logger.info(
-            "GoogleMobileAuth success: user_id=%s email=%s",
+            "GoogleMobileAuth success: user_id=%s email=%s new=%s",
             user.id,
             user.email,
+            created,
         )
 
         return Response(
@@ -1439,6 +1448,7 @@ class GoogleMobileAuthAPI(APIView):
                 "status": True,
                 "message": "Google login successful",
                 "data": {
+                    "is_new_user": created,
                     "token": {
                         "refresh": str(refresh),
                         "access": str(refresh.access_token),

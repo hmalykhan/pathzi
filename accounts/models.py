@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -53,6 +55,16 @@ class UserProfile(models.Model):
     db_index=True,
     )
     is_apple_private_email = models.BooleanField(default=False)
+
+    # Stable id the app hands to the store when buying (appAccountToken on iOS,
+    # obfuscatedAccountId on Android) so a purchase maps to exactly one account.
+    # Filled in on first use, never reassigned.
+    account_uuid = models.UUIDField(null=True, blank=True, unique=True, editable=False)
+
+    # 7-day free trial, set by the server. Started once, on first sign-up or
+    # first access check, so reinstalling the app cannot reset it.
+    trial_started_at = models.DateTimeField(null=True, blank=True)
+    trial_ends_at = models.DateTimeField(null=True, blank=True)
 
     category = models.JSONField(default=list, blank=True)  # list of strings
     qualification = models.JSONField(default=list, blank=True)  # list of strings
