@@ -22,6 +22,12 @@ from django.views.generic import RedirectView
 from analytics.views import analytics_dashboard
 from analytics.forms import StaffAuthenticationForm
 from careers.progress_views import ProgressAPI
+from billing.referral_views import (
+    ReferralCodeCreateView,
+    ReferralCreditAckView,
+    ReferralInviteView,
+    ReferralSummaryView,
+)
 
 
 urlpatterns = [
@@ -45,4 +51,10 @@ urlpatterns = [
     path("usage-limits/", include("usage_limits.urls")),
     path("analytics/", include("analytics.urls")),
     path("me/progress/", ProgressAPI.as_view(), name="me-progress"),
+    path("me/referral", ReferralSummaryView.as_view(), name="me-referral"),
+    path("me/referral/", ReferralSummaryView.as_view(), name="me-referral-slash"),
+    path("me/referral/codes/", ReferralCodeCreateView.as_view(), name="me-referral-codes"),
+    path("me/referral/invite", ReferralInviteView.as_view(), name="me-referral-invite"),
+    path("me/referral/invite/", ReferralInviteView.as_view(), name="me-referral-invite-slash"),
+    path("me/referral/credits/<int:credit_id>/ack/", ReferralCreditAckView.as_view(), name="me-referral-credit-ack"),
 ]

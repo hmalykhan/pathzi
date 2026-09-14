@@ -32,6 +32,7 @@ from .serializers import CoordinatesSerializer
 
 from .models import PasswordResetOTP, UserProfile, Coordinates
 from billing.services.access import access_for, ensure_account_identity
+from billing.services import referrals
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from rest_framework.exceptions import Throttled
@@ -288,6 +289,12 @@ class AppleMobileAuthAPI(APIView):
 
         ensure_account_identity(UserProfile.objects.filter(appuser=user).first())
 
+        # Only a brand-new account can be referred. Never blocks the login.
+        referral = (
+            referrals.try_redeem(request.data.get("referral_code"), user)
+            if created else referrals.try_redeem(None, user)
+        )
+
         logger.info(
             "AppleAuth success: user_id=%s email=%s created=%s",
             user.id,
@@ -301,6 +308,7 @@ class AppleMobileAuthAPI(APIView):
                 "message": "Apple login successful",
                 "data": {
                     "is_new_user": created,
+                    "referral": referral,
                     "token": {
                         "refresh": str(refresh),
                         "access": str(refresh.access_token),
@@ -494,6 +502,10 @@ class SignUpAPI(generics.CreateAPIView):
                 profile = UserProfile.objects.create(appuser=user, age=0)
                 ensure_account_identity(profile)   # 7-day trial + purchase id
 
+            # Outside the atomic block: a referral problem must never undo a
+            # perfectly good sign-up.
+            referral = referrals.try_redeem(request.data.get("referral_code"), user)
+
         except Exception as e:
             logger.exception("Signup failed (server error): %s", str(e))
             return Response(
@@ -514,6 +526,7 @@ class SignUpAPI(generics.CreateAPIView):
                     "id": user.id,
                     "username": user.username,
                     "email": user.email,
+                    "referral": referral,
                     "token": {
                         "refresh": str(refresh),
                         "access": str(refresh.access_token),
@@ -1436,6 +1449,12 @@ class GoogleMobileAuthAPI(APIView):
 
         ensure_account_identity(UserProfile.objects.filter(appuser=user).first())
 
+        # Only a brand-new account can be referred. Never blocks the login.
+        referral = (
+            referrals.try_redeem(request.data.get("referral_code"), user)
+            if created else referrals.try_redeem(None, user)
+        )
+
         logger.info(
             "GoogleMobileAuth success: user_id=%s email=%s new=%s",
             user.id,
@@ -1449,6 +1468,7 @@ class GoogleMobileAuthAPI(APIView):
                 "message": "Google login successful",
                 "data": {
                     "is_new_user": created,
+                    "referral": referral,
                     "token": {
                         "refresh": str(refresh),
                         "access": str(refresh.access_token),

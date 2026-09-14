@@ -65,17 +65,36 @@ def access_for(user):
     now = timezone.now()
     billing = getattr(user, "billing", None)
     subscribed = bool(billing and billing.is_active)
-    trial_active = bool(profile.trial_ends_at and profile.trial_ends_at > now)
 
-    # Access runs to the later of the two, so buying during the trial loses nothing.
+    # Days earned while subscribed were parked so they would not be wasted.
+    # The subscription has now lapsed, so they become free access. Done here
+    # rather than on a webhook so it cannot be missed.
+    if not subscribed and (profile.referral_days_banked or 0) > 0:
+        _apply_banked_days(profile, now)
+
+    trial_active = bool(profile.trial_ends_at and profile.trial_ends_at > now)
+    referral_active = bool(profile.referral_access_until and profile.referral_access_until > now)
+
+    # Access runs to the latest of the three, so buying during the trial - or
+    # earning referral days while on it - never loses anything.
     ends = [d for d in (profile.trial_ends_at if trial_active else None,
+                        profile.referral_access_until if referral_active else None,
                         billing.current_period_end if subscribed else None) if d]
     access_until = max(ends) if ends else None
-    has_access = subscribed or trial_active
+    has_access = subscribed or trial_active or referral_active
+
+    if subscribed:
+        source = "subscription"
+    elif trial_active:
+        source = "trial"
+    elif referral_active:
+        source = "referral"
+    else:
+        source = "none"
 
     return {
         "has_access": has_access,
-        "source": "subscription" if subscribed else ("trial" if trial_active else "none"),
+        "source": source,
         "access_until": access_until,
         "days_remaining": _days_left(access_until, now),
         "trial_active": trial_active,
@@ -83,11 +102,21 @@ def access_for(user):
         "plan": billing.plan_id if subscribed else None,
         "store": None,          # filled in with RevenueCat (Phase 2)
         "auto_renewing": subscribed,
-        "banked_referral_days": 0,   # filled in with referrals (Phase 4)
+        "banked_referral_days": profile.referral_days_banked or 0,
         "features": FULL_FEATURES if has_access else FREE_FEATURES,
         "account_uuid": str(profile.account_uuid) if profile.account_uuid else None,
         "manage_url": None,     # filled in with RevenueCat (Phase 2)
     }
+
+
+def _apply_banked_days(profile, now):
+    """Turn banked referral days into free access, starting from whatever is left."""
+    starts = [d for d in (profile.trial_ends_at, profile.referral_access_until) if d and d > now]
+    base = max(starts) if starts else now
+
+    profile.referral_access_until = base + timedelta(days=profile.referral_days_banked)
+    profile.referral_days_banked = 0
+    profile.save(update_fields=["referral_access_until", "referral_days_banked"])
 
 
 def _no_access():

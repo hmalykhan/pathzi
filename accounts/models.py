@@ -66,6 +66,15 @@ class UserProfile(models.Model):
     trial_started_at = models.DateTimeField(null=True, blank=True)
     trial_ends_at = models.DateTimeField(null=True, blank=True)
 
+    # Free days earned by referring people. Stacked on the END of the trial
+    # rather than overlapping it, so an invitee's 7 bonus days really do make
+    # 14 in total. The stores know nothing about these - they are ours.
+    referral_access_until = models.DateTimeField(null=True, blank=True)
+
+    # Days earned while already subscribed, which would otherwise be wasted.
+    # Held here and turned into free access once the subscription lapses.
+    referral_days_banked = models.PositiveSmallIntegerField(default=0)
+
     category = models.JSONField(default=list, blank=True)  # list of strings
     qualification = models.JSONField(default=list, blank=True)  # list of strings
 
