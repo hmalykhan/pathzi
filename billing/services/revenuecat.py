@@ -228,10 +228,29 @@ def fetch_customer_state(app_user_id):
         return {"found": False, "active": False, "plan_id": None, "expires_at": None,
                 "store": None, "product_id": None, "auto_renewing": None}
 
+    items = subs.get("items", [])
+
+    # The v2 subscription object's exact field names could not be confirmed
+    # from the documentation, and this project has had no customer to read a
+    # real response from. So: accept the plausible spellings, and log the
+    # real keys the first time one arrives. The first true purchase settles
+    # it - far better than quietly reading None and removing someone's access.
+    if items:
+        logger.info("RevenueCat subscription payload keys: %s", sorted(items[0].keys()))
+
     best = None
-    for item in subs.get("items", []):
-        expires = ms_to_dt(item.get("current_period_ends_at") or item.get("expires_at"))
+    for item in items:
+        expires = ms_to_dt(
+            item.get("current_period_ends_at")
+            or item.get("expires_at")
+            or item.get("current_period_end")
+            or item.get("expiration_at_ms")
+        )
         if expires is None:
+            logger.warning(
+                "RevenueCat subscription had no readable expiry; keys were %s",
+                sorted(item.keys()),
+            )
             continue
         if best is None or expires > best[0]:
             best = (expires, item)
@@ -241,8 +260,13 @@ def fetch_customer_state(app_user_id):
                 "store": None, "product_id": None, "auto_renewing": None}
 
     expires, item = best
-    product_id = item.get("product_id") or item.get("store_identifier")
+    product_id = (item.get("product_id") or item.get("store_identifier")
+                  or item.get("product_identifier"))
     status = (item.get("status") or "").lower()
+
+    # "will_renew" is the documented value; the others are defensive.
+    auto_renew_raw = item.get("auto_renewal_status", item.get("auto_renew_status"))
+    auto_renewing = auto_renew_raw in ("will_renew", "will_renew_at_period_end", True)
 
     return {
         "found": True,
@@ -251,6 +275,6 @@ def fetch_customer_state(app_user_id):
         "expires_at": expires,
         "store": store_from_event(item.get("store")),
         "product_id": product_id,
-        "auto_renewing": item.get("auto_renewal_status") in ("will_renew", True),
+        "auto_renewing": auto_renewing,
         "status": status,
     }
