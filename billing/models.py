@@ -99,10 +99,17 @@ class ReferralCode(models.Model):
     ]
 
     code = models.CharField(max_length=16, unique=True, db_index=True)
+
+    # SET_NULL, not CASCADE: if the person who shared this code later deletes
+    # their account, the code row must survive. Deleting it would cascade to
+    # ReferralCredit and silently erase the free days from the LEDGER of the
+    # person who accepted the invitation - someone else's history.
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name="referral_codes",
+        blank=True,
+        null=True,
     )
     channel = models.CharField(max_length=10, choices=CHANNEL_CHOICES, default="share")
 

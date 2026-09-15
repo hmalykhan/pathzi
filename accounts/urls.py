@@ -31,6 +31,8 @@ from .views import (
     CurrentUserCoordinateDetailAPI,
 )
 
+from accounts.account_deletion import DeleteMyAccountView
+
 urlpatterns = [
 path('users/',UserAPI.as_view()),
 path('signup/',SignUpAPI.as_view()),
@@ -66,4 +68,5 @@ path("auth/password/set/request-otp/", SetPasswordGoogleAuthAPI.as_view(), name=
 path("auth/password/set/confirm/", SetPasswordConfirmationGoogleAuthOTP.as_view()),
 
 path("<int:pk>/create_qualification",QualificationVeiw.as_view({'post' : 'create_qualification'})),
+    path("me/", DeleteMyAccountView.as_view(), name="delete-my-account"),
 ]
