@@ -51,6 +51,8 @@ from careers.services.nearby_routes import (
     requested_origin,
     saved_origin,
 )
+from careers.services.free_tier import free_tier_careers, paywall_enforced
+from billing.services.access import access_for
 from careers.services.career_deck import CARD_FIELDS, guest_deck, unique_careers
 from careers.services.match_score import match_scores, with_match_scores
 
@@ -930,6 +932,18 @@ class CareersView(viewsets.ModelViewSet):
         profile = self._profile_cached
         if not profile:
             return Response([], status=status.HTTP_200_OK)
+
+        # Free tier: the trial is over and nothing is paid for. Keep showing
+        # the careers they already explored or saved, but stop making new
+        # recommendations. Off unless PAYWALL_ENFORCED is on - see
+        # careers/services/free_tier.py for why.
+        if paywall_enforced() and not access_for(user)["has_access"]:
+            free_list = free_tier_careers(profile)
+            free_data = CareerFilterSerializer(free_list, many=True).data
+            free_data = with_match_scores(
+                free_data, match_scores(user, [c.id for c in free_list])
+            )
+            return Response(free_data, status=status.HTTP_200_OK)
 
         t0 = time.time()
         qss = get_career_queryset(user, profile)

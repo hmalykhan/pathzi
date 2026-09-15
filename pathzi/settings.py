@@ -313,6 +313,12 @@ REVENUECAT_SIGNING_SECRET = config("REVENUECAT_SIGNING_SECRET", default="")
 REVENUECAT_PROJECT_ID = config("REVENUECAT_PROJECT_ID", default="")
 REVENUECAT_ENTITLEMENT_ID = config("REVENUECAT_ENTITLEMENT_ID", default="pathzi_pro")
 
+# Free tier after the trial. OFF by default on purpose: the current live app
+# has no paywall screen and no way to subscribe, so switching this on before
+# the new app ships would strand existing users with a shrunken home screen.
+# Turn on (PAYWALL_ENFORCED=True in the environment) the day the new app goes live.
+PAYWALL_ENFORCED = config("PAYWALL_ENFORCED", default=False, cast=bool)
+
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = "smtp.sendgrid.net"
 EMAIL_PORT = 587
