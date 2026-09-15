@@ -308,6 +308,11 @@ REVENUECAT_WEBHOOK_SECRET = config("REVENUECAT_WEBHOOK_SECRET", default="")
 # not enough to forge a payment event.
 REVENUECAT_SIGNING_SECRET = config("REVENUECAT_SIGNING_SECRET", default="")
 
+# Which RevenueCat project we talk to, and the entitlement that means
+# "this user has paid". Both are visible in the dashboard.
+REVENUECAT_PROJECT_ID = config("REVENUECAT_PROJECT_ID", default="")
+REVENUECAT_ENTITLEMENT_ID = config("REVENUECAT_ENTITLEMENT_ID", default="pathzi_pro")
+
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = "smtp.sendgrid.net"
 EMAIL_PORT = 587

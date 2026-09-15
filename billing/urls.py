@@ -24,6 +24,7 @@ from .views import (
     ResumeSubscriptionView,
 )
 from .webhooks import stripe_webhook
+from .revenuecat_views import revenuecat_webhook, BillingRefreshView
 
 urlpatterns = [
     path("subscribe/", SubscribeView.as_view(), name="billing-subscribe"),
@@ -33,5 +34,9 @@ urlpatterns = [
     path("resume/", ResumeSubscriptionView.as_view(), name="billing-resume"),
     path("portal/", CustomerPortalView.as_view(), name="billing-portal"),
     path("webhook/", stripe_webhook, name="stripe-webhook"),
+
+    # Apple / Google in-app purchase, via RevenueCat.
+    path("revenuecat/webhook/", revenuecat_webhook, name="revenuecat-webhook"),
+    path("refresh/", BillingRefreshView.as_view(), name="billing-refresh"),
 ]
 

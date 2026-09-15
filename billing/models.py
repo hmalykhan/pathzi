@@ -42,6 +42,17 @@ class BillingProfile(models.Model):
     subscription_status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="none")
     current_period_end = models.DateTimeField(blank=True, null=True)
 
+    # --- Apple / Google in-app purchase, via RevenueCat -------------------
+    # The app logs into RevenueCat as UserProfile.account_uuid, so this is
+    # how a purchase finds its way back to exactly one Pathzi account.
+    revenuecat_customer_id = models.CharField(max_length=128, blank=True, null=True, db_index=True)
+
+    store = models.CharField(max_length=20, blank=True, null=True)          # apple | google | test
+    store_product_id = models.CharField(max_length=128, blank=True, null=True)
+
+    # None means "we have never been told" - different from False.
+    auto_renewing = models.BooleanField(blank=True, null=True)
+
     updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -171,3 +182,30 @@ class ReferralCredit(models.Model):
 
     def __str__(self):
         return f"{self.user_id} +{self.days_awarded}d ({self.kind})"
+
+
+class RevenueCatEvent(models.Model):
+    """
+    Every webhook we have already handled.
+
+    RevenueCat retries a delivery until we answer 200, and a retry of a
+    RENEWAL must not be applied twice. The unique event id is what makes
+    handling a delivery idempotent.
+    """
+
+    event_id = models.CharField(max_length=128, unique=True)
+    event_type = models.CharField(max_length=64)
+    app_user_id = models.CharField(max_length=128, blank=True, null=True, db_index=True)
+    payload = models.JSONField()
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    # Kept so a delivery we could not match to an account can be found later
+    # rather than disappearing into the log.
+    handled = models.BooleanField(default=False)
+    note = models.CharField(max_length=255, blank=True, null=True)
+
+    class Meta:
+        ordering = ["-received_at"]
+
+    def __str__(self):
+        return "%s %s" % (self.event_type, self.event_id)

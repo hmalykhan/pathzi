@@ -14,6 +14,7 @@ from datetime import timedelta
 from django.utils import timezone
 
 from accounts.models import UserProfile
+from billing.services.revenuecat import manage_url_for
 
 TRIAL_DAYS = 7
 
@@ -83,6 +84,10 @@ def access_for(user):
     access_until = max(ends) if ends else None
     has_access = subscribed or trial_active or referral_active
 
+    # Known as soon as they have ever bought, even after it lapses, so the
+    # app can still offer "manage subscription".
+    store = billing.store if billing else None
+
     if subscribed:
         source = "subscription"
     elif trial_active:
@@ -100,12 +105,16 @@ def access_for(user):
         "trial_active": trial_active,
         "trial_days": TRIAL_DAYS,
         "plan": billing.plan_id if subscribed else None,
-        "store": None,          # filled in with RevenueCat (Phase 2)
-        "auto_renewing": subscribed,
+        "store": store,
+        # What the store will actually do next. A user who cancelled but has
+        # paid until the end of the month is still subscribed, yet nothing
+        # will renew - the app needs to tell those apart.
+        "auto_renewing": (billing.auto_renewing if (billing and billing.auto_renewing is not None)
+                          else subscribed),
         "banked_referral_days": profile.referral_days_banked or 0,
         "features": FULL_FEATURES if has_access else FREE_FEATURES,
         "account_uuid": str(profile.account_uuid) if profile.account_uuid else None,
-        "manage_url": None,     # filled in with RevenueCat (Phase 2)
+        "manage_url": manage_url_for(store),
     }
 
 
