@@ -2,6 +2,7 @@
 import logging
 import re, time
 from django.core.cache import cache
+from pathzi.cache_utils import cache_add, cache_delete, cache_get, cache_set
 from django.db.models import Case, When
 from django.db.models import Subquery
 from django.utils import timezone
@@ -98,7 +99,7 @@ class CareersView(viewsets.ModelViewSet):
         rebuild was triggered for this user within `cooldown` seconds.
         cache.add is atomic across Gunicorn workers via Redis.
         """
-        if cache.add(f"recs_triggered:{user_id}", True, timeout=cooldown):
+        if cache_add(f"recs_triggered:{user_id}", True, timeout=cooldown):
             trigger_recs_debounced(user_id)
 
     # -----------------------
@@ -721,7 +722,7 @@ class CareersView(viewsets.ModelViewSet):
                     {"status": False, "message": "No report for this career."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
-            cache.delete(get_saved_cache_key(request.user.id))  # /careers/my/ embeds my_report
+            cache_delete(get_saved_cache_key(request.user.id))  # /careers/my/ embeds my_report
             return Response({"status": True, "deleted": True}, status=status.HTTP_200_OK)
 
         if "career_id" in request.data:
@@ -750,7 +751,7 @@ class CareersView(viewsets.ModelViewSet):
             career_id=career_id,
             defaults={"report": report_data, "report_status": report_status, "generated_at": now},
         )
-        cache.delete(get_saved_cache_key(request.user.id))  # /careers/my/ embeds my_report
+        cache_delete(get_saved_cache_key(request.user.id))  # /careers/my/ embeds my_report
 
         return Response(
             {
@@ -952,7 +953,7 @@ class CareersView(viewsets.ModelViewSet):
         cache_key = get_list_cache_key(user.id)
 
         t1 = time.time()
-        cached_ids = cache.get(cache_key)
+        cached_ids = cache_get(cache_key)
         logger.debug("[TIME] cache fetch: %.3fs", time.time() - t1)
 
         # 🔥 DEFAULT queryset
@@ -965,7 +966,7 @@ class CareersView(viewsets.ModelViewSet):
         if cached_ids is None:
             logger.debug("CACHE MISS")
 
-            if cache.add(f"recs_triggered:{user.id}", True, timeout=60):
+            if cache_add(f"recs_triggered:{user.id}", True, timeout=60):
                 logger.debug("Triggering async embedding rebuild for user %s", user.id)
                 trigger_recs_debounced(user.id)
 
@@ -1205,7 +1206,7 @@ class CareersView(viewsets.ModelViewSet):
 
         cache_key = get_saved_cache_key(request.user.id)
 
-        cached = cache.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             logger.debug("SAVED CACHE HIT")
             return Response(with_match_scores(cached, match_scores(request.user, [r["id"] for r in cached])), status=200)
@@ -1246,7 +1247,7 @@ class CareersView(viewsets.ModelViewSet):
         )
 
         if not career_ids:
-            cache.set(cache_key, [], timeout=60 * 60)
+            cache_set(cache_key, [], timeout=60 * 60)
             return Response([], status=200)
 
         # Step 2: hydrate Career rows by primary key (no JOIN, no DISTINCT).
@@ -1278,7 +1279,7 @@ class CareersView(viewsets.ModelViewSet):
                 "generated_at": link.generated_at if link else None,
             }
 
-        cache.set(cache_key, data, timeout=60 * 60)
+        cache_set(cache_key, data, timeout=60 * 60)
 
         return Response(with_match_scores(data, match_scores(request.user, career_ids)), status=200)
     
@@ -1316,8 +1317,8 @@ class CareersView(viewsets.ModelViewSet):
                 career=career
             )
 
-            cache.delete(get_saved_cache_key(request.user.id))
-            cache.delete(get_list_cache_key(request.user.id))
+            cache_delete(get_saved_cache_key(request.user.id))
+            cache_delete(get_list_cache_key(request.user.id))
 
             self._debounced_embedding_refresh(request.user.id)
 
@@ -1376,8 +1377,8 @@ class CareersView(viewsets.ModelViewSet):
             ).delete()
 
             if deleted:
-                cache.delete(get_saved_cache_key(request.user.id))
-                cache.delete(get_list_cache_key(request.user.id))
+                cache_delete(get_saved_cache_key(request.user.id))
+                cache_delete(get_list_cache_key(request.user.id))
 
                 self._debounced_embedding_refresh(request.user.id)
 
@@ -1483,7 +1484,7 @@ class CareersView(viewsets.ModelViewSet):
         profile = self._profile_cached or self._get_or_create_profile()
         cache_key = get_explored_cache_key(request.user.id)
 
-        cached = cache.get(cache_key)
+        cached = cache_get(cache_key)
         if cached:
             logger.debug("EXPLORE CACHE HIT")
             return Response(with_match_scores(cached, match_scores(request.user, [r["id"] for r in cached])), status=200)
@@ -1516,7 +1517,7 @@ class CareersView(viewsets.ModelViewSet):
         )
 
         if not career_ids:
-            cache.set(cache_key, [], timeout=60 * 60)
+            cache_set(cache_key, [], timeout=60 * 60)
             return Response([], status=200)
 
         # Step 2 — hydrate Career rows by primary key, preserving order.
@@ -1534,7 +1535,7 @@ class CareersView(viewsets.ModelViewSet):
         serializer = CareerFilterSerializer(qs, many=True)  # 🔥 LIGHT
         data = serializer.data
 
-        cache.set(cache_key, data, timeout=60 * 60)
+        cache_set(cache_key, data, timeout=60 * 60)
 
         return Response(with_match_scores(data, match_scores(request.user, career_ids)), status=200)
     
@@ -1550,8 +1551,8 @@ class CareersView(viewsets.ModelViewSet):
                 career=career
             )
 
-            cache.delete(get_explored_cache_key(request.user.id))
-            cache.delete(get_list_cache_key(request.user.id))
+            cache_delete(get_explored_cache_key(request.user.id))
+            cache_delete(get_list_cache_key(request.user.id))
 
             self._debounced_embedding_refresh(request.user.id)
 
@@ -1584,8 +1585,8 @@ class CareersView(viewsets.ModelViewSet):
             ).delete()
 
             if deleted:
-                cache.delete(get_explored_cache_key(request.user.id))
-                cache.delete(get_list_cache_key(request.user.id))
+                cache_delete(get_explored_cache_key(request.user.id))
+                cache_delete(get_list_cache_key(request.user.id))
 
                 self._debounced_embedding_refresh(request.user.id)
 

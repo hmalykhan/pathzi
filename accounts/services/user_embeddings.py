@@ -14,6 +14,7 @@ from accounts.models import UserEmbedding
 import threading
 import logging
 from django.core.cache import cache
+from pathzi.cache_utils import cache_add, cache_delete, cache_get, cache_set
 import threading
 import time
 from accounts.models import UserProfile
@@ -157,12 +158,12 @@ def schedule_embedding_update(user, delay=5):
 
     # Each call updates timestamp
     now = time.time()
-    cache.set(get_embedding_schedule_lock_key(user.id), now, timeout=delay + 10)
+    cache_set(get_embedding_schedule_lock_key(user.id), now, timeout=delay + 10)
 
     def task(start_time):
         time.sleep(delay)
 
-        latest_time = cache.get(get_embedding_schedule_lock_key(user.id))
+        latest_time = cache_get(get_embedding_schedule_lock_key(user.id))
 
         # Only run if this is the latest trigger
         if latest_time != start_time:
@@ -171,7 +172,7 @@ def schedule_embedding_update(user, delay=5):
         try:
             generate_and_store_user_embedding(user, explored_careers=ex, saved_careers=sv)
         finally:
-            cache.delete(get_embedding_schedule_lock_key(user.id))
+            cache_delete(get_embedding_schedule_lock_key(user.id))
 
     threading.Thread(
         target=task,

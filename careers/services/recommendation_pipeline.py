@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from pathzi.cache_utils import cache_set
 
 from accounts.models import UserProfile
 from accounts.services.recommendation_cache import get_list_cache_key
@@ -48,7 +49,7 @@ def update_embedding_and_recs_for_user(user_id):
         ids = [r["career_id"] for r in recs["recommendations"]]
         print(f"[PIPELINE] caching {len(ids)} recommendation ids")
 
-        cache.set(
+        cache_set(
             get_list_cache_key(user_id),
             ids,
             timeout=60 * 60 * 6,

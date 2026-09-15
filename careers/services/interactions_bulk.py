@@ -1,4 +1,5 @@
 from django.core.cache import cache
+from pathzi.cache_utils import cache_add, cache_delete, cache_get, cache_set
 from django.db import transaction
 
 from accounts.services.recommendation_cache import (
@@ -132,13 +133,13 @@ def apply_bulk_career_interactions(user, profile, items):
                 explored_changed = True
 
     if saved_changed:
-        cache.delete(get_saved_cache_key(user.id))
+        cache_delete(get_saved_cache_key(user.id))
 
     if explored_changed:
-        cache.delete(get_explored_cache_key(user.id))
+        cache_delete(get_explored_cache_key(user.id))
 
     if saved_changed or explored_changed:
-        cache.delete(get_list_cache_key(user.id))
+        cache_delete(get_list_cache_key(user.id))
         trigger_recs_debounced(user.id)
 
     # Analytics: one event per requested interaction (Lane A). log_activity

@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.core.cache import cache
+from pathzi.cache_utils import cache_add, cache_delete, cache_get, cache_set
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -71,7 +72,7 @@ class LocationAutocompleteAPI(APIView):
 
         # Cache key depends on input + types + limit
         cache_key = f"geo_autocomplete:v3:{text.lower()}:{','.join(types)}:{limit}"
-        cached = cache.get(cache_key)
+        cached = cache_get(cache_key)
         if cached is not None:
             return Response(cached)
 
@@ -107,7 +108,7 @@ class LocationAutocompleteAPI(APIView):
                     data = geoapify_autocomplete(text, limit=limit, country_code=country)
 
         resp = {"status": True, "kind": kind_final, "data": data}
-        cache.set(cache_key, resp, timeout=60 * 10)
+        cache_set(cache_key, resp, timeout=60 * 10)
         return Response(resp)
 
 
@@ -125,12 +126,12 @@ class CitiesListAPI(APIView):
         limit = min(max(limit, 1), 5000)
 
         cache_key = f"geo_cities:v1:{q.lower()}:{','.join(types)}:{limit}"
-        cached = cache.get(cache_key)
+        cached = cache_get(cache_key)
         if cached is not None:
             return Response({"status": True, "data": cached})
 
         data = db_list_distinct_with_counts("city", types=types, q=q, limit=limit)
-        cache.set(cache_key, data, timeout=60 * 30)
+        cache_set(cache_key, data, timeout=60 * 30)
         return Response({"status": True, "data": data})
 
 
@@ -148,12 +149,12 @@ class PostcodesListAPI(APIView):
         limit = min(max(limit, 1), 5000)
 
         cache_key = f"geo_postcodes:v1:{q.lower()}:{','.join(types)}:{limit}"
-        cached = cache.get(cache_key)
+        cached = cache_get(cache_key)
         if cached is not None:
             return Response({"status": True, "data": cached})
 
         data = db_list_distinct_with_counts("zip_code", types=types, q=q, limit=limit)
-        cache.set(cache_key, data, timeout=60 * 30)
+        cache_set(cache_key, data, timeout=60 * 30)
         return Response({"status": True, "data": data})
 
 
@@ -216,7 +217,7 @@ class NearbySearchAPI(APIView):
             f"{','.join(sorted(types))}:{page}:{page_size}:"
             f"{city.lower()}:{postcode.lower()}:{q.lower()}:{category.lower()}:{subcategory.lower()}"
         )
-        cached = cache.get(cache_key)
+        cached = cache_get(cache_key)
         if cached is not None:
             return Response(cached)
 
@@ -248,7 +249,7 @@ class NearbySearchAPI(APIView):
         }
 
         # Cache for 5 minutes (shorter than autocomplete since location-based)
-        cache.set(cache_key, response_data, timeout=60 * 5)
+        cache_set(cache_key, response_data, timeout=60 * 5)
 
         return Response(response_data)
     """

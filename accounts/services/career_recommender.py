@@ -4,6 +4,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from accounts.models import UserEmbedding, User
 from accounts.services.user_embeddings import schedule_embedding_update
 from django.core.cache import cache
+from pathzi.cache_utils import cache_add, cache_delete, cache_get, cache_set
 # adjust this import to your installed pgvector Django API
 from pgvector.django import CosineDistance
 import threading
@@ -151,7 +152,7 @@ def precompute_recommendations_async(user):
     
 
     # 🔒 prevent multiple threads
-    if not cache.add(get_recs_lock_key(user.id), True, timeout=300):
+    if not cache_add(get_recs_lock_key(user.id), True, timeout=300):
         return
 
     def task():
@@ -170,11 +171,11 @@ def precompute_recommendations_async(user):
 
             ids = [r["career_id"] for r in recs["recommendations"]]
 
-            cache.set(get_list_cache_key(user.id), ids, timeout=60 * 60 * 6)
+            cache_set(get_list_cache_key(user.id), ids, timeout=60 * 60 * 6)
             print("alhamdulillah we are in precomputation and .")
 
         finally:
-            cache.delete(get_recs_lock_key(user.id))
+            cache_delete(get_recs_lock_key(user.id))
 
     threading.Thread(target=task, daemon=True).start()
 
@@ -183,7 +184,7 @@ def update_embedding_and_recs_async(user_id):
     lock_key = f"pipeline_lock:{user_id}"
 
     # 🔒 prevent multiple pipelines
-    if not cache.add(lock_key, True, timeout=300):
+    if not cache_add(lock_key, True, timeout=300):
         return
 
     def task():
@@ -214,13 +215,13 @@ def update_embedding_and_recs_async(user_id):
 
             if recs and recs.get("recommendations"):
                 ids = [r["career_id"] for r in recs["recommendations"]]
-                cache.set(get_list_cache_key(user_id), ids, timeout=60 * 60 * 6)
+                cache_set(get_list_cache_key(user_id), ids, timeout=60 * 60 * 6)
 
         except Exception as e:
             print(f"Pipeline failed: {e}")
 
         finally:
             # 🔓 ALWAYS release lock
-            cache.delete(lock_key)
+            cache_delete(lock_key)
 
     threading.Thread(target=task, daemon=True).start()

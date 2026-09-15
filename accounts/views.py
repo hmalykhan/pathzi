@@ -9,6 +9,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.core.cache import cache
+from pathzi.cache_utils import cache_add, cache_delete, cache_get, cache_set
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.core.mail import send_mail
@@ -628,8 +629,8 @@ class CurrentUserProfileFastAPI(generics.RetrieveUpdateAPIView):
         with transaction.atomic():
             instance = serializer.save()
 
-            cache.delete(get_list_cache_key(request.user.id))
-            cache.delete(get_embedding_schedule_lock_key(request.user.id))
+            cache_delete(get_list_cache_key(request.user.id))
+            cache_delete(get_embedding_schedule_lock_key(request.user.id))
 
         # 🔥 Return UPDATED flat profile (same as GET)
         return Response(
@@ -657,8 +658,8 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
 
         if serializer.is_valid():
             serializer.save()
-            cache.delete(get_list_cache_key(request.user.id))
-            cache.delete(get_embedding_schedule_lock_key(request.user.id))
+            cache_delete(get_list_cache_key(request.user.id))
+            cache_delete(get_embedding_schedule_lock_key(request.user.id))
             trigger_recs_debounced(request.user.id)
             logger.info("Profile updated: user_id=%s", request.user.id)
             return Response(
