@@ -63,6 +63,21 @@ def run():
     check("work_style has a real value (backfill ran)",
           card.get("work_style") in ("hands-on", "desk-based", "mixed"), str(card.get("work_style")))
 
+    print("\n--- 1b. skills on the card ---")
+    check("card has 'skills'", "skills" in card, str(card.get("skills")))
+    from careers.models import Career as _C
+    with_skills = _C.objects.exclude(skills=None).first()
+    if with_skills:
+        vocab = set(_C.SKILL_VOCABULARY)
+        got = with_skills.skills or []
+        check("skills is a list", isinstance(got, list), str(type(got)))
+        check("every skill is from the fixed vocabulary",
+              all(s in vocab for s in got), str([s for s in got if s not in vocab]))
+        check("between 1 and 6 skills", 1 <= len(got) <= 6, str(len(got)))
+        check("no duplicates", len(got) == len(set(got)))
+    else:
+        print("  (no career has skills yet - backfill still running)")
+
     print("\n--- 2. career detail: work style + entry_requirements ---")
     career = Career.objects.exclude(work_style=None).first()
     req = f.get(f"/careers/{career.id}/"); force_authenticate(req, user=u)

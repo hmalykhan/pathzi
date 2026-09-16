@@ -16,7 +16,7 @@ from careers.models import Career
 # reading a field left out of .only() makes Django fetch it with a
 # separate query PER ROW - 745 extra queries on the careers list.
 CARD_FIELDS = ("id", "sub_type", "jobname", "job_description", "dg_image_url", "salary",
-               "work_style", "work_location", "work_social", "work_pace")
+               "work_style", "work_location", "work_social", "work_pace", "skills")
 
 GUEST_PER_PICKED_CATEGORY = 50  # guest picked some categories
 GUEST_PER_CATEGORY = 30         # guest picked nothing

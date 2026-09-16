@@ -176,6 +176,7 @@ class CareerFilterSerializer(serializers.ModelSerializer):
 
         # Work style and atmosphere (#22). These are in CARD_FIELDS so they
         # load with the card rather than one query per row.
+        skills = serializers.JSONField(read_only=True, allow_null=True)
         work_style = serializers.CharField(read_only=True, allow_null=True)
         work_location = serializers.CharField(read_only=True, allow_null=True)
         work_social = serializers.CharField(read_only=True, allow_null=True)
@@ -190,6 +191,7 @@ class CareerFilterSerializer(serializers.ModelSerializer):
                 "job_description",
                 "dg_image_url",
                 "salary",
+                "skills",
                 "work_style",
                 "work_location",
                 "work_social",
@@ -207,6 +209,7 @@ class CareerListSerializer(serializers.ModelSerializer):
 
     # Work style and atmosphere (#22). Filled by the scraper or the AI
     # backfill; null until one of them has run for that career.
+    skills = serializers.JSONField(read_only=True, allow_null=True)
     work_style = serializers.CharField(read_only=True, allow_null=True)
     work_location = serializers.CharField(read_only=True, allow_null=True)
     work_social = serializers.CharField(read_only=True, allow_null=True)
@@ -231,6 +234,7 @@ class CareerListSerializer(serializers.ModelSerializer):
             "salary",
             "hours",
             "timings",
+            "skills",
             "work_style",
             "work_location",
             "work_social",
@@ -306,6 +310,7 @@ class CareerDetailSerializer(serializers.ModelSerializer):
 
     # Work style and atmosphere (#22). Filled by the scraper or the AI
     # backfill; null until one of them has run for that career.
+    skills = serializers.JSONField(read_only=True, allow_null=True)
     work_style = serializers.CharField(read_only=True, allow_null=True)
     work_location = serializers.CharField(read_only=True, allow_null=True)
     work_social = serializers.CharField(read_only=True, allow_null=True)
@@ -334,6 +339,7 @@ class CareerDetailSerializer(serializers.ModelSerializer):
             "salary",
             "hours",
             "timings",
+            "skills",
             "work_style",
             "work_location",
             "work_social",

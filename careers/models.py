@@ -88,6 +88,17 @@ class CareerJob(models.Model):
     WORK_SOCIAL = ("team", "independent", "customer-facing")
     WORK_PACE = ("calm", "steady", "fast-paced")
 
+    # Skills for this career, chosen from a fixed list so the app can
+    # search by skill. Owned by the scraping project; read-only here.
+    SKILL_VOCABULARY = (
+        "Communication", "Team working", "Organisation", "Attention to detail",
+        "Problem solving", "Initiative", "Patience", "Customer care",
+        "Logical thinking", "IT skills", "Creative", "Administrative",
+        "Analytical", "Number skills", "Presentation", "Physical fitness",
+        "Non-judgemental", "Reliable", "Leadership", "Time management",
+    )
+    skills = models.JSONField(blank=True, null=True)
+
     work_style = models.CharField(max_length=20, blank=True, null=True)
     work_location = models.CharField(max_length=20, blank=True, null=True)
     work_social = models.CharField(max_length=20, blank=True, null=True)

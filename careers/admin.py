@@ -58,6 +58,7 @@ class CareerJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
         "last_scrape_message",
         "last_scrape_run_id",
         "image_preview_large",
+        "skills",
         "work_style",
         "work_location",
         "work_social",
@@ -86,6 +87,7 @@ class CareerJobAdmin(ReadOnlyAdminMixin, admin.ModelAdmin):
             "Work style and atmosphere",
             {
                 "fields": (
+                    "skills",
                     "work_style",
                     "work_location",
                     "work_social",
