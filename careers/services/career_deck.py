@@ -12,7 +12,11 @@ from django.db.models import Subquery
 
 from careers.models import Career
 
-CARD_FIELDS = ("id", "sub_type", "jobname", "job_description", "dg_image_url", "salary")
+# Work style is on the card, so it must be loaded with it: a serializer
+# reading a field left out of .only() makes Django fetch it with a
+# separate query PER ROW - 745 extra queries on the careers list.
+CARD_FIELDS = ("id", "sub_type", "jobname", "job_description", "dg_image_url", "salary",
+               "work_style", "work_location", "work_social", "work_pace")
 
 GUEST_PER_PICKED_CATEGORY = 50  # guest picked some categories
 GUEST_PER_CATEGORY = 30         # guest picked nothing

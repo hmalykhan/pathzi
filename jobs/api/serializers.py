@@ -37,6 +37,11 @@ class UserProfileNestedSerializer(serializers.ModelSerializer):
 
 
 class JobsSerializer(serializers.ModelSerializer):
+    # One field name for "what do I need to start", the same across
+    # careers, courses, jobs and apprenticeships - the underlying column
+    # is named differently on every table.
+    entry_requirements = serializers.SerializerMethodField(read_only=True)
+
 
 # add the field you want in admin wirtable fields to edit them.
     ADMIN_WRITABLE_FIELDS = {
@@ -62,6 +67,18 @@ class JobsSerializer(serializers.ModelSerializer):
     job_name = serializers.CharField(source="title", read_only=True)
     status = serializers.CharField(source="last_scrape_status", read_only=True)
     duration = serializers.CharField(source="hours", read_only=True)
+
+
+    def get_entry_requirements(self, obj):
+        for name in ['skills_youll_need', 'requirement_summery']:
+            value = getattr(obj, name, None)
+            if isinstance(value, (list, tuple)):
+                value = ", ".join(str(v) for v in value if v)
+            if isinstance(value, str):
+                value = value.strip()
+            if value:
+                return value
+        return None
 
     class Meta:
         model = Job

@@ -47,10 +47,13 @@ from analytics import constants as analytics_constants
 from careers.services.nearby_routes import (
     PostcodeNotFound,
     attach_distances,
+    attach_relevance,
     nearest_route_items,
     parse_radius_miles,
+    rank_by_relevance,
     requested_origin,
     saved_origin,
+    wants_relevance,
 )
 from careers.services.free_tier import free_tier_careers, paywall_enforced
 from billing.services.access import access_for
@@ -1139,8 +1142,18 @@ class CareersView(viewsets.ModelViewSet):
             qs = self._only_city_and_subcategory_qs(Model, city=city, jobname=jobname)
 
         items = list(self._slice(qs))
+
+        # Nearest-first remains the default. ?sort=relevance re-orders the
+        # rows we already fetched - best title match first, distance still
+        # the tie-breaker - so it costs no extra query.
+        if wants_relevance(request):
+            items = rank_by_relevance(
+                items, jobname=jobname, radius_miles=parse_radius_miles(request)
+            )
+
         data = serializer_class(items, many=True, context={"request": request}).data
-        return Response(attach_distances(data, items), status=status.HTTP_200_OK)
+        data = attach_distances(data, items)
+        return Response(attach_relevance(data, items), status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["GET", "POST"])
     def jobs(self, request, pk=None):

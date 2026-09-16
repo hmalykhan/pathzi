@@ -173,6 +173,14 @@ class UserProfileNestedSerializer(serializers.ModelSerializer):
 class CareerFilterSerializer(serializers.ModelSerializer):
         category = serializers.CharField(source="sub_type", read_only=True)
         subcategory = serializers.CharField(source="jobname", read_only=True)
+
+        # Work style and atmosphere (#22). These are in CARD_FIELDS so they
+        # load with the card rather than one query per row.
+        work_style = serializers.CharField(read_only=True, allow_null=True)
+        work_location = serializers.CharField(read_only=True, allow_null=True)
+        work_social = serializers.CharField(read_only=True, allow_null=True)
+        work_pace = serializers.CharField(read_only=True, allow_null=True)
+
         class Meta:
             model = Career
             fields = [
@@ -181,7 +189,11 @@ class CareerFilterSerializer(serializers.ModelSerializer):
                 "subcategory",
                 "job_description",
                 "dg_image_url",
-                "salary"
+                "salary",
+                "work_style",
+                "work_location",
+                "work_social",
+                "work_pace",
             ]
 
 
@@ -192,6 +204,14 @@ def _empty_my_report():
 class CareerListSerializer(serializers.ModelSerializer):
     category = serializers.CharField(source="sub_type", read_only=True)
     subcategory = serializers.CharField(source="jobname", read_only=True)
+
+    # Work style and atmosphere (#22). Filled by the scraper or the AI
+    # backfill; null until one of them has run for that career.
+    work_style = serializers.CharField(read_only=True, allow_null=True)
+    work_location = serializers.CharField(read_only=True, allow_null=True)
+    work_social = serializers.CharField(read_only=True, allow_null=True)
+    work_pace = serializers.CharField(read_only=True, allow_null=True)
+    entry_requirements = serializers.SerializerMethodField(read_only=True)
 
     # ✅ user+career oriented report
     my_report = serializers.SerializerMethodField(read_only=True)
@@ -211,6 +231,11 @@ class CareerListSerializer(serializers.ModelSerializer):
             "salary",
             "hours",
             "timings",
+            "work_style",
+            "work_location",
+            "work_social",
+            "work_pace",
+            "entry_requirements",
             "how_to_become",
             "college",
             "college_entry_req",
@@ -220,6 +245,26 @@ class CareerListSerializer(serializers.ModelSerializer):
             "my_report",  # ✅ added
         )
         read_only_fields = fields
+
+
+
+
+
+    def get_entry_requirements(self, obj):
+        """
+        One place for "what do I need to start", whichever route.
+
+        The underlying column is named differently on every table, so
+        without this the app would need four different field names. Empty
+        strings come back as null so the app can test one thing.
+        """
+        college = (getattr(obj, "college_entry_req", "") or "").strip()
+        appr = (getattr(obj, "apprenticeship_entry_req", "") or "").strip()
+        return {
+            "college": college or None,
+            "apprenticeship": appr or None,
+            "summary": college or appr or None,
+        }
 
     def get_my_report(self, obj):
         """
@@ -258,6 +303,15 @@ class CareerDetailSerializer(serializers.ModelSerializer):
     )
 
 
+
+    # Work style and atmosphere (#22). Filled by the scraper or the AI
+    # backfill; null until one of them has run for that career.
+    work_style = serializers.CharField(read_only=True, allow_null=True)
+    work_location = serializers.CharField(read_only=True, allow_null=True)
+    work_social = serializers.CharField(read_only=True, allow_null=True)
+    work_pace = serializers.CharField(read_only=True, allow_null=True)
+    entry_requirements = serializers.SerializerMethodField(read_only=True)
+
     # ✅ user+career oriented report
     my_report = serializers.SerializerMethodField(read_only=True)
     is_saved = serializers.SerializerMethodField()
@@ -280,6 +334,11 @@ class CareerDetailSerializer(serializers.ModelSerializer):
             "salary",
             "hours",
             "timings",
+            "work_style",
+            "work_location",
+            "work_social",
+            "work_pace",
+            "entry_requirements",
             "how_to_become",
             "college",
             "college_entry_req",
@@ -388,6 +447,22 @@ class CareerDetailSerializer(serializers.ModelSerializer):
 
         profiles = UserProfile.objects.filter(career_links__career_id=obj.id).distinct()
         return UserProfileNestedSerializer(profiles, many=True, context=self.context).data
+
+    def get_entry_requirements(self, obj):
+        """
+        One place for "what do I need to start", whichever route.
+
+        The underlying column is named differently on every table, so
+        without this the app would need four different field names. Empty
+        strings come back as null so the app can test one thing.
+        """
+        college = (getattr(obj, "college_entry_req", "") or "").strip()
+        appr = (getattr(obj, "apprenticeship_entry_req", "") or "").strip()
+        return {
+            "college": college or None,
+            "apprenticeship": appr or None,
+            "summary": college or appr or None,
+        }
 
     def get_my_report(self, obj):
         """

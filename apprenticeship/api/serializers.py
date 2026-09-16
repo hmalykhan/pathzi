@@ -57,6 +57,11 @@ class ApprenticeshipListSerializer(serializers.ListSerializer):
 
 
 class ApprenticeshipSerializer(serializers.ModelSerializer):
+    # One field name for "what do I need to start", the same across
+    # careers, courses, jobs and apprenticeships - the underlying column
+    # is named differently on every table.
+    entry_requirements = serializers.SerializerMethodField(read_only=True)
+
 
     ADMIN_WRITABLE_FIELDS = {
         "city", "state", "zip_code", "latitude", "longitude", "category", "subcategory"
@@ -70,6 +75,18 @@ class ApprenticeshipSerializer(serializers.ModelSerializer):
         write_only=True,
         queryset=UserProfile.objects.all(),
     )
+
+
+    def get_entry_requirements(self, obj):
+        for name in ['essential_qualifications', 'requirement_summery', 'other_requirements_items']:
+            value = getattr(obj, name, None)
+            if isinstance(value, (list, tuple)):
+                value = ", ".join(str(v) for v in value if v)
+            if isinstance(value, str):
+                value = value.strip()
+            if value:
+                return value
+        return None
 
     class Meta:
         model = Apprenticeship

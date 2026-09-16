@@ -44,10 +44,23 @@ class PostcodeNotFound(Exception):
 
 
 def _param(request, *names):
-    """First non-empty value for any of `names`, from the body then the query string."""
-    data = request.data if hasattr(request.data, "get") else {}
+    """
+    First non-empty value for any of `names`, from the body then the query
+    string.
+
+    Reads both through getattr: a DRF request always has .data and
+    .query_params, but a plain Django request has neither, and this should
+    degrade to "no value" rather than raise.
+    """
+    data = getattr(request, "data", None)
+    if not hasattr(data, "get"):
+        data = {}
+    params = getattr(request, "query_params", None)
+    if not hasattr(params, "get"):
+        params = getattr(request, "GET", {})
+
     for name in names:
-        for source in (data, request.query_params):
+        for source in (data, params):
             value = source.get(name)
             if value not in (None, ""):
                 return value
@@ -233,4 +246,112 @@ def attach_distances(rows, items):
         km = getattr(item, "distance_km", None)
         row["distance_km"] = round(km, 2) if km is not None else None
         row["distance_miles"] = round(km / KM_PER_MILE, 1) if km is not None else None
+    return rows
+
+# --------------------------------------------------------------------------
+# Relevance ranking (#26)
+# --------------------------------------------------------------------------
+# Nearest-first is the default and stays the default. Distance alone is a
+# poor guide when the nearest course is "Construction (General)" and one a
+# few miles further is "Carpentry and Joinery Level 2" - the second is what
+# the student actually wants. Relevance blends three things, and is only
+# used when the app asks for it with ?sort=relevance.
+
+RELEVANCE_TITLE_WEIGHT = 0.50
+RELEVANCE_DISTANCE_WEIGHT = 0.35
+RELEVANCE_DETAIL_WEIGHT = 0.15
+
+# Words that appear in nearly every title and say nothing about the match.
+_STOPWORDS = {
+    "and", "or", "the", "of", "in", "for", "with", "to", "a", "an",
+    "level", "diploma", "certificate", "award", "course", "training",
+    "apprentice", "apprenticeship", "job", "vacancy", "full", "part", "time",
+}
+
+
+def _words(text):
+    return {w for w in re.split(r"[^a-z0-9]+", (text or "").lower())
+            if w and w not in _STOPWORDS and len(w) > 2}
+
+
+def _title_of(item):
+    for attr in ("course_name", "title", "jobname", "name", "subcategory"):
+        value = getattr(item, attr, None)
+        if value:
+            return str(value)
+    return ""
+
+
+def _detail_score(item):
+    """Prefer rows a student can actually act on over near-empty stubs."""
+    score = 0.0
+    for attr in ("entry_reeq", "requirement_summery", "essential_qualifications",
+                 "skills_youll_need", "course_description", "summary_text"):
+        value = getattr(item, attr, None)
+        if isinstance(value, (list, tuple)):
+            value = " ".join(str(v) for v in value)
+        if value and str(value).strip():
+            score += 0.5
+    return min(score, 1.0)
+
+
+def relevance_score(item, career_words, radius_km):
+    """
+    0 to 1. Higher is a better card to show first.
+
+    Kept deliberately simple and explainable: a weighted blend of how well
+    the title matches the career, how close it is, and whether the row has
+    enough detail to be useful.
+    """
+    title_words = _words(_title_of(item))
+    if career_words and title_words:
+        overlap = len(career_words & title_words) / len(career_words)
+    else:
+        overlap = 0.0
+
+    km = getattr(item, "distance_km", None)
+    if km is None or not radius_km:
+        # No coordinates: don't reward or punish, sit mid-table.
+        distance = 0.5
+    else:
+        distance = max(0.0, 1.0 - (km / radius_km))
+
+    return (RELEVANCE_TITLE_WEIGHT * overlap
+            + RELEVANCE_DISTANCE_WEIGHT * distance
+            + RELEVANCE_DETAIL_WEIGHT * _detail_score(item))
+
+
+def wants_relevance(request) -> bool:
+    """True only when the app explicitly asks. Distance stays the default."""
+    value = (_param(request, "sort", "order_by") or "").strip().lower()
+    return value in ("relevance", "relevant", "best")
+
+
+def rank_by_relevance(items, *, jobname: str, radius_miles: float):
+    """
+    Re-order already-fetched items, best match first.
+
+    Works on the list the database already returned, so it adds no query.
+    Distance remains the tie-breaker, which keeps the order stable.
+    """
+    career_words = _words(jobname)
+    radius_km = (radius_miles or 0) * KM_PER_MILE
+
+    def sort_key(item):
+        km = getattr(item, "distance_km", None)
+        return (-relevance_score(item, career_words, radius_km),
+                km if km is not None else float("inf"))
+
+    ranked = sorted(items, key=sort_key)
+    for item in ranked:
+        item.relevance = round(relevance_score(item, career_words, radius_km), 3)
+    return ranked
+
+
+def attach_relevance(rows, items):
+    """Expose the score so the app (and we) can see why an order came out."""
+    for row, item in zip(rows, items):
+        score = getattr(item, "relevance", None)
+        if score is not None:
+            row["relevance"] = score
     return rows
