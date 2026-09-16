@@ -319,6 +319,10 @@ REVENUECAT_ENTITLEMENT_ID = config("REVENUECAT_ENTITLEMENT_ID", default="pathzi_
 # Turn on (PAYWALL_ENFORCED=True in the environment) the day the new app goes live.
 PAYWALL_ENFORCED = config("PAYWALL_ENFORCED", default=False, cast=bool)
 
+# Gemini, used only by the offline data-backfill scripts (never in a request).
+GEMINI_API_KEY = config("GEMINI_API_KEY", default="")
+GEMINI_MODEL = config("GEMINI_MODEL", default="gemini-2.5-flash")
+
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = "smtp.sendgrid.net"
 EMAIL_PORT = 587
