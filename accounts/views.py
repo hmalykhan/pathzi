@@ -67,7 +67,7 @@ from rest_framework import status, permissions
 import threading
 from django.core.mail import send_mail
 from jwt import PyJWKClient
-from accounts.services.recommendation_cache import get_list_cache_key
+from accounts.services.recommendation_cache import get_list_cache_key, get_pathways_cache_key
 from accounts.services.recommendation_cache import get_embedding_schedule_lock_key
 from careers.services.recommendation_triggers import trigger_recs_debounced
 
@@ -631,6 +631,11 @@ class CurrentUserProfileFastAPI(generics.RetrieveUpdateAPIView):
 
             cache_delete(get_list_cache_key(request.user.id))
             cache_delete(get_embedding_schedule_lock_key(request.user.id))
+            # Education level and the other pathway inputs may have changed,
+            # so the saved-pathway list is stale. The pathways themselves
+            # regenerate on next read, when their fingerprint no longer
+            # matches the profile.
+            cache_delete(get_pathways_cache_key(request.user.id))
 
         # 🔥 Return UPDATED flat profile (same as GET)
         return Response(
@@ -660,6 +665,11 @@ class CurrentUserProfileAPI(generics.RetrieveUpdateAPIView):
             serializer.save()
             cache_delete(get_list_cache_key(request.user.id))
             cache_delete(get_embedding_schedule_lock_key(request.user.id))
+            # Education level and the other pathway inputs may have changed,
+            # so the saved-pathway list is stale. The pathways themselves
+            # regenerate on next read, when their fingerprint no longer
+            # matches the profile.
+            cache_delete(get_pathways_cache_key(request.user.id))
             trigger_recs_debounced(request.user.id)
             logger.info("Profile updated: user_id=%s", request.user.id)
             return Response(

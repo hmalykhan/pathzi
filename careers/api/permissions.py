@@ -9,7 +9,10 @@ class CareerPermission(permissions.BasePermission):
 
         allowed = {
             "save", "my", "unsave",
-            "report", "reports", "explore","unexplore","explore_mine" # ✅ add
+            "report", "reports", "explore","unexplore","explore_mine", # ✅ add
+            # AI career pathway (#24): any signed-in user, their own only -
+            # the view scopes every query to request.user's profile.
+            "pathway", "pathway_save",
         }
 
         guest = {

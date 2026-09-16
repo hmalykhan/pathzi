@@ -30,7 +30,8 @@ from apprenticeship.api.serializers import ApprenticeshipSerializer
 
 from accounts.services.career_recommender import update_embedding_and_recs_async
 from careers.services.recommendation_triggers import trigger_recs_debounced
-from accounts.services.recommendation_cache import get_explored_cache_key, get_saved_cache_key, get_list_cache_key, get_recs_lock_key, get_embedding_schedule_lock_key
+from accounts.services.recommendation_cache import get_explored_cache_key, get_saved_cache_key, get_list_cache_key, get_recs_lock_key, get_embedding_schedule_lock_key, get_pathways_cache_key
+from careers.services import pathway as pathway_service
 from accounts.services.user_service import get_explored_careers, get_saved_careers, get_career_queryset, norm_key
 from django.db import transaction
 from rest_framework import status
@@ -765,11 +766,150 @@ class CareersView(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
+    # -----------------------
+    # AI career pathway (#24). Generation moved off the phone: see
+    # AI_PATHWAY_GENERATION.md and careers/services/pathway.py.
+    # -----------------------
+    @action(detail=True, methods=["GET"], url_path="pathway")
+    def pathway(self, request, pk=None):
+        """
+        GET /careers/{id}/pathway/
+
+        Returns the user's pathway for this career, generating it only when
+        there isn't a usable one already. Every generated pathway is stored
+        straight away with user_saved=False, so opening the same career
+        again is free; it appears in "my saved pathways" only once the user
+        presses Save.
+
+        Regenerated when the profile fields that change the answer change -
+        education level above all - or when the prompt version moves on.
+        """
+        try:
+            career_id = int(pk)
+        except (TypeError, ValueError):
+            raise NotFound()
+
+        profile = self._profile_cached or self._get_or_create_profile()
+        career = get_object_or_404(Career, pk=career_id)
+
+        fingerprint = pathway_service.profile_fingerprint(profile)
+        row = UserCareerReport.objects.filter(user_profile=profile, career_id=career_id).first()
+
+        fresh = (
+            row is not None
+            and bool(row.report)
+            and row.profile_fingerprint == fingerprint
+            and row.prompt_version == pathway_service.PROMPT_VERSION
+        )
+        regenerate = (request.query_params.get("refresh") or "").lower() in ("1", "true", "yes")
+
+        if fresh and not regenerate:
+            return Response(self._pathway_payload(career, row, generated=False),
+                            status=status.HTTP_200_OK)
+
+        try:
+            report = pathway_service.generate(profile, career)
+        except pathway_service.PathwayUnavailable as e:
+            # An existing pathway, even a stale one, beats an error screen.
+            if row is not None and row.report:
+                payload = self._pathway_payload(career, row, generated=False)
+                payload["stale"] = True
+                return Response(payload, status=status.HTTP_200_OK)
+            return Response(
+                {"status": False, "message": str(e), "code": "pathway_unavailable"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        now = timezone.now()
+        row, _ = UserCareerReport.objects.update_or_create(
+            user_profile=profile,
+            career_id=career_id,
+            defaults={
+                "report": report,
+                "report_status": True,
+                "generated_at": now,
+                "profile_fingerprint": fingerprint,
+                "prompt_version": pathway_service.PROMPT_VERSION,
+                # user_saved is deliberately absent: generating must never
+                # change whether the user chose to keep it.
+            },
+        )
+        cache_delete(get_pathways_cache_key(request.user.id))
+        cache_delete(get_saved_cache_key(request.user.id))
+        return Response(self._pathway_payload(career, row, generated=True),
+                        status=status.HTTP_200_OK)
+
+    def _pathway_payload(self, career, row, *, generated):
+        summary = (row.report or {}).get("summary") or {}
+        return {
+            "career_id": row.career_id,
+            "title": summary.get("title") or career.jobname,
+            "subtitle": summary.get("subtitle") or "",
+            "total_timeline_estimate": summary.get("totalTimelineEstimate") or "",
+            "current_step": pathway_service.current_step(row.report),
+            "steps": summary.get("steps") or [],
+            "saved": bool(row.user_saved),
+            "generated_at": row.generated_at,
+            "generated": generated,
+            "prompt_version": row.prompt_version or pathway_service.PROMPT_VERSION,
+        }
+
+    @action(detail=True, methods=["POST", "DELETE"], url_path="pathway/save")
+    def pathway_save(self, request, pk=None):
+        """
+        POST   /careers/{id}/pathway/save/   keep it  -> saved: true
+        DELETE /careers/{id}/pathway/save/   forget it -> saved: false
+
+        Only flips the flag. The pathway itself stays either way, so
+        un-saving and re-opening costs nothing to generate again.
+        """
+        try:
+            career_id = int(pk)
+        except (TypeError, ValueError):
+            raise NotFound()
+
+        profile = self._profile_cached or self._get_or_create_profile()
+        row = UserCareerReport.objects.filter(user_profile=profile, career_id=career_id).first()
+        if row is None:
+            return Response(
+                {"status": False, "message": "No pathway for this career yet.",
+                 "code": "pathway_not_generated"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        row.user_saved = (request.method == "POST")
+        row.save(update_fields=["user_saved", "updated_at"])
+        cache_delete(get_pathways_cache_key(request.user.id))
+        cache_delete(get_saved_cache_key(request.user.id))
+
+        return Response({"status": True, "career_id": career_id, "saved": row.user_saved},
+                        status=status.HTTP_200_OK)
+
     @action(detail=False, methods=["GET"], url_path="reports")
     def reports(self, request):
-        """The user's saved reports ("saved pathways"), newest first."""
+        """
+        The user's saved pathways, newest first.
+
+        Only pathways the user chose to keep (user_saved) are listed. The
+        table also holds pathways that were generated and never saved -
+        those exist so we don't pay to generate the same thing twice, and
+        the user never asked to see them here.
+
+        Cached per user; cleared on save, unsave, delete, regeneration and
+        any profile edit that changes what a pathway says.
+        """
         profile = self._profile_cached or self._get_or_create_profile()
-        links = list(UserCareerReport.objects.filter(user_profile=profile).order_by("-updated_at"))
+
+        cache_key = get_pathways_cache_key(request.user.id)
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        links = list(
+            UserCareerReport.objects
+            .filter(user_profile=profile, user_saved=True)
+            .order_by("-updated_at")
+        )
         careers = Career.objects.only(*CARD_FIELDS).in_bulk([l.career_id for l in links])
         links = [l for l in links if l.career_id in careers]
 
@@ -780,7 +920,11 @@ class CareersView(viewsets.ModelViewSet):
                 "report": link.report or {},
                 "generated_at": link.generated_at,
             }
-        return Response(with_match_scores(data, match_scores(request.user, [l.career_id for l in links])), status=status.HTTP_200_OK)
+            item["saved"] = True
+        data = with_match_scores(data, match_scores(request.user, [l.career_id for l in links]))
+
+        cache_set(cache_key, data, timeout=60 * 30)
+        return Response(data, status=status.HTTP_200_OK)
 
     # def list(self, request, *args, **kwargs):
     #     user = request.user

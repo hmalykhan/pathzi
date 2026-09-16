@@ -216,12 +216,27 @@ class UserCareerReport(models.Model):
     report = models.JSONField(default=dict, blank=True)
     generated_at = models.DateTimeField(null=True, blank=True)
 
+    # Did the user actually press Save?
+    #
+    # Every generated pathway is stored, so opening the same career twice
+    # does not pay for a second generation. Only the ones the user chose to
+    # keep appear in "My saved pathways". Rows generated and never saved
+    # stay here purely as a cache.
+    user_saved = models.BooleanField(default=False, db_index=True)
+
+    # What the pathway was generated from. When the profile fields that
+    # change the answer change - education level above all - the stored
+    # pathway is stale and is regenerated on the next read.
+    profile_fingerprint = models.CharField(max_length=64, blank=True, default="")
+    prompt_version = models.CharField(max_length=10, blank=True, default="")
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "pathzi_user_career_report"
         unique_together = ("user_profile", "career")
+        indexes = [models.Index(fields=["user_profile", "user_saved", "-updated_at"])]
 
     def __str__(self):
         return f"{self.user_profile_id} - {self.career_id}"
