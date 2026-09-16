@@ -81,6 +81,35 @@ def run():
     check("NOT saved by default", r.data.get("saved") is False)
     check("it was stored", UserCareerReport.objects.filter(user_profile=p, career=career).exists())
 
+    print("\n--- per-career progress, derived not ticked ---")
+    pr = r.data.get("progress") or {}
+    check("progress is in the same report (no extra call)", bool(pr), str(pr))
+    check("total_steps counted", pr.get("total_steps") == 2, str(pr.get("total_steps")))
+    check("on step 1 of 2, nothing completed yet", pr.get("completed_steps") == 0)
+    check("percent is 0 at the start", pr.get("percent") == 0, str(pr.get("percent")))
+    steps = r.data.get("steps") or []
+    check("step 1 flagged current", steps[0].get("current") is True)
+    check("step 1 not flagged completed", steps[0].get("completed") is False)
+    check("step 2 not current", steps[1].get("current") is False)
+
+    # A pathway where the student is further along.
+    LATER = {"summary": {**FAKE["summary"], "steps": [
+        {"stepNumber": 1, "title": "a", "estimatedTime": "", "isActive": False},
+        {"stepNumber": 2, "title": "b", "estimatedTime": "", "isActive": False},
+        {"stepNumber": 3, "title": "c", "estimatedTime": "", "isActive": True},
+        {"stepNumber": 4, "title": "d", "estimatedTime": "", "isActive": False},
+    ]}, "version": ps.PROMPT_VERSION, "generated_by": "server"}
+    pr2 = ps.progress(LATER)
+    check("on step 3 of 4 -> 2 completed", pr2["completed_steps"] == 2, str(pr2))
+    check("percent rounds sensibly (50%)", pr2["percent"] == 50, str(pr2["percent"]))
+    flagged = ps.steps_with_completion(LATER)
+    check("earlier steps marked done", flagged[0]["completed"] and flagged[1]["completed"])
+    check("the active one is current, not completed",
+          flagged[2]["current"] is True and flagged[2]["completed"] is False)
+    check("later steps neither", not flagged[3]["completed"] and not flagged[3]["current"])
+    check("an empty pathway gives zeros, not a crash",
+          ps.progress({})["total_steps"] == 0 and ps.progress({})["percent"] == 0)
+
     print("\n--- second visit must not pay for another generation ---")
     with patch.object(ps, "generate", return_value=FAKE) as gen:
         r2 = get_pathway(u, career.id)

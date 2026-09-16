@@ -256,3 +256,42 @@ def current_step(report):
         if step.get("isActive"):
             return step.get("stepNumber")
     return 1
+
+
+def progress(report):
+    """
+    How far along this career the student is.
+
+    Taken from the step the pathway marks active - the app shows the steps
+    before it as done. Nothing is ticked by hand: the position is worked
+    out from the profile, so it moves on its own as the student's
+    education level changes.
+    """
+    steps = ((report or {}).get("summary") or {}).get("steps") or []
+    total = len(steps)
+    current = current_step(report) if total else 0
+    try:
+        current = max(1, min(int(current), total)) if total else 0
+    except (TypeError, ValueError):
+        current = 1 if total else 0
+
+    completed = max(0, current - 1)
+    return {
+        "current_step": current,
+        "total_steps": total,
+        "completed_steps": completed,
+        "percent": round(100.0 * completed / total) if total else 0,
+    }
+
+
+def steps_with_completion(report):
+    """Each step flagged done / current, so the app doesn't have to work it out."""
+    steps = ((report or {}).get("summary") or {}).get("steps") or []
+    current = current_step(report)
+    out = []
+    for step in steps:
+        number = step.get("stepNumber")
+        out.append({**step,
+                    "completed": bool(number and number < current),
+                    "current": number == current})
+    return out

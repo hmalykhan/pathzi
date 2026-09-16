@@ -847,7 +847,11 @@ class CareersView(viewsets.ModelViewSet):
             "subtitle": summary.get("subtitle") or "",
             "total_timeline_estimate": summary.get("totalTimelineEstimate") or "",
             "current_step": pathway_service.current_step(row.report),
-            "steps": summary.get("steps") or [],
+            # Per-career progress, derived from the active step - no ticking,
+            # no second call. The position comes from the profile, so it
+            # moves by itself as the student progresses.
+            "progress": pathway_service.progress(row.report),
+            "steps": pathway_service.steps_with_completion(row.report),
             "saved": bool(row.user_saved),
             "generated_at": row.generated_at,
             "generated": generated,
