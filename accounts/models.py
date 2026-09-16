@@ -75,6 +75,15 @@ class UserProfile(models.Model):
     # Held here and turned into free access once the subscription lapses.
     referral_days_banked = models.PositiveSmallIntegerField(default=0)
 
+    # "Sign out everywhere". Any token issued before this moment is refused.
+    #
+    # A timestamp rather than SimpleJWT's blacklist because the blacklist can
+    # only revoke REFRESH tokens - an access token stays valid until it
+    # expires, and ours last three days. Signing out would leave the other
+    # device logged in for three more days, which is not signing out.
+    # Null for everyone who has never used it, and then it costs nothing.
+    tokens_valid_from = models.DateTimeField(null=True, blank=True)
+
     category = models.JSONField(default=list, blank=True)  # list of strings
     qualification = models.JSONField(default=list, blank=True)  # list of strings
 

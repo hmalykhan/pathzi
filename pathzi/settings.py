@@ -185,7 +185,9 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.SessionAuthentication",
         "rest_framework.authentication.BasicAuthentication",
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        # JWTAuthentication plus revocation - see accounts/authentication.py.
+        # Behaves identically unless a user has signed out everywhere.
+        "accounts.authentication.RevocableJWTAuthentication",
     ],
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.UserRateThrottle",

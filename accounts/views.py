@@ -39,6 +39,7 @@ from django.core.exceptions import ValidationError
 from rest_framework.exceptions import Throttled
 from accounts.services import password_reset as pwreset
 from accounts.throttles import OtpEmailThrottle, OtpIPThrottle
+from accounts.sign_out_views import revoke_all_tokens
 from .serializers import (
     UserSerializer,
     UserProfileSerializer,
@@ -944,6 +945,12 @@ class ResetPasswordAPI(APIView):
         # A password change cancels any pending reset code or token.
         PasswordResetOTP.objects.filter(user=user).delete()
 
+        # ...and ends every other session. Someone who changes their password
+        # usually means "lock everyone else out", and until now a stolen
+        # token stayed usable for up to three days afterwards.
+        revoke_all_tokens(user, keep_current=False)
+
+        # Minted after the cutoff, so this device stays signed in.
         refresh = RefreshToken.for_user(user)
         logger.info("Password changed successfully: user_id=%s", user.id)
 
@@ -1245,6 +1252,11 @@ class ForgotPasswordConfirmationOTP(_ResetRateLimitMixin, APIView):
         user.set_password(new_password)
         user.save()
         pwreset.mark_password_reset(record)
+
+        # This is the path someone uses when their account has been taken
+        # over, so every existing session has to go - including whoever
+        # took it. There is no current device to keep: they sign in again.
+        revoke_all_tokens(user, keep_current=False)
 
         logger.info("ForgotPassword reset: user_id=%s via=%s", user.id, "token" if token else "otp")
         return Response({"status": True, "message": "Password reset successful"}, status=status.HTTP_200_OK)
