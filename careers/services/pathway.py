@@ -167,12 +167,30 @@ CRITICAL REQUIREMENTS
     )
 
 
+_CLIENT = None
+
+
 def _client():
-    from google import genai
-    key = getattr(settings, "GEMINI_API_KEY", "")
-    if not key:
-        raise PathwayUnavailable("AI is not configured.")
-    return genai.Client(api_key=key)
+    """
+    One client, kept alive for the life of the process.
+
+    It MUST be held in a variable by the caller. Writing
+
+        _client().models.generate_content(...)
+
+    leaves the client with no reference, and it can be closed before the
+    request finishes - "Cannot send a request, as the client has been
+    closed". That bug shipped here and only showed up the first time this
+    ran against the real API, because the tests mock generate().
+    """
+    global _CLIENT
+    if _CLIENT is None:
+        from google import genai
+        key = getattr(settings, "GEMINI_API_KEY", "")
+        if not key:
+            raise PathwayUnavailable("AI is not configured.")
+        _CLIENT = genai.Client(api_key=key)
+    return _CLIENT
 
 
 class PathwayUnavailable(Exception):
@@ -190,7 +208,8 @@ def generate(profile, career):
 
     prompt = build_prompt(profile, career)
     try:
-        response = _client().models.generate_content(
+        client = _client()          # held: see _client() for why
+        response = client.models.generate_content(
             model=getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"),
             contents=prompt,
             config=types.GenerateContentConfig(
