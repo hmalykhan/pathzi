@@ -27,7 +27,7 @@ User details in them are invented; the shapes are not.
 13. [match_score](#13-match_score)
 14. [Analytics — route_viewed](#14-analytics--route_viewed)
 15. [Full endpoint list](#15-full-endpoint-list)
-16. [What we still need from you](#16-what-we-still-need-from-you)
+16. [Your work — app side and project side](#16-your-work--app-side-and-project-side)
 
 ---
 
@@ -646,15 +646,114 @@ better signal for genuine interest.
 
 ---
 
-## 16. What we still need from you
+## 16. Your work — app side and project side
 
-1. **Does the app read `user_profile`** on course / job / apprenticeship responses? If yes, tell
-   us what you show and we will provide a safe replacement.
-2. **Does the app call `GET /accounts/users/`?** It is now staff-only and will return `403`.
-3. **Confirm the app can handle a one-off `401`** on deploy and send the user to login.
-4. **Remove the OpenAI key** from the app and switch the pathway screen to
-   `GET /careers/{id}/pathway/`. The key is being revoked.
-5. **RevenueCat:** log in with `account_uuid`, add a Restore Purchases button, and open
-   `manage_url` for "Manage subscription".
+You wear both hats, so this is split by which one you are wearing. Nothing here is optional
+for launch unless it says so.
+
+---
+
+### A. App code
+
+#### A1. Must do before this release works at all
+
+| | What | Where in this doc |
+|---|---|---|
+| ☐ | **Remove the OpenAI key** from the app and call `GET /careers/{id}/pathway/` instead. The key is being revoked — the pathway screen stops working until you switch | [§3](#3-ai-career-pathway--now-server-side) |
+| ☐ | **Handle a one-off `401`** on the day this deploys and send the user to login. Every token is invalidated once | [§1.2](#12-everyone-will-be-signed-out-once-on-deploy) |
+| ☐ | **Stop calling** `/api/billing/subscribe/` and `/api/billing/portal/` | [§5](#5-access-trial-and-subscription) |
+| ☐ | **Check whether you read `user_profile`** on course / job / apprenticeship items. It is now always `[]` | [§1.1](#11-user_profile-is-now-always-) |
+| ☐ | **Check whether you call `GET /accounts/users/`** — it now returns `403` | [§15](#15-full-endpoint-list) |
+| ☐ | **Stop branching on the `forgot_password` message** — it is now identical for unknown emails | [§1.4](#14-forgot_password-no-longer-says-whether-the-email-exists) |
+
+#### A2. Payments (RevenueCat)
+
+| | |
+|---|---|
+| ☐ | Log into RevenueCat using **`account_uuid`** from the access object, and pass it to the store as `appAccountToken` (iOS) / `obfuscatedAccountId` (Android). Without this a purchase cannot be matched to an account |
+| ☐ | Use **StoreKit 2** (iOS) and **Play Billing 8+** (Android) |
+| ☐ | Call **`POST /api/billing/refresh/`** right after a purchase — it covers the second or two before our webhook lands |
+| ☐ | Add a **Restore Purchases** button — Apple requires it |
+| ☐ | **Manage subscription** opens `manage_url` from the access object, not a page of ours — Apple and Google require this |
+| ☐ | **Ask our backend for access** (`/api/billing/status/`), never RevenueCat directly. Trial and referral days only exist with us |
+
+#### A3. Read values from the API, never hard-code
+
+| | Value | Why |
+|---|---|---|
+| ☐ | `features` | what to lock when the trial ends — do not hard-code the list |
+| ☐ | `trial_days` | not 7 |
+| ☐ | `total_careers` | it is **745**, not the hard-coded 770 |
+| ☐ | `code_length`, `expires_in` | OTP length and lifetime |
+| ☐ | `referrer_days`, `invitee_days`, `code_expiry_days` | referral rewards |
+
+#### A4. Null and empty states — easy to get wrong
+
+| | |
+|---|---|
+| ☐ | **`match_score: null` must not render as 0.** Null = "cannot score yet"; 0 = "terrible match" |
+| ☐ | **`insight: null`** until the user has 3+ swipes. Hide the block, do not show empty text |
+| ☐ | **`work_style` and `skills` may be `null`** on a career the backfill has not reached |
+| ☐ | **Skip must send `null`**, not `""`. Omitting the key leaves the old value; `""` is stored as a real answer |
+| ☐ | **Pathway takes ~20 seconds** on first generation. Keep the "Building your personalised pathway…" state; under a second afterwards |
+| ☐ | **`503 pathway_unavailable`** → show "Try again". `"stale": true` → show it normally |
+
+#### A5. New screens and flows
+
+| | |
+|---|---|
+| ☐ | **Referral screen** — a generate-code action *per share* (no permanent code, no "up to 5" limit), the invite list, days earned |
+| ☐ | **Referral code field at sign-up**, sent on all three paths |
+| ☐ | **`is_new_user`** on Google/Apple — show the trial welcome only to new accounts |
+| ☐ | **Delete account** screen (`DELETE /accounts/me/`) — Apple requires it. If `had_active_subscription` is true, show the warning and `manage_url` **before** deleting |
+| ☐ | **Sign out other devices** (`POST /accounts/sign-out-other-devices/`) — use the returned token pair |
+| ☐ | **Pathway save/unsave** using `POST`/`DELETE /careers/{id}/pathway/save/` and the `saved` flag |
+
+---
+
+### B. Project side
+
+#### B1. Blocking — no real payment is possible until these are done
+
+Right now the RevenueCat project has **only a Test Store app**. That is a simulator: it cannot
+take real money from anyone.
+
+| | |
+|---|---|
+| ☐ | **App Store Connect**: create the app, then add it in RevenueCat with the In-App Purchase key (`.p8`), Key ID, Issuer ID and bundle ID |
+| ☐ | **Play Console**: create the app, then add it in RevenueCat with the service account JSON and package name |
+| ☐ | **Banking and tax details** on both. Apple allows no purchase without them, and this is usually the slowest step |
+| ☐ | **Create the products** in both stores — monthly and yearly — matching the RevenueCat product IDs, and **send us the final IDs** |
+| ☐ | **Delete the "Lifetime" product** unless you intend to sell it. Our database has no lifetime plan, so a purchase would be refused rather than honoured |
+| ☐ | **Confirm your RevenueCat account email** — the dashboard banner is still showing |
+
+#### B2. Content we are waiting on
+
+| | |
+|---|---|
+| ☐ | **Invitation email wording.** Ours is placeholder text. One line to change once you send the real copy |
+| ☐ | **Final prices.** The paywall shows £9.99/month and £29/year; confirm against what is configured |
+
+#### B3. Decisions
+
+| | |
+|---|---|
+| ☐ | **When to switch the free tier on.** It is off (`PAYWALL_ENFORCED=False`) so nothing changes for current users. Turn it on the day the new app ships, or expect people on the old build to lose the home screen |
+| ☐ | **Exactly what a free user loses.** Agreed so far: explored and saved careers stay, saved pathways and progress stay, new recommendations stop |
+
+---
+
+### C. First real test, once B1 is done
+
+One test proves the whole payment chain in a way nothing else can:
+
+1. Make a **sandbox purchase** in the app
+2. Check our database recorded it (`GET /api/billing/status/` → `source: "subscription"`)
+
+That single test validates the webhook secret matching, the webhook itself, and purchase linking
+via `account_uuid`. **None of those three has ever been exercised with a real event** — our tests
+prove our logic, not the connection between us and RevenueCat.
+
+---
 
 Anything unclear, ask — it is quicker than guessing from this document.
