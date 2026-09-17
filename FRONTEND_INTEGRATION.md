@@ -22,8 +22,12 @@ User details in them are invented; the shapes are not.
 8. [Account deletion](#8-account-deletion)
 9. [Sign out other devices](#9-sign-out-other-devices)
 10. [Sign-up changes](#10-sign-up-changes)
-11. [Full endpoint list](#11-full-endpoint-list)
-12. [What we still need from you](#12-what-we-still-need-from-you)
+11. [Profile and onboarding (Part 1)](#11-profile-and-onboarding-part-1)
+12. [Password reset — OTP and reset tokens](#12-password-reset--otp-and-reset-tokens)
+13. [match_score](#13-match_score)
+14. [Analytics — route_viewed](#14-analytics--route_viewed)
+15. [Full endpoint list](#15-full-endpoint-list)
+16. [What we still need from you](#16-what-we-still-need-from-you)
 
 ---
 
@@ -457,7 +461,154 @@ A 7-day trial now starts automatically on all three paths.
 
 ---
 
-## 11. Full endpoint list
+## 11. Profile and onboarding (Part 1)
+
+`GET / PATCH /accounts/user_profile/`
+
+**Fields:** `id`, `status`, `appuser`, `age`, `discipline`, `education_level`, `user_type`,
+`category`, `qualification`, `address`, `city`, `zip_code` — plus the `access` object
+(see [section 5](#5-access-trial-and-subscription)).
+
+### `user_type` — the onboarding persona
+
+"Who is exploring careers today?" Optional, so it may be `null`.
+
+| Value | |
+|---|---|
+| `student` | Student |
+| `parent_guardian` | Parent or Guardian |
+| `career_changer` | Career Changer |
+| `reskilling` | Reskilling / Upskilling |
+
+Anything outside that list is rejected with `400`.
+
+### Skippable answers
+
+Every onboarding question can be skipped. Two different things:
+
+- **Leave the key out entirely** → the stored value is untouched.
+- **Send `null`** → the stored value is cleared.
+
+So a "Skip" button should send `null`, not an empty string. `""` is stored as an empty string
+and counts as an answer.
+
+### `education_level`
+
+Free text, six values from the wizard. Stored and returned as sent.
+
+### `qualification`
+
+A list of strings, and it does persist — send the whole list each time, it is replaced not
+merged.
+
+```json
+PATCH { "user_type": "student", "qualification": ["GCSE Maths", "GCSE English"], "discipline": null }
+```
+
+**A PATCH clears the user's cached recommendations**, so the next `GET /careers/` rebuilds them.
+It also clears the saved-pathway cache, and any pathway whose inputs changed is regenerated on
+next read (see [section 3](#3-ai-career-pathway--now-server-side)).
+
+---
+
+## 12. Password reset — OTP and reset tokens
+
+Three steps. The old one-step form still works, but this is the one to use.
+
+### Step 1 — ask for a code
+
+```
+POST /accounts/forgot_password/   { "email": "..." }
+```
+
+```json
+{ "status": true, "message": "OTP sent successfully", "code_length": 6, "expires_in": 300 }
+```
+
+**Read `code_length` and `expires_in`** rather than hard-coding 6 and 5 minutes.
+
+**This response is now identical whether or not the account exists** — see
+[section 1.4](#14-forgot_password-no-longer-says-whether-the-email-exists).
+
+### Step 2 — check the code
+
+```
+POST /accounts/verify_otp/   { "email": "...", "otp": "123456" }
+```
+
+```json
+{ "status": true, "reset_token": "…", "expires_in": 600 }
+```
+
+The token is **single use** and lasts 10 minutes.
+
+### Step 3 — set the new password
+
+```
+POST /accounts/forgot_password_confirmation/
+{ "email": "...", "reset_token": "…", "new_password": "...", "new_password2": "..." }
+```
+
+**This ends every session for that user** — see [section 1.3](#13-changing-or-resetting-a-password-now-ends-other-sessions).
+The user signs in again with the new password.
+
+### Error codes
+
+Every failure carries a stable `code`, so you can show the right message without parsing English:
+
+| `code` | Meaning |
+|---|---|
+| `otp_invalid` | wrong code |
+| `otp_expired` | older than 5 minutes |
+| `otp_throttled` | 5 wrong guesses — the code is dead, request a new one |
+| `token_invalid` | reset token not recognised |
+| `token_expired` | older than 10 minutes |
+| `token_used` | already used once |
+| `password_weak` | fails validation — the message says why |
+| `password_mismatch` | the two passwords differ |
+| `missing_fields` | a required field was not sent |
+
+Each also carries a `message` you can show directly. The wording of the existing ones is
+unchanged, because older app builds match on it.
+
+### Limits
+
+10 attempts per email per hour, 30 per IP per hour. Over that returns `429`.
+
+---
+
+## 13. `match_score`
+
+An integer `0–100` on every career object, or **`null`**.
+
+It is the similarity between the user's profile embedding and the career's, mapped so that
+0.15 similarity → 0 and 0.60 → 100.
+
+**`null` means we cannot score it yet** — the user has no embedding, which happens before they
+have swiped anything, or while the embedding service is rebuilding. **Do not show 0 in that
+case**; show nothing, or "not enough data yet". A 0 reads as "terrible match", which is wrong.
+
+It is the last key on `/careers/`, `/careers/{id}/`, `/careers/my/`, `/careers/explore_mine/`
+and `/careers/reports/`.
+
+---
+
+## 14. Analytics — `route_viewed`
+
+No API change, but worth knowing: since the app now shows jobs, courses and apprenticeships
+together rather than in tabs, it fires **one `route_viewed` per section** instead of one per
+tab the user settles on.
+
+**Expect roughly 3× the volume** from that screen, and the three route types to appear in
+near-equal proportions rather than `job` dominating because it used to be the default tab.
+
+Any dashboard reading "which route type do users look at?" **will change shape**, and its old
+readings were partly an artefact of the tab order. `route_clicked` is unaffected and is the
+better signal for genuine interest.
+
+---
+
+## 15. Full endpoint list
 
 **New**
 
@@ -486,13 +637,16 @@ A 7-day trial now starts automatically on all three paths.
 | `GET /accounts/user_profile/` | + access object |
 | `POST /accounts/signup\|auth/google\|auth/apple` | + referral_code, is_new_user, referral block |
 | `POST /accounts/forgot_password/` | identical response for unknown emails |
+| `GET / PATCH /accounts/user_profile/` | + `user_type`, + access object |
+| `POST /accounts/verify_otp/` | single-use `reset_token`, stable error codes |
+| `POST /accounts/forgot_password_confirmation/` | takes `reset_token`; ends all sessions |
 | `GET /accounts/users/` | staff only |
 
 **Stop calling:** `/api/billing/subscribe/`, `/api/billing/portal/`, and OpenAI directly.
 
 ---
 
-## 12. What we still need from you
+## 16. What we still need from you
 
 1. **Does the app read `user_profile`** on course / job / apprenticeship responses? If yes, tell
    us what you show and we will provide a safe replacement.
