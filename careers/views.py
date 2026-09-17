@@ -727,6 +727,7 @@ class CareersView(viewsets.ModelViewSet):
                     status=status.HTTP_404_NOT_FOUND,
                 )
             cache_delete(get_saved_cache_key(request.user.id))  # /careers/my/ embeds my_report
+            cache_delete(get_pathways_cache_key(request.user.id))
             return Response({"status": True, "deleted": True}, status=status.HTTP_200_OK)
 
         if "career_id" in request.data:
@@ -753,9 +754,20 @@ class CareersView(viewsets.ModelViewSet):
         UserCareerReport.objects.update_or_create(
             user_profile=profile,
             career_id=career_id,
-            defaults={"report": report_data, "report_status": report_status, "generated_at": now},
+            defaults={
+                "report": report_data,
+                "report_status": report_status,
+                "generated_at": now,
+                # This endpoint only ever runs because the user pressed Save
+                # in the app, so it is a deliberate save. Without this the
+                # row defaults to user_saved=False and the pathway would
+                # never appear in "my saved pathways" - the current app
+                # saves through here, not through /pathway/save/.
+                "user_saved": True,
+            },
         )
         cache_delete(get_saved_cache_key(request.user.id))  # /careers/my/ embeds my_report
+        cache_delete(get_pathways_cache_key(request.user.id))  # the saved-pathway list
 
         return Response(
             {

@@ -168,6 +168,34 @@ def run():
     row = UserCareerReport.objects.get(user_profile=p, career=career)
     check("regenerating does not un-save the user's pathway", row.user_saved is True)
 
+    print("\n--- THE CURRENT APP's save flow must keep working ---")
+    # The live app saves with PUT /careers/{id}/report/, not /pathway/save/.
+    # If that path does not set user_saved, the user taps Save and their
+    # pathway silently vanishes from the list.
+    u_old, p_old = mk("oldapp")
+    REPORT = CareersView.as_view({"put": "report", "get": "report", "delete": "report"})
+    body = {"report": {"score": 85, "summary": {"title": "X", "subtitle": "y",
+            "totalTimelineEstimate": "4-6 years", "steps": [
+                {"stepNumber": 1, "title": "step one", "isActive": True}]},
+            "version": "1.0", "generated_by": "frontend"}}
+    req = f.put(f"/careers/{career.id}/report/", body, format="json")
+    force_authenticate(req, user=u_old)
+    r = REPORT(req, pk=str(career.id))
+    check("the old save endpoint still returns 200", r.status_code == 200, f"got {r.status_code}")
+
+    row = UserCareerReport.objects.get(user_profile=p_old, career=career)
+    check("a pathway saved the OLD way is marked saved", row.user_saved is True)
+
+    req = f.get("/careers/reports/"); force_authenticate(req, user=u_old)
+    lst = REPORTS(req)
+    check("and it APPEARS in my saved pathways", len(lst.data) == 1,
+          f"got {len(lst.data)} - if 0, the live app's Save button is broken")
+
+    req = f.delete(f"/careers/{career.id}/report/"); force_authenticate(req, user=u_old)
+    REPORT(req, pk=str(career.id))
+    req = f.get("/careers/reports/"); force_authenticate(req, user=u_old)
+    check("deleting removes it from the list (cache cleared)", len(REPORTS(req).data) == 0)
+
     print("\n--- when the AI is down ---")
     u2, p2 = mk("down")
     with patch.object(ps, "generate", side_effect=ps.PathwayUnavailable("no")):
