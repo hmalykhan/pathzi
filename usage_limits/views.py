@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 
 from rest_framework.generics import GenericAPIView
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 
@@ -150,7 +150,9 @@ class SwipeCareerPathView(APIView):
 
 class UpdateSwipeLimitView(GenericAPIView):
 
-    permission_classes = [IsAuthenticated]
+    # Staff only: this raises a user's own cap and resets their usage,
+    # so IsAuthenticated meant anyone could lift their own limit.
+    permission_classes = [IsAdminUser]
     serializer_class = UpdateSwipeSerializer
 
     def patch(self, request):

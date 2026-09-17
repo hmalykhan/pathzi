@@ -134,7 +134,26 @@ class JobsSerializer(serializers.ModelSerializer):
                 for jid, pids in prof_ids_by_job.items()
             }
 
+    def _may_see_profiles(self):
+        """
+        Only staff may see who saved this item.
+
+        This used to return every saver's full profile - home address,
+        postcode, GPS position, apple_sub, account_uuid - to ANYONE,
+        including users who were not signed in. Several of these users are
+        under 18.
+
+        An empty list rather than a removed key, so an app reading the
+        field keeps working and simply sees nobody.
+        """
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        return bool(user and user.is_authenticated and user.is_staff)
+
     def get_user_profile(self, obj):
+        if not self._may_see_profiles():
+            return []
+
         # ✅ Use cache for list
         if self._profiles_by_job_id is not None:
             profiles = self._profiles_by_job_id.get(obj.job_id, [])

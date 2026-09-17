@@ -338,11 +338,16 @@ class HomeAPI(APIView):
 
 class UserAPI(generics.ListAPIView):
     """
-    GET /users/
+    GET /users/  - staff only.
+
+    Returns every profile in full: addresses, postcodes, coordinates,
+    apple_sub, account_uuid. IsAuthenticated meant any signed-in user could
+    download the lot, which is not something an app needs and not something
+    we should offer.
     """
     queryset = UserProfile.objects.select_related("appuser").all()
     serializer_class = UserProfileSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAdminUser]
 
 
 # class SignUpAPI(generics.CreateAPIView):
@@ -991,9 +996,17 @@ class ForgotPasswordAPI(APIView):
         if not user:
             # Don't reveal whether user exists
             logger.info("ForgotPassword requested for non-existing email=%s", email)
+            # Byte-identical to the success response below. Answering
+            # "email does not exist." let anyone check which addresses have
+            # a Pathzi account, one request at a time. Even a differing
+            # "status" flag would give it away, so both paths match exactly.
             return Response(
-                # {"status": False, "message": "OTP sent if email exists"},
-                {"status": False, "message": "email does not exist."},
+                {
+                    "status": True,
+                    "message": "OTP sent successfully",
+                    "code_length": pwreset.OTP_LENGTH,
+                    "expires_in": pwreset.OTP_TTL_SECONDS,
+                },
                 status=status.HTTP_200_OK,
             )
 

@@ -69,7 +69,8 @@ path("auth/apple/callback/", AppleCallbackAPI.as_view()),
 path("auth/password/set/request-otp/", SetPasswordGoogleAuthAPI.as_view(), name="google_auth_set_password"),
 path("auth/password/set/confirm/", SetPasswordConfirmationGoogleAuthOTP.as_view()),
 
-path("<int:pk>/create_qualification",QualificationVeiw.as_view({'post' : 'create_qualification'})),
+# Removed: pointed at QualificationVeiw.create_qualification, which does
+# not exist - the route raised rather than doing anything.
     path("me/", DeleteMyAccountView.as_view(), name="delete-my-account"),
     path("sign-out-other-devices/", SignOutOtherDevicesView.as_view(), name="sign-out-other-devices"),
 ]

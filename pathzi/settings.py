@@ -24,11 +24,18 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-phnpwqr^o#9fgr&8w0w&a3&ypw-%+y1^+ft=*l8ywn9*2-u(gx'
+# REQUIRED in the environment. Signs password-reset links, sessions and
+# anything else Django signs.
+# No default, deliberately. The old key is public - it was committed to git
+# from the first commit - so leaving it as a fallback would mean any
+# environment that forgot to set SECRET_KEY would silently keep using a key
+# anyone can read. Better to refuse to start.
+SECRET_KEY = config("SECRET_KEY")
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# Defaults to OFF. DEBUG=True leaks settings, SQL and stack traces to anyone
+# who triggers an error, and it was hard-coded on. Development sets
+# DEBUG=True in .env.
+DEBUG = config("DEBUG", default=False, cast=bool)
 
 import ssl
 
@@ -408,6 +415,18 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=3),
     "ROTATE_REFRESH_TOKENS": False,
     "BLACKLIST_AFTER_ROTATION": False,
+
+    # Tokens are signed with their OWN key, which defaults to SECRET_KEY so
+    # nothing changes today. The point is what it makes possible later:
+    # SimpleJWT signs with SECRET_KEY by default, so rotating the leaked
+    # SECRET_KEY would invalidate every token and log out every user on
+    # every device at once. With JWT_SIGNING_KEY set separately, SECRET_KEY
+    # can be rotated without touching anyone's session.
+    # Deliberately NOT SECRET_KEY. Tokens already on users' phones were
+    # signed with the old key, so that value lives on here and they keep
+    # working, while SECRET_KEY itself has been replaced. Rotating this one
+    # logs everybody out, so it is a maintenance-window job.
+    "SIGNING_KEY": config("JWT_SIGNING_KEY", default=SECRET_KEY),
 }
 
 
