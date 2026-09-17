@@ -37,6 +37,27 @@ SECRET_KEY = config("SECRET_KEY")
 # DEBUG=True in .env.
 DEBUG = config("DEBUG", default=False, cast=bool)
 
+# HTTPS hardening. All of these switch on whenever DEBUG is off, so
+# production gets them and local development is untouched. Each can still be
+# overridden individually if a deploy needs it.
+#   SSL redirect        - http:// requests are bounced to https://
+#   Secure cookies      - the session and CSRF cookies never travel in clear
+#   HSTS                - browsers refuse http:// for this domain for a year
+# HSTS is the one to be careful with: once a browser has seen it, it will not
+# talk to this domain over http for that long, so only enable it when the
+# certificate is known good. Preload is deliberately left off.
+SECURE_SSL_REDIRECT = config("SECURE_SSL_REDIRECT", default=not DEBUG, cast=bool)
+SESSION_COOKIE_SECURE = config("SESSION_COOKIE_SECURE", default=not DEBUG, cast=bool)
+CSRF_COOKIE_SECURE = config("CSRF_COOKIE_SECURE", default=not DEBUG, cast=bool)
+
+SECURE_HSTS_SECONDS = config("SECURE_HSTS_SECONDS", default=(31536000 if not DEBUG else 0), cast=int)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = config("SECURE_HSTS_INCLUDE_SUBDOMAINS", default=not DEBUG, cast=bool)
+SECURE_HSTS_PRELOAD = False
+
+# DigitalOcean terminates TLS before the app, so without this Django sees
+# plain http and SECURE_SSL_REDIRECT would loop forever.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 import ssl
 
 REDIS_URL = config("REDIS_URL")

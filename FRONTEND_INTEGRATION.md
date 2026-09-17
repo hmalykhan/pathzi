@@ -1,0 +1,506 @@
+# Backend changes — integration guide
+
+**For:** mobile developer
+**From:** backend
+**Date:** 17 September 2026
+**Covers:** everything changed since the last hand-over — Parts 1, 2 and 3, plus six security fixes.
+
+Every payload below is **real output from the endpoint**, captured on the backup database.
+User details in them are invented; the shapes are not.
+
+---
+
+## Contents
+
+1. [Read this first — breaking changes](#1-read-this-first--breaking-changes)
+2. [Career list and detail — new fields](#2-career-list-and-detail--new-fields)
+3. [AI career pathway — now server-side](#3-ai-career-pathway--now-server-side)
+4. [Routes — distance and relevance](#4-routes--distance-and-relevance)
+5. [Access, trial and subscription](#5-access-trial-and-subscription)
+6. [Referrals](#6-referrals)
+7. [Progress tracker](#7-progress-tracker)
+8. [Account deletion](#8-account-deletion)
+9. [Sign out other devices](#9-sign-out-other-devices)
+10. [Sign-up changes](#10-sign-up-changes)
+11. [Full endpoint list](#11-full-endpoint-list)
+12. [What we still need from you](#12-what-we-still-need-from-you)
+
+---
+
+## 1. Read this first — breaking changes
+
+Four things behave differently. Everything else is additive.
+
+### 1.1 `user_profile` is now always `[]`
+
+`GET /careers/{id}/courses|jobs|apprenticeships/` used to return, on every item, the **full
+profile of every user who had saved it** — home address, postcode, GPS coordinates, `apple_sub`,
+`account_uuid`. With no login required.
+
+It now returns an empty list for everyone except staff.
+
+```json
+"user_profile": []
+```
+
+**The key is still there**, so nothing crashes if you read it. If you were displaying anything
+from it, tell us and we will add a safe replacement (for example a plain saved-count).
+
+### 1.2 Everyone will be signed out once, on deploy
+
+The JWT signing key was rotated (it had been committed to git, so anyone with the repo could
+forge a login as any user). **Every existing token becomes invalid the moment this deploys.**
+
+Please make sure the app handles a `401` by sending the user to the login screen rather than
+showing an error. It is a one-off.
+
+### 1.3 Changing or resetting a password now ends other sessions
+
+- **Change password while signed in** → other devices are signed out, this one keeps working
+  (a fresh token pair comes back in the response, as before).
+- **Reset a forgotten password** → *all* sessions end, including this one. The user signs in again.
+
+### 1.4 `forgot_password` no longer says whether the email exists
+
+It used to answer `{"status": false, "message": "email does not exist."}`, which let anyone
+check which addresses had an account. Both cases now return **exactly** the same thing:
+
+```json
+{ "status": true, "message": "OTP sent successfully", "code_length": 6, "expires_in": 300 }
+```
+
+If your UI branched on that message, it needs to stop.
+
+---
+
+## 2. Career list and detail — new fields
+
+### `GET /careers/` — one card
+
+```json
+{
+  "id": 3010,
+  "category": "Healthcare",
+  "subcategory": "Acoustics consultant",
+  "job_description": "Acoustics consultants work to reduce unwanted noise…",
+  "dg_image_url": "https://pathzi.lon1.cdn.digitaloceanspaces.com/…png",
+  "salary": "£28,000 Starter to £55,000 Experienced",
+  "skills": ["Problem solving", "Analytical", "Attention to detail", "IT skills", "Communication"],
+  "work_style": "mixed",
+  "work_location": "mixed",
+  "work_social": "customer-facing",
+  "work_pace": "steady",
+  "match_score": null
+}
+```
+
+**New:** `skills`, `work_style`, `work_location`, `work_social`, `work_pace`.
+Everything else is unchanged.
+
+**Allowed values** — fixed lists, so you can safely map them to icons or chips:
+
+| Field | Values |
+|---|---|
+| `work_style` | `hands-on` · `desk-based` · `mixed` |
+| `work_location` | `indoor` · `outdoor` · `mixed` |
+| `work_social` | `team` · `independent` · `customer-facing` |
+| `work_pace` | `calm` · `steady` · `fast-paced` |
+
+`skills` is 4–6 entries from a fixed vocabulary of 20: Communication, Team working, Organisation,
+Attention to detail, Problem solving, Initiative, Patience, Customer care, Logical thinking,
+IT skills, Creative, Administrative, Analytical, Number skills, Presentation, Physical fitness,
+Non-judgemental, Reliable, Leadership, Time management.
+
+**All four may be `null`** on a career the backfill has not reached. Handle that.
+
+### `GET /careers/{id}/` — detail
+
+Same new fields, plus **`entry_requirements`**, which is one shape across careers, courses, jobs
+and apprenticeships so you no longer need four different field names:
+
+```json
+"entry_requirements": {
+  "college": "Entry requirements for these courses vary.\n- 4 or 5 GCSEs at grades 9 to 4…",
+  "apprenticeship": "You'll usually need:\n- some GCSEs, usually including English and maths…",
+  "summary": "Entry requirements for these courses vary.\n- 4 or 5 GCSEs at grades 9 to 4…"
+}
+```
+
+Any of the three may be `null`. `summary` is college, falling back to apprenticeship.
+
+On **courses, jobs and apprenticeships**, `entry_requirements` is a **plain string** (or `null`),
+not an object. The original columns (`entry_reeq`, `essential_qualifications`,
+`skills_youll_need`, `requirement_summery`) are all still returned — this is an alias, not a
+replacement.
+
+---
+
+## 3. AI career pathway — now server-side
+
+**The app must stop calling OpenAI.** Generation happens on our server, and the OpenAI key that
+ships inside the app is being revoked.
+
+### `GET /careers/{career_id}/pathway/`
+
+Generates on first request, then returns the stored copy. Roughly **20 seconds** when it
+generates, under a second afterwards — please show the existing "Building your personalised
+pathway…" state for the first call.
+
+```json
+{
+  "career_id": 2336,
+  "title": "Your Pathway to Becoming an Accounting Technician in Manchester",
+  "subtitle": "A comprehensive guide from GCSEs to a qualified Accounting Technician role…",
+  "total_timeline_estimate": "6-8 years",
+  "current_step": 1,
+  "progress": { "current_step": 1, "total_steps": 5, "completed_steps": 0, "percent": 0 },
+  "steps": [
+    {
+      "stepNumber": 1,
+      "title": "Complete a T Level in Accounting (2 years), focusing on core accounting principles…",
+      "estimatedTime": "",
+      "isActive": true,
+      "completed": false,
+      "current": true
+    }
+  ],
+  "saved": false,
+  "generated_at": "2026-09-17T08:22:10Z",
+  "generated": true,
+  "prompt_version": "2"
+}
+```
+
+**Notes**
+
+- `progress` is per-career progress, worked out from the profile. **No ticking, no second call.**
+  It moves on its own as the user's education level changes.
+- Each step carries `completed` and `current`, so you do not have to derive the ticks.
+- `saved` is `false` until the user presses Save. The pathway is still stored — that is only a
+  cache so we do not pay to generate it twice.
+- Always exactly 5 steps and exactly one active step. Guaranteed server-side.
+- `generated: true` means it was just built; `false` means it came from storage.
+
+**`?refresh=true`** forces regeneration. Use sparingly — it costs an AI call.
+
+### Saving
+
+```
+POST   /careers/{career_id}/pathway/save/    → { "status": true, "career_id": 2336, "saved": true }
+DELETE /careers/{career_id}/pathway/save/    → { "status": true, "career_id": 2336, "saved": false }
+```
+
+Un-saving hides it from the list but keeps it stored, so re-opening costs nothing.
+
+### When the AI is unavailable
+
+- **User already has a pathway** → `200`, the existing one, plus `"stale": true`.
+- **User has none** → `503`:
+
+```json
+{ "status": false, "message": "Could not build your pathway just now.", "code": "pathway_unavailable" }
+```
+
+Show "Try again" on `pathway_unavailable`.
+
+### Regeneration
+
+Automatic when `age`, `education_level`, `discipline` or `category` change. Changing an address
+does **not** regenerate. Saving survives regeneration.
+
+### The saved list
+
+`GET /careers/reports/` now returns **only pathways the user saved** (`user_saved = true`).
+Existing saved pathways were migrated, so nothing is lost. The old
+`PUT /careers/{id}/report/` still works and still counts as a deliberate save.
+
+---
+
+## 4. Routes — distance and relevance
+
+`GET /careers/{id}/courses|jobs|apprenticeships/`
+
+### `distance_km` and `distance_miles` are now returned
+
+You no longer need to compute distance on the client. Both are present on every item
+(`null` when the row has no coordinates).
+
+### Optional relevance sorting
+
+```
+?sort=relevance
+```
+
+**Default is unchanged** — nearest first. With `sort=relevance` the list is re-ordered by title
+match, then distance, then how complete the record is, and each item gains a `relevance` score
+between 0 and 1.
+
+The point: for a carpenter, "Carpentry and Joinery Level 2" eight miles away is a better card
+than "Construction (General)" one mile away.
+
+`sort=distance`, no parameter, or an unrecognised value all behave exactly as before.
+
+### Location override
+
+`lat` + `lng`, or `postcode`, override the user's saved location — as before.
+
+---
+
+## 5. Access, trial and subscription
+
+Payments moved from Stripe to **Apple / Google in-app purchase via RevenueCat**.
+**Stop calling** `/api/billing/subscribe/` and `/api/billing/portal/`.
+
+The same `access` object is returned inside `GET /api/billing/status/` **and**
+`GET /accounts/user_profile/`, so you do not need a second call at start-up:
+
+```json
+{
+  "has_access": true,
+  "source": "trial",
+  "access_until": "2026-09-24T08:21:05Z",
+  "days_remaining": 7,
+  "trial_active": true,
+  "trial_days": 7,
+  "plan": null,
+  "store": null,
+  "auto_renewing": false,
+  "banked_referral_days": 0,
+  "features": ["recommendations", "routes", "reports", "search"],
+  "account_uuid": "36b2e5c9-495b-48d3-8860-4624a5dd3a15",
+  "manage_url": null
+}
+```
+
+- `source` — `trial` · `referral` · `subscription` · `none`
+- `features` — what the user may use. When access lapses this becomes
+  `["explored_careers", "saved", "pathways", "progress", "referrals"]`. **Lock from this list**,
+  do not hard-code.
+- `account_uuid` — **log into RevenueCat with this**, and pass it to the store as
+  `appAccountToken` (iOS) / `obfuscatedAccountId` (Android). It is what ties a purchase to the
+  right account.
+- `manage_url` — opens the store's own subscription screen. Apple and Google require this.
+- `trial_days` — read it, never hard-code 7.
+
+### After a purchase
+
+```
+POST /api/billing/refresh/
+```
+
+Call it straight after a purchase: it asks RevenueCat directly and returns the same object,
+covering the second or two before our webhook lands. If RevenueCat cannot be reached it returns
+`refreshed: false` and leaves access unchanged rather than removing it.
+
+### Free tier after the trial
+
+Currently **switched off** server-side, so nothing changes yet. When it is turned on, a user
+without access gets only the careers they have already explored or saved from `GET /careers/`.
+Saved careers, saved pathways and progress stay available.
+
+---
+
+## 6. Referrals
+
+Every share creates a **new single-use code**. There is no permanent personal code.
+First account to use a code consumes it. 30-day expiry. Unlimited codes. You cannot use your own.
+
+```
+POST /me/referral/codes/             make a code to share (WhatsApp, etc.)
+POST /me/referral/invite             { "email": "..." } — we email a code
+GET  /me/referral                    the whole referral screen
+POST /me/referral/credits/{id}/ack/  mark the "you earned days" popup as shown
+```
+
+### `GET /me/referral`
+
+```json
+{
+  "status": true,
+  "message": "Referral summary.",
+  "data": {
+    "friends_joined": 0,
+    "days_earned": 0,
+    "referrer_days": 7,
+    "invitee_days": 7,
+    "code_expiry_days": 30,
+    "invites": [],
+    "unseen_credits": []
+  }
+}
+```
+
+### `POST /me/referral/codes/`
+
+```json
+{
+  "status": true,
+  "message": "Referral code created.",
+  "data": {
+    "id": 92,
+    "code": "PTH-HRV8XG",
+    "channel": "share",
+    "email": null,
+    "status": "pending",
+    "expires_at": "2026-10-17T08:21:10Z",
+    "created_at": "2026-09-17T08:21:10Z"
+  }
+}
+```
+
+`status` per invite is `pending` · `joined` · `expired`.
+`unseen_credits` carries `{id, kind, days_awarded, banked, created_at}` — show the popup, then
+call the `ack` endpoint so it does not reappear.
+
+**Rewards:** invitee **+7 days** (14 with the trial), referrer **+7**. Days earned while already
+subscribed are banked and applied when the subscription ends.
+
+---
+
+## 7. Progress tracker
+
+`GET /me/progress/`
+
+```json
+{
+  "careers_explored": 0,
+  "total_careers": 745,
+  "saved_count": 0,
+  "category_count": 1,
+  "streak_days": 0,
+  "achievements": [
+    { "key": "first_steps",    "unlocked": false, "threshold": 10 },
+    { "key": "career_expert",  "unlocked": false, "threshold": 50 }
+  ],
+  "insight": null
+}
+```
+
+**`total_careers` is real (745), not the hard-coded 770.** Read it from here.
+
+**`insight` is `null`** until the user has at least three swipe signals — we would rather show
+nothing than invent an insight from one swipe. When present it is
+`{"text": "...", "highlights": ["...", "..."]}`.
+
+---
+
+## 8. Account deletion
+
+Apple requires this.
+
+```
+DELETE /accounts/me/
+```
+
+```json
+{
+  "status": true,
+  "message": "Your account has been deleted. Your subscription is still active — cancel it in the store, or you will keep being charged.",
+  "data": {
+    "deleted": true,
+    "had_active_subscription": true,
+    "store": "apple",
+    "manage_url": "https://apps.apple.com/account/subscriptions"
+  }
+}
+```
+
+**Deleting the account does not cancel an Apple or Google subscription** — only the store can.
+If `had_active_subscription` is `true`, show the message and offer `manage_url` **before**
+deleting. Deletion is never blocked because of it.
+
+---
+
+## 9. Sign out other devices
+
+```
+POST /accounts/sign-out-other-devices/
+```
+
+```json
+{
+  "status": true,
+  "message": "Signed out on all other devices.",
+  "data": { "token": { "refresh": "...", "access": "..." } }
+}
+```
+
+Every other session ends immediately — access and refresh alike. **Use the token pair in the
+response**; the one you called with is still valid, but the returned pair is the clean one.
+
+---
+
+## 10. Sign-up changes
+
+All three paths accept an optional `referral_code`:
+
+```
+POST /accounts/signup/        { …, "referral_code": "PTH-9QK2TM" }
+POST /accounts/auth/google/   { "id_token": "…", "referral_code": "…" }
+POST /accounts/auth/apple/    { "identity_token": "…", "referral_code": "…" }
+```
+
+Google and Apple responses now include **`is_new_user`** (`true` only when the account was
+created), so you can show the trial welcome screen to new accounts only.
+
+All three return a `referral` block:
+
+```json
+"referral": { "applied": true, "code": null, "message": "You got 7 bonus days.", "days_awarded": 7 }
+```
+
+**A bad code never blocks sign-up.** The account is created and `applied` is `false` with a
+reason code: `referral_code_invalid` · `referral_code_used` · `referral_code_expired` ·
+`referral_code_own` · `referral_already_credited`.
+
+A 7-day trial now starts automatically on all three paths.
+
+---
+
+## 11. Full endpoint list
+
+**New**
+
+| Method | Path | |
+|---|---|---|
+| GET | `/careers/{id}/pathway/` | generate or fetch the pathway |
+| POST / DELETE | `/careers/{id}/pathway/save/` | save / unsave |
+| POST | `/api/billing/refresh/` | after a purchase |
+| POST | `/api/billing/revenuecat/webhook/` | RevenueCat → us (not for the app) |
+| GET | `/me/referral` | referral screen |
+| POST | `/me/referral/codes/` | new share code |
+| POST | `/me/referral/invite` | email an invite |
+| POST | `/me/referral/credits/{id}/ack/` | popup shown |
+| DELETE | `/accounts/me/` | delete account |
+| POST | `/accounts/sign-out-other-devices/` | end other sessions |
+
+**Changed**
+
+| Path | Change |
+|---|---|
+| `GET /careers/` | + skills, work_* |
+| `GET /careers/{id}/` | + skills, work_*, entry_requirements |
+| `GET /careers/{id}/courses\|jobs\|apprenticeships/` | + distance_km, distance_miles, entry_requirements, `?sort=relevance`; **user_profile now `[]`** |
+| `GET /careers/reports/` | only user-saved pathways |
+| `GET /api/billing/status/` | + access object |
+| `GET /accounts/user_profile/` | + access object |
+| `POST /accounts/signup\|auth/google\|auth/apple` | + referral_code, is_new_user, referral block |
+| `POST /accounts/forgot_password/` | identical response for unknown emails |
+| `GET /accounts/users/` | staff only |
+
+**Stop calling:** `/api/billing/subscribe/`, `/api/billing/portal/`, and OpenAI directly.
+
+---
+
+## 12. What we still need from you
+
+1. **Does the app read `user_profile`** on course / job / apprenticeship responses? If yes, tell
+   us what you show and we will provide a safe replacement.
+2. **Does the app call `GET /accounts/users/`?** It is now staff-only and will return `403`.
+3. **Confirm the app can handle a one-off `401`** on deploy and send the user to login.
+4. **Remove the OpenAI key** from the app and switch the pathway screen to
+   `GET /careers/{id}/pathway/`. The key is being revoked.
+5. **RevenueCat:** log in with `account_uuid`, add a Restore Purchases button, and open
+   `manage_url` for "Manage subscription".
+
+Anything unclear, ask — it is quicker than guessing from this document.
