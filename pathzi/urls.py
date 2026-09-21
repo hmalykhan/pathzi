@@ -22,6 +22,7 @@ from django.views.generic import RedirectView
 from analytics.views import analytics_dashboard
 from analytics.forms import StaffAuthenticationForm
 from careers.progress_views import ProgressAPI
+from accounts.account_deletion import DeleteMyAccountView
 from billing.referral_views import (
     ReferralCodeCreateView,
     ReferralCreditAckView,
@@ -51,6 +52,12 @@ urlpatterns = [
     path("usage-limits/", include("usage_limits.urls")),
     path("analytics/", include("analytics.urls")),
     path("me/progress/", ProgressAPI.as_view(), name="me-progress"),
+
+    # Alias for /accounts/me/, so everything about "me" lives under one
+    # prefix. Both work; this is the one to document. Added because the
+    # split between /me/* and /accounts/me/ genuinely confused the first
+    # person to read the API from outside.
+    path("me/account/", DeleteMyAccountView.as_view(), name="me-account"),
     path("me/referral", ReferralSummaryView.as_view(), name="me-referral"),
     path("me/referral/", ReferralSummaryView.as_view(), name="me-referral-slash"),
     path("me/referral/codes/", ReferralCodeCreateView.as_view(), name="me-referral-codes"),

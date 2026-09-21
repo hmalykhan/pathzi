@@ -394,7 +394,8 @@ nothing than invent an insight from one swipe. When present it is
 Apple requires this.
 
 ```
-DELETE /accounts/me/
+DELETE /me/account/          <- use this
+DELETE /accounts/me/          <- same thing, still works
 ```
 
 ```json
@@ -624,7 +625,8 @@ better signal for genuine interest.
 | POST | `/me/referral/codes/` | new share code |
 | POST | `/me/referral/invite` | email an invite |
 | POST | `/me/referral/credits/{id}/ack/` | popup shown |
-| DELETE | `/accounts/me/` | delete account |
+| DELETE | `/me/account/` | delete account (**use this**) |
+| DELETE | `/accounts/me/` | same view, kept for compatibility |
 | POST | `/accounts/sign-out-other-devices/` | end other sessions |
 
 **Changed**
@@ -663,17 +665,17 @@ POST body:
 Use the trailing-slash form everywhere. `APPEND_SLASH` is on, so a slashless POST to any *other*
 path would 301 and lose its body — those two are covered explicitly because of it.
 
-**The prefixes are inconsistent and we know it:**
+**Fixed.** Everything about "me" now lives under one prefix:
 
-| Path | Where |
-|---|---|
-| `/me/progress/` | root |
-| `/me/referral…` | root |
-| `/accounts/me/` | under `/accounts/` |
+```
+/me/progress/          progress tracker
+/me/referral…          referrals
+/me/account/           delete account   ← NEW, use this one
+/accounts/me/          still works, kept so nothing breaks
+```
 
-The reasoning is `/me/*` for "my data" and `/accounts/*` for "my account", but it is not obvious
-from the outside. Say the word and we will add `/me/account/` as an alias — nothing is built
-against it yet, so this is the cheapest it will ever be to change.
+Both routes reach the same view, so either is correct — but **use `/me/account/`**. The old
+`/accounts/me/` stays registered and will not be removed without telling you.
 
 **`GET /me/progress/`** — exact, with the trailing slash. It was missing from §15; fixed.
 
@@ -686,18 +688,31 @@ missing field.
 
 ### Response envelope
 
-Inconsistent, and not by design — each module kept the convention it already had rather than one
-being imposed across all of them.
+**There is a rule, we just had not written it down.** Looking at every endpoint:
+
+> **Endpoints that DO something wrap. Endpoints that RETURN something are bare.**
+
+That holds without exception:
 
 | Wrapped `{status, message, data}` | Bare object |
 |---|---|
-| all `/me/referral…` | `GET /careers/{id}/pathway/` |
-| `POST/DELETE …/pathway/save/` | `GET /me/progress/` |
-| `DELETE /accounts/me/` | the `access` object |
-| `POST /accounts/sign-out-other-devices/` | career list and detail |
+| `POST /me/referral/codes/` — creates a code | `GET /me/referral` — reads the screen |
+| `POST /me/referral/invite` — sends an email | `GET /careers/{id}/pathway/` — reads a pathway |
+| `POST/DELETE …/pathway/save/` — changes saved state | `GET /me/progress/` — reads progress |
+| `DELETE /me/account/` — deletes the account | the `access` object — read |
+| `POST /accounts/sign-out-other-devices/` — ends sessions | career list and detail — read |
+| `POST /accounts/signup/` — creates an account | |
 
-Standardising now would break the referral endpoints you have not built yet. Your call — tell us
-and we will do it before you start.
+The wrapper exists to carry a human-readable `message` about **what just happened**. A read has
+nothing to report, so it returns the thing you asked for.
+
+**One exception you should know about:** `GET /me/referral` is a read but wraps anyway, because
+it sits in the referral module alongside the writes. If that bothers you, say so — but it is one
+endpoint, not a pattern.
+
+We are deliberately **not** standardising the rest. The old endpoints your app already uses
+follow the same rule, so changing the new ones would make them differ from the old ones —
+trading one inconsistency for a worse one.
 
 ### Pathway step fields
 
@@ -817,7 +832,7 @@ for launch unless it says so.
 | ☐ | **Referral screen** — a generate-code action *per share* (no permanent code, no "up to 5" limit), the invite list, days earned |
 | ☐ | **Referral code field at sign-up**, sent on all three paths |
 | ☐ | **`is_new_user`** on Google/Apple — show the trial welcome only to new accounts |
-| ☐ | **Delete account** screen (`DELETE /accounts/me/`) — Apple requires it. If `had_active_subscription` is true, show the warning and `manage_url` **before** deleting |
+| ☐ | **Delete account** screen (`DELETE /me/account/`) — Apple requires it. If `had_active_subscription` is true, show the warning and `manage_url` **before** deleting |
 | ☐ | **Sign out other devices** (`POST /accounts/sign-out-other-devices/`) — use the returned token pair |
 | ☐ | **Pathway save/unsave** using `POST`/`DELETE /careers/{id}/pathway/save/` and the `saved` flag |
 
