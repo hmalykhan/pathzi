@@ -33,6 +33,7 @@ f = APIRequestFactory()
 PATHWAY = CareersView.as_view({"get": "pathway"})
 SAVE = CareersView.as_view({"post": "pathway_save", "delete": "pathway_save"})
 REPORTS = CareersView.as_view({"get": "reports"})
+REPORT_VIEW = CareersView.as_view({"put": "report", "get": "report", "delete": "report"})
 
 FAKE = {
     "summary": {
@@ -195,6 +196,36 @@ def run():
     REPORT(req, pk=str(career.id))
     req = f.get("/careers/reports/"); force_authenticate(req, user=u_old)
     check("deleting removes it from the list (cache cleared)", len(REPORTS(req).data) == 0)
+
+    print("\n--- generating must never mark a pathway as saved ---")
+    u_gen, p_gen = mk("genonly")
+    with patch.object(ps, "generate", return_value=FAKE):
+        get_pathway(u_gen, career.id)
+    row = UserCareerReport.objects.get(user_profile=p_gen, career=career)
+    check("generated pathway is NOT user_saved", row.user_saved is False)
+    req = f.get("/careers/reports/"); force_authenticate(req, user=u_gen)
+    check("and does NOT appear in the saved list", len(REPORTS(req).data) == 0,
+          f"got {len(REPORTS(req).data)}")
+
+    # A client persisting a merely-generated pathway must be able to say so.
+    body = {"report": {"summary": FAKE["summary"]}, "user_saved": False}
+    req = f.put(f"/careers/{career.id}/report/", body, format="json")
+    force_authenticate(req, user=u_gen)
+    r = REPORT_VIEW(req, pk=str(career.id))
+    check("PUT report with user_saved:false is honoured",
+          r.status_code == 200 and r.data.get("user_saved") is False, str(r.data.get("user_saved")))
+    row.refresh_from_db()
+    check("still not saved after that PUT", row.user_saved is False)
+    req = f.get("/careers/reports/"); force_authenticate(req, user=u_gen)
+    check("still absent from the saved list", len(REPORTS(req).data) == 0)
+
+    # The old app sends no flag, meaning "the user pressed Save".
+    body = {"report": {"summary": FAKE["summary"]}}
+    req = f.put(f"/careers/{career.id}/report/", body, format="json")
+    force_authenticate(req, user=u_gen)
+    REPORT_VIEW(req, pk=str(career.id))
+    row.refresh_from_db()
+    check("PUT report with NO flag still means saved (old app)", row.user_saved is True)
 
     print("\n--- when the AI is down ---")
     u2, p2 = mk("down")

@@ -749,6 +749,8 @@ class CareersView(viewsets.ModelViewSet):
 
         report_data = request.data["report"]
         report_status = bool(request.data.get("report_status", True))
+        # Defaults to True for backwards compatibility - see below.
+        user_saved = bool(request.data.get("user_saved", True))
         now = timezone.now()
 
         UserCareerReport.objects.update_or_create(
@@ -758,12 +760,15 @@ class CareersView(viewsets.ModelViewSet):
                 "report": report_data,
                 "report_status": report_status,
                 "generated_at": now,
-                # This endpoint only ever runs because the user pressed Save
-                # in the app, so it is a deliberate save. Without this the
-                # row defaults to user_saved=False and the pathway would
-                # never appear in "my saved pathways" - the current app
-                # saves through here, not through /pathway/save/.
-                "user_saved": True,
+                # Whether this counts as the user deliberately saving.
+                #
+                # The old app called this endpoint ONLY when the bookmark was
+                # pressed, so an absent flag still means "saved" and those
+                # builds keep working. A client that calls this to persist a
+                # pathway it merely generated must send user_saved: false,
+                # or the pathway appears in "my saved pathways" without the
+                # user ever asking for it.
+                "user_saved": user_saved,
             },
         )
         cache_delete(get_saved_cache_key(request.user.id))  # /careers/my/ embeds my_report
@@ -774,6 +779,7 @@ class CareersView(viewsets.ModelViewSet):
                 "report_status": report_status,
                 "report": report_data,
                 "generated_at": now,
+                "user_saved": user_saved,
             },
             status=status.HTTP_200_OK,
         )

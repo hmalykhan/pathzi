@@ -213,6 +213,27 @@ Show "Try again" on `pathway_unavailable`.
 Automatic when `age`, `education_level`, `discipline` or `category` change. Changing an address
 does **not** regenerate. Saving survives regeneration.
 
+### Do not call `PUT /careers/{id}/report/` after generating
+
+`GET /careers/{id}/pathway/` **already stores the pathway for you**, with `user_saved: false`.
+You do not need a second call to persist it.
+
+If you do call `PUT /careers/{id}/report/` as well, it marks the pathway as **saved** unless you
+say otherwise — which is why a pathway the user never saved was appearing in their saved list.
+
+The flag is now explicit:
+
+```jsonc
+PUT /careers/{id}/report/
+{ "report": { … }, "user_saved": false }   // persisted, NOT in the saved list
+{ "report": { … } }                        // no flag = the user pressed Save
+```
+
+The response echoes it back so you can see what you got.
+
+**Simplest path:** use `GET /pathway/` to generate and `POST /pathway/save/` when the bookmark is
+pressed, and never touch the report endpoint.
+
 ### The saved list
 
 `GET /careers/reports/` now returns **only pathways the user saved** (`user_saved = true`).
