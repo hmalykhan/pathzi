@@ -11,6 +11,7 @@ read and re-encode the body before we ever saw it.
 import json
 import logging
 
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
@@ -43,8 +44,13 @@ def _profile_for_app_user_id(app_user_id, aliases=None):
             continue
         try:
             profile = UserProfile.objects.filter(account_uuid=value).first()
-        except (ValueError, TypeError):
-            continue          # not a uuid - an anonymous RevenueCat id
+        except (ValueError, TypeError, ValidationError):
+            # Not a uuid. RevenueCat sends these routinely: anonymous ids
+            # ($RCAnonymousID:...) for purchases made before login, and its
+            # own placeholder in the dashboard "send test event" button.
+            # Django raises ValidationError, not ValueError, for a bad uuid -
+            # missing it here turned every one of them into a 500.
+            continue
         if profile is not None:
             return profile
     return None
@@ -129,8 +135,14 @@ def revenuecat_webhook(request):
     except IntegrityError:
         return HttpResponse(status=200)
 
-    if not created:
+    if not created and record.handled:
         return HttpResponse(status=200)
+
+    # Not handled: a previous delivery recorded the event and then failed
+    # before applying it. Answering 200 here - which is what this used to do
+    # for ANY existing row - made RevenueCat stop retrying and the purchase
+    # was lost for good. Fall through and apply it now. Safe to repeat:
+    # _apply_to_billing writes absolute values, it never increments.
 
     profile = _profile_for_app_user_id(app_user_id, event.get("aliases"))
     if profile is None:

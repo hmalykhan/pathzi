@@ -71,12 +71,25 @@ def ms_to_dt(ms):
 # --------------------------------------------------------------------------
 
 def check_authorization(header_value):
-    """The shared password we gave RevenueCat. Compared in constant time."""
+    """
+    The shared password we gave RevenueCat. Compared in constant time.
+
+    An optional "Bearer " prefix is accepted. RevenueCat's Authorization
+    field is free text, so whoever fills it in may or may not type the
+    prefix; rejecting one of the two spellings produced a 401 that looked
+    exactly like a wrong secret and cost an afternoon to find. Only the
+    prefix is optional - the value itself must still match exactly.
+    """
     expected = settings.REVENUECAT_WEBHOOK_SECRET
     if not expected:
         logger.error("REVENUECAT_WEBHOOK_SECRET is not set - refusing every webhook")
         return False
-    return hmac.compare_digest((header_value or "").strip(), expected)
+
+    provided = (header_value or "").strip()
+    if provided[:7].lower() == "bearer ":
+        provided = provided[7:].strip()
+
+    return hmac.compare_digest(provided, expected)
 
 
 def check_signature(raw_body, header_value, now=None):
