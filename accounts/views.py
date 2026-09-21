@@ -204,8 +204,22 @@ class AppleMobileAuthAPI(APIView):
                 {"status": False, "message": "Missing identity_token"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        payload = jwt.decode(identity_token, options={"verify_signature": False})
-        print("APPLE TOKEN PAYLOAD:", payload)
+        # This used to sit outside the try below, so a malformed token raised
+        # and Django returned an HTML 500 page - while Google's equivalent
+        # returned a clean JSON 400. It also print()ed the decoded payload,
+        # which put the user's email and Apple id into the logs.
+        try:
+            jwt.decode(identity_token, options={"verify_signature": False})
+        except Exception:
+            logger.warning("AppleAuth: identity_token could not be decoded")
+            return Response(
+                {
+                    "status": False,
+                    "code": "APPLE_TOKEN_INVALID",
+                    "message": "Invalid Apple token",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             data = verify_apple_token(identity_token)

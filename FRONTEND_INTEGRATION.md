@@ -569,8 +569,12 @@ The token is **single use** and lasts 10 minutes.
 
 ```
 POST /accounts/forgot_password_confirmation/
-{ "email": "...", "reset_token": "…", "new_password": "...", "new_password2": "..." }
+{ "email": "...", "reset_token": "…", "new_password": "...", "confirm_password": "..." }
 ```
+
+**The field is `confirm_password`, not `new_password2`.** An earlier version of this document
+said `new_password2` — that was wrong. `new_password2` belongs to `POST /accounts/reset_password/`,
+which is the *logged-in* change-password endpoint, a different thing.
 
 **This ends every session for that user** — see [section 1.3](#13-changing-or-resetting-a-password-now-ends-other-sessions).
 The user signs in again with the new password.

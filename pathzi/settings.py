@@ -217,8 +217,16 @@ REST_FRAMEWORK = {
         # Behaves identically unless a user has signed out everywhere.
         "accounts.authentication.RevocableJWTAuthentication",
     ],
+    # Same JSON, but the Content-Type says charset=utf-8 rather than
+    # leaving the client to assume it.
+    "DEFAULT_RENDERER_CLASSES": [
+        "pathzi.renderers.Utf8JSONRenderer",
+        "rest_framework.renderers.BrowsableAPIRenderer",
+    ],
+    # Fails open when Redis is down, instead of 500ing every endpoint before
+    # the view runs - see pathzi/throttling.py.
     "DEFAULT_THROTTLE_CLASSES": [
-        "rest_framework.throttling.UserRateThrottle",
+        "pathzi.throttling.ResilientUserRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
         "user": "10/min",

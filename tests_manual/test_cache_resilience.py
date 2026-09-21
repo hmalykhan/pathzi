@@ -88,6 +88,27 @@ def run():
         r = LIST(f.get("/careers/"))
         check("guests are fine too", r.status_code == 200, f"got {r.status_code}")
 
+    print("\n--- auth endpoints must answer with Redis down ---")
+    # DRF's throttles call the cache directly, so they never went through
+    # cache_utils. With Redis unreachable they raised BEFORE the view ran,
+    # and every throttled endpoint returned 500 - login and sign-up included.
+    from accounts.views import AppleMobileAuthAPI, GoogleMobileAuthAPI, ForgotPasswordAPI
+    with patch.object(cu, "cache", DeadRedis()):
+        from django.core.cache import cache as django_cache
+        with patch.object(django_cache, "get", side_effect=ConnectionError("redis down")), \
+             patch.object(django_cache, "set", side_effect=ConnectionError("redis down")):
+            for label, view, body in (
+                ("apple", AppleMobileAuthAPI, {"identity_token": "bad"}),
+                ("google", GoogleMobileAuthAPI, {"id_token": "bad"}),
+                ("forgot_password", ForgotPasswordAPI, {"email": "nobody@example.invalid"}),
+            ):
+                try:
+                    r = view.as_view()(f.post("/x/", body, format="json"))
+                    ok = r.status_code < 500
+                except Exception:
+                    ok = False
+                check(f"{label} answers rather than 500ing", ok)
+
     print("\n--- Redis healthy: caching must still work ---")
     with override_settings(CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}):
         from django.core.cache import cache as real_cache

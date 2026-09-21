@@ -1,9 +1,9 @@
 import hashlib
 
-from rest_framework.throttling import SimpleRateThrottle
+from pathzi.throttling import ResilientSimpleRateThrottle
 
 
-class OtpIPThrottle(SimpleRateThrottle):
+class OtpIPThrottle(ResilientSimpleRateThrottle):
     """Reset-code / reset-token attempts per client IP."""
 
     scope = "otp_ip"
@@ -12,7 +12,7 @@ class OtpIPThrottle(SimpleRateThrottle):
         return self.cache_format % {"scope": self.scope, "ident": self.get_ident(request)}
 
 
-class OtpEmailThrottle(SimpleRateThrottle):
+class OtpEmailThrottle(ResilientSimpleRateThrottle):
     """Reset-code / reset-token attempts per email address, from any IP."""
 
     scope = "otp_email"
