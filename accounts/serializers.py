@@ -16,6 +16,9 @@ class UserProfileLightSerializer(serializers.ModelSerializer):
             "age",
             "discipline",
             "education_level",
+            # Onboarding persona. Present here too so a screen reading the
+            # light profile does not have to fetch the full one just for this.
+            "user_type",
         ]
 
 class FlexibleStringListField(serializers.ListField):
@@ -361,6 +364,21 @@ class SignUpSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
     password2 = serializers.CharField(write_only=True, min_length=8)
+
+    # Onboarding persona, asked during sign-up ("Who is exploring careers
+    # today?"). Optional and skippable: absent, null and "" all mean "not
+    # answered" and store NULL. Before this existed the field was silently
+    # dropped here - signup answered 201 and the answer was lost.
+    user_type = serializers.ChoiceField(
+        choices=UserProfile.UserType.choices,
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+
+    def validate_user_type(self, value):
+        # Same rule as the profile serializer: a skipped question is NULL.
+        return value or None
 
     def validate(self, attrs):
         if attrs["password"] != attrs["password2"]:

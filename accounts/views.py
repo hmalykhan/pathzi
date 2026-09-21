@@ -308,7 +308,8 @@ class AppleMobileAuthAPI(APIView):
         # Only a brand-new account can be referred. Never blocks the login.
         referral = (
             referrals.try_redeem(request.data.get("referral_code"), user)
-            if created else referrals.try_redeem(None, user)
+            if created
+            else referrals.not_new_account(request.data.get("referral_code"))
         )
 
         logger.info(
@@ -520,7 +521,12 @@ class SignUpAPI(generics.CreateAPIView):
                     password=data["password"],
                 )
 
-                profile = UserProfile.objects.create(appuser=user, age=0)
+                profile = UserProfile.objects.create(
+                    appuser=user,
+                    age=0,
+                    # Optional onboarding persona. None when not answered.
+                    user_type=data.get("user_type"),
+                )
                 ensure_account_identity(profile)   # 7-day trial + purchase id
 
             # Outside the atomic block: a referral problem must never undo a
@@ -547,6 +553,9 @@ class SignUpAPI(generics.CreateAPIView):
                     "id": user.id,
                     "username": user.username,
                     "email": user.email,
+                    # Echoed back so the app can confirm the onboarding answer
+                    # was stored. Null when the question was skipped.
+                    "user_type": profile.user_type,
                     "referral": referral,
                     "token": {
                         "refresh": str(refresh),
@@ -1502,7 +1511,8 @@ class GoogleMobileAuthAPI(APIView):
         # Only a brand-new account can be referred. Never blocks the login.
         referral = (
             referrals.try_redeem(request.data.get("referral_code"), user)
-            if created else referrals.try_redeem(None, user)
+            if created
+            else referrals.not_new_account(request.data.get("referral_code"))
         )
 
         logger.info(

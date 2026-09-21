@@ -63,8 +63,10 @@ def run():
     invitee = User.objects.get(email=email)
     check("sign-up succeeded", r.status_code == 201)
     check("the referral applied", r.data["data"]["referral"]["applied"] is True)
-    check("invitee has 14 days (7 trial + 7 bonus)",
-          access_for(invitee)["days_remaining"] == 14, str(access_for(invitee)["days_remaining"]))
+    # Changed 2026-09-21: the invitee no longer earns bonus days. They get
+    # the normal 7-day trial and nothing more; only the referrer is paid.
+    check("invitee has 7 days (trial only, no bonus)",
+          access_for(invitee)["days_remaining"] == 7, str(access_for(invitee)["days_remaining"]))
     check("referrer has 14 days too", access_for(referrer)["days_remaining"] == 14)
     check("both sides are in the ledger", ReferralCredit.objects.filter(code=code).count() == 2)
 
@@ -96,8 +98,10 @@ def run():
           r.status_code == 201 and r.data["data"]["referral"]["code"] == "referral_code_invalid")
 
     r = signup(f"ut_ref_5_{uuid.uuid4().hex[:6]}@example.invalid")
+    # Changed 2026-09-21: no code means no referral block at all. It used to
+    # return applied=False, which the app displayed as a rejected code.
     check("no code at all still signs up fine",
-          r.status_code == 201 and r.data["data"]["referral"]["applied"] is False)
+          r.status_code == 201 and r.data["data"]["referral"] is None)
 
     print("\n--- days earned while subscribed are banked ---")
     sub, subp = mk("sub")

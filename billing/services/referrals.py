@@ -28,7 +28,11 @@ logger = logging.getLogger(__name__)
 
 CODE_EXPIRY_DAYS = 30
 REFERRER_DAYS = 7
-INVITEE_DAYS = 7
+
+# The invitee earns nothing: they get the normal 7-day trial like everyone
+# else. Only the referrer is rewarded. Changed 2026-09-21 at the app team's
+# request - it used to be 7, which stacked into a 14-day trial.
+INVITEE_DAYS = 0
 
 CODE_PREFIX = "PTH-"
 # No 0/O/1/I/5/S - these codes get read off a screen and typed in by hand.
@@ -151,10 +155,13 @@ def redeem(raw_code, new_user):
 
         credits = []
         if invitee_profile is not None:
-            banked = grant_days(invitee_profile, INVITEE_DAYS, subscribed=_is_subscribed(new_user))
+            # No days for the invitee. The credit row is still written, with
+            # zero days, because its existence is what stops one account
+            # redeeming a second code - see the "already_credited" guard
+            # above. Removing the row would remove that protection.
             credits.append(ReferralCredit(
                 user=new_user, code=referral, kind="invitee",
-                days_awarded=INVITEE_DAYS, banked=banked,
+                days_awarded=0, banked=False,
             ))
 
         if referrer_profile is not None:
@@ -185,7 +192,10 @@ def try_redeem(raw_code, new_user):
     Returns what the app should show on the welcome screen.
     """
     if not raw_code:
-        return {"applied": False, "code": None, "message": None, "days_awarded": 0}
+        # No code was entered, so there is nothing to report. Returning
+        # applied=False here made the app show a failure for people who had
+        # simply not been referred.
+        return None
 
     try:
         redeem(raw_code, new_user)
@@ -199,8 +209,29 @@ def try_redeem(raw_code, new_user):
     return {
         "applied": True,
         "code": None,
-        "message": f"You got {INVITEE_DAYS} bonus days.",
-        "days_awarded": INVITEE_DAYS,
+        # The invitee gets no bonus days, so there is nothing to promise -
+        # this only confirms the code was accepted.
+        "message": "Referral code applied.",
+        "days_awarded": 0,
+    }
+
+
+def not_new_account(raw_code):
+    """
+    A code was offered on a sign-in that did not create an account.
+
+    Only a brand-new account can be referred, so the code is not spent - but
+    the app has to be able to say why. Returning applied=False with no reason
+    (what this used to do) is indistinguishable from an invalid code, which
+    is exactly how this was reported as a bug.
+    """
+    if not raw_code:
+        return None
+    return {
+        "applied": False,
+        "code": "referral_not_new_user",
+        "message": "Referral codes can only be used when creating a new account.",
+        "days_awarded": 0,
     }
 
 

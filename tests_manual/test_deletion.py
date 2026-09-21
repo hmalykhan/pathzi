@@ -17,7 +17,7 @@ from accounts.models import UserProfile, Coordinates, UserEmbedding
 from accounts.account_deletion import DeleteMyAccountView
 from billing.models import BillingProfile, ReferralCode, ReferralCredit
 from billing.services import referrals
-from billing.services.access import ensure_account_identity
+from billing.services.access import ensure_account_identity, access_for
 
 RESULTS = []
 def check(label, cond, extra=""):
@@ -81,9 +81,16 @@ def run():
     surviving = ReferralCode.objects.filter(pk=code.pk).first()
     check("the code no longer belongs to anyone", surviving.created_by_id is None)
     ip.refresh_from_db()
-    check("the invitee keeps their free days", ip.referral_access_until is not None)
+    # Changed 2026-09-21: invitees no longer earn referral days, so there is
+    # no referral window to keep. What must still hold is the point of this
+    # test - deleting the referrer must not damage the invitee's own access.
+    check("the invitee has no referral window (they never earned one)",
+          ip.referral_access_until is None)
+    check("the invitee's own trial is untouched by the deletion",
+          access_for(invitee)["days_remaining"] == 7,
+          str(access_for(invitee)["days_remaining"]))
     check("the invitee's referral screen still totals correctly",
-          referrals.summary_for(invitee)["days_earned"] == 7,
+          referrals.summary_for(invitee)["days_earned"] == 0,
           str(referrals.summary_for(invitee)["days_earned"]))
 
     print("\n--- the deleted user's own referral data goes ---")
