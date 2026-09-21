@@ -27,7 +27,8 @@ User details in them are invented; the shapes are not.
 13. [match_score](#13-match_score)
 14. [Analytics — route_viewed](#14-analytics--route_viewed)
 15. [Full endpoint list](#15-full-endpoint-list)
-16. [Your work — app side and project side](#16-your-work--app-side-and-project-side)
+16. [Answers to your questions](#16-answers-to-your-questions)
+17. [Your work — app side and project side](#17-your-work--app-side-and-project-side)
 
 ---
 
@@ -614,6 +615,7 @@ better signal for genuine interest.
 
 | Method | Path | |
 |---|---|---|
+| GET | `/me/progress/` | progress tracker (was missing from this list) |
 | GET | `/careers/{id}/pathway/` | generate or fetch the pathway |
 | POST / DELETE | `/careers/{id}/pathway/save/` | save / unsave |
 | POST | `/api/billing/refresh/` | after a purchase |
@@ -646,7 +648,117 @@ better signal for genuine interest.
 
 ---
 
-## 16. Your work — app side and project side
+## 16. Answers to your questions
+
+### Paths and slashes
+
+**Both forms are registered** for the two that looked wrong, so there is no redirect and no lost
+POST body:
+
+```
+/me/referral          and  /me/referral/
+/me/referral/invite   and  /me/referral/invite/
+```
+
+Use the trailing-slash form everywhere. `APPEND_SLASH` is on, so a slashless POST to any *other*
+path would 301 and lose its body — those two are covered explicitly because of it.
+
+**The prefixes are inconsistent and we know it:**
+
+| Path | Where |
+|---|---|
+| `/me/progress/` | root |
+| `/me/referral…` | root |
+| `/accounts/me/` | under `/accounts/` |
+
+The reasoning is `/me/*` for "my data" and `/accounts/*` for "my account", but it is not obvious
+from the outside. Say the word and we will add `/me/account/` as an alias — nothing is built
+against it yet, so this is the cheapest it will ever be to change.
+
+**`GET /me/progress/`** — exact, with the trailing slash. It was missing from §15; fixed.
+
+### Share link
+
+**There is no link.** The `/join` landing page was dropped for v1, so the app shares the **code as
+text** — "Use code PTH-HRV8XG" — plus store links if you want them. The invitee types it at
+sign-up. No page exists to point at; if you want one, that is a new decision rather than a
+missing field.
+
+### Response envelope
+
+Inconsistent, and not by design — each module kept the convention it already had rather than one
+being imposed across all of them.
+
+| Wrapped `{status, message, data}` | Bare object |
+|---|---|
+| all `/me/referral…` | `GET /careers/{id}/pathway/` |
+| `POST/DELETE …/pathway/save/` | `GET /me/progress/` |
+| `DELETE /accounts/me/` | the `access` object |
+| `POST /accounts/sign-out-other-devices/` | career list and detail |
+
+Standardising now would break the referral endpoints you have not built yet. Your call — tell us
+and we will do it before you start.
+
+### Pathway step fields
+
+**camelCase is deliberate.** `stepNumber` / `isActive` match the shape the app already writes
+through `PUT /careers/{id}/report/`, and **48 saved pathways already use it**. Changing it would
+break those.
+
+**`progress.current_step` is authoritative.** The other two are conveniences:
+
+| Field | Use it? |
+|---|---|
+| `progress.current_step` | **yes** |
+| `current_step` (top level) | same value, kept for compatibility |
+| per-step `current` | same thing, so you can render without a lookup |
+
+All three derive from the single step with `isActive: true`, so they cannot disagree. Three is
+still two more than necessary — we kept them for compatibility rather than because it is good.
+
+### Timeouts
+
+**30 seconds server-side.** `?refresh=true` is a full regeneration and takes **the same ~20
+seconds** — treat it identically in the UI.
+
+### `features` — the complete list
+
+Only two sets exist:
+
+```
+has access : ["recommendations", "routes", "reports", "search"]
+no access  : ["explored_careers", "saved", "pathways", "progress", "referrals"]
+```
+
+Map each key to a screen. Nothing else will ever appear.
+
+### `banked_referral_days`
+
+**Not** included in `access_until`. They are applied **only when a subscription lapses**.
+
+`access_until` covers the trial, referral days already granted, and the subscription period —
+not banked days. So a subscriber showing `banked_referral_days: 7` has 7 days waiting **after**
+their subscription ends. Present them as "7 days waiting for you", never as current access.
+
+### Testing the locked state
+
+**Yes.** `PAYWALL_ENFORCED` is an environment variable — set it to `True` on staging and leave it
+unset in production. Build and test the free-tier locking there before anyone flips it live.
+
+### Receipts
+
+**Confirmed: no `/api/billing/iap/verify/` exists and none is planned.** The app talks only to
+RevenueCat; RevenueCat calls our webhook. You never post a receipt to us.
+
+### Account deletion
+
+`DELETE /accounts/me/` with a valid token is sufficient — **no password or re-auth at the API.**
+The confirmation dialog is the app's responsibility. Apple does not require re-auth, but if you
+would rather the API demanded a password for something irreversible, say so; it is a small
+change and arguably the right one.
+
+---
+## 17. Your work — app side and project side
 
 You wear both hats, so this is split by which one you are wearing. Nothing here is optional
 for launch unless it says so.
