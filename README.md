@@ -55,7 +55,7 @@ work, settings and open items.
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 # .env at the repo root needs: DATABASE_URL, REDIS_URL, STRIPE_*, GOOGLE_*, APPLE_*,
-# SENDGRID / email settings, GEOAPIFY_API_KEY  (ask the team for values; never commit them)
+# RESEND_API_KEY / email settings, GEOAPIFY_API_KEY  (ask the team for values; never commit them)
 python manage.py migrate
 python manage.py runserver 0.0.0.0:8002
 celery -A pathzi worker -B        # background tasks + periodic tasks (analytics flush/purge)

@@ -361,12 +361,21 @@ PAYWALL_ENFORCED = config("PAYWALL_ENFORCED", default=False, cast=bool)
 GEMINI_API_KEY = config("GEMINI_API_KEY", default="")
 GEMINI_MODEL = config("GEMINI_MODEL", default="gemini-2.5-flash")
 
+# Email goes out through Resend's SMTP relay (moved from SendGrid 2026-09-22).
+# Plain SMTP, so every send_mail() call is unchanged. Host, user and port are
+# read from the environment so switching provider again is an .env change:
+# for SendGrid it would be EMAIL_HOST=smtp.sendgrid.net, EMAIL_HOST_USER=apikey.
+#
+# RESEND_API_KEY defaults to empty on purpose. Without a key, emails fail
+# (password reset, invites) - but the app still starts. Making it required
+# would take the whole API down on a deploy that forgot to set it.
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = "smtp.sendgrid.net"
-EMAIL_PORT = 587
+EMAIL_HOST = config("EMAIL_HOST", default="smtp.resend.com")
+EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = "apikey"  # literally this!
-EMAIL_HOST_PASSWORD = config("SENDGRID_API_KEY")  # your API key
+EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="resend")  # literally "resend"
+EMAIL_HOST_PASSWORD = config("RESEND_API_KEY", default="")
+# Must be an address on a domain verified in Resend, or Resend refuses it.
 DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL")
 EMAIL_TIMEOUT = 30  # Prevent indefinite hangs on SMTP connections
 
@@ -444,6 +453,11 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=3),
     "ROTATE_REFRESH_TOKENS": False,
     "BLACKLIST_AFTER_ROTATION": False,
+
+    # Refuses refresh tokens from ended sessions (sign out other devices,
+    # password change, password reset). The stock serializer skipped that
+    # check, so an ended device could refresh its way back in.
+    "TOKEN_REFRESH_SERIALIZER": "accounts.token_refresh.RevocableTokenRefreshSerializer",
 
     # Tokens are signed with their OWN key, which defaults to SECRET_KEY so
     # nothing changes today. The point is what it makes possible later:
