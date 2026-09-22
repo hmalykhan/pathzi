@@ -560,10 +560,17 @@ POST /accounts/verify_otp/   { "email": "...", "otp": "123456" }
 ```
 
 ```json
-{ "status": true, "reset_token": "…", "expires_in": 600 }
+{ "status": true, "valid": true, "message": "OTP verified", "reset_token": "…", "expires_in": 600 }
 ```
 
+Wrong code: `400 { "status": false, "valid": false, "code": "otp_invalid", "message": "Incorrect OTP" }`
+(`otp_expired`, and `otp_throttled` with 429, the same way).
+
 The token is **single use** and lasts 10 minutes.
+
+**After this step the code is used up.** Step 3 must send the `reset_token`, not the code —
+sending the code again answers "Incorrect OTP". Asking for a new code (resend) cancels the
+previous one, so only the code in the **latest** email works.
 
 ### Step 3 — set the new password
 

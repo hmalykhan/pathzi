@@ -1241,7 +1241,17 @@ class VerifyOtpAPI(_ResetRateLimitMixin, APIView):
         token = pwreset.issue_reset_token(record)
         logger.info("VerifyOtp: reset token issued user_id=%s", user.id)
         return Response(
-            {"valid": True, "reset_token": token, "expires_in": pwreset.RESET_TOKEN_TTL_SECONDS},
+            {
+                # "status" as well as "valid": every failure here says
+                # status=false, and the integration guide promised
+                # status=true on success. Without it, an app checking
+                # `status` treated every CORRECT code as wrong.
+                "status": True,
+                "valid": True,
+                "message": "OTP verified",
+                "reset_token": token,
+                "expires_in": pwreset.RESET_TOKEN_TTL_SECONDS,
+            },
             status=status.HTTP_200_OK,
         )
 
