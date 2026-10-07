@@ -1,6 +1,13 @@
 # Environment variables
 .env
 .env.*
+# Copies of .env under other names (one was committed by `git add .` on
+# 2026-10-07 and had to be removed from history). Never commit secrets.
+*_env.txt
+*env*.txt
+*.env.txt
+*secrets*
+app-spec*.yaml
 
 # Python
 __pycache__/
